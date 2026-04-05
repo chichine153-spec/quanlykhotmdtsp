@@ -1,0 +1,54 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email.lower() == "chichine153@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidProduct(data) {
+      return data.sku is string && data.sku.size() > 0 &&
+             data.name is string && data.name.size() > 0 &&
+             (data.stock is int || data.stock is float);
+    }
+
+    function isValidOrder(data) {
+      return data.trackingCode is string && data.trackingCode.size() > 0 &&
+             data.processedAt is string &&
+             data.sku is string &&
+             data.quantity is int;
+    }
+
+    match /inventory/{productId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    match /orders/{orderId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && (isAdmin() || isValidOrder(request.resource.data));
+      allow update: if isAdmin();
+      allow delete: if isAuthenticated();
+    }
+
+    match /processed_orders/{orderId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    match /inventory_logs/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+    }
+    
+    match /users/{userId} {
+      allow read, write: if request.auth.uid == userId || isAdmin();
+    }
+  }
+}

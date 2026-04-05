@@ -1,0 +1,5 @@
+{
+  "name": "Lucid Inventory",
+  "description": "A polished inventory management system for Shopee vendors, featuring order tracking, PDF extraction, and real-time stock monitoring.",
+  "requestFramePermissions": []
+}

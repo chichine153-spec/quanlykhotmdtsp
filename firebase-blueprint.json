@@ -1,0 +1,55 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "An item in the warehouse inventory.",
+      "type": "object",
+      "properties": {
+        "sku": { "type": "string", "description": "Internal SKU code." },
+        "name": { "type": "string", "description": "Product name." },
+        "stock": { "type": "integer", "description": "Current stock quantity." },
+        "category": { "type": "string", "description": "Product category." }
+      },
+      "required": ["sku", "name", "stock"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "A shipping label record to prevent duplicate processing.",
+      "type": "object",
+      "properties": {
+        "trackingCode": { "type": "string", "description": "Shopee tracking code." },
+        "processedAt": { "type": "string", "format": "date-time", "description": "When the label was processed." }
+      },
+      "required": ["trackingCode", "processedAt"]
+    },
+    "InventoryLog": {
+      "title": "InventoryLog",
+      "description": "A record of stock changes.",
+      "type": "object",
+      "properties": {
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the change occurred." },
+        "trackingCode": { "type": "string", "description": "Optional tracking code for deductions." },
+        "sku": { "type": "string", "description": "SKU of the product." },
+        "productName": { "type": "string", "description": "Name of the product." },
+        "variant": { "type": "string", "description": "Variant of the product." },
+        "change": { "type": "integer", "description": "Quantity changed (positive or negative)." },
+        "type": { "type": "string", "enum": ["deduction", "addition", "manual_edit", "bulk_import"], "description": "Type of change." }
+      },
+      "required": ["timestamp", "sku", "productName", "change", "type"]
+    }
+  },
+  "firestore": {
+    "/inventory/{productId}": {
+      "schema": "Product",
+      "description": "Collection of warehouse products."
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Collection of processed shipping labels."
+    },
+    "/inventory_logs/{logId}": {
+      "schema": "InventoryLog",
+      "description": "Collection of inventory change logs."
+    }
+  }
+}
