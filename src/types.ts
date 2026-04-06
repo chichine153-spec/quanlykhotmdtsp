@@ -1,4 +1,4 @@
-export type Screen = 'dashboard' | 'upload' | 'inventory' | 'returns' | 'search' | 'scanner' | 'success';
+export type Screen = 'dashboard' | 'upload' | 'inventory' | 'returns' | 'stockin' | 'profit' | 'success' | 'reprint';
 
 export interface Product {
   id: string;
@@ -9,6 +9,8 @@ export interface Product {
   image: string;
   category: string;
   variant?: string;
+  costPrice?: number;
+  sellingPrice?: number;
 }
 
 export interface InventoryLog {
@@ -36,6 +38,31 @@ export interface Order {
     time: string;
     date: string;
   }[];
+  totalRevenue?: number;
+  totalCost?: number;
+}
+
+export interface ProfitConfig {
+  platformFeePercent: number;
+  packagingCostBottle: number;
+  packagingCostCup: number;
+  marketingCost: number;
+  otherCosts: number;
+  lastUpdated: string;
+}
+
+export interface ReturnRecord {
+  id: string;
+  trackingCode: string;
+  returnedAt: string;
+  reason: string;
+  items: {
+    sku: string;
+    variant: string;
+    quantity: number;
+    sellingPrice: number;
+  }[];
+  userId: string;
 }
 
 export const MOCK_PRODUCTS: Product[] = [

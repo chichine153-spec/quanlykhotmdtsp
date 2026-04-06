@@ -20,14 +20,14 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from './contexts/AuthContext';
+import { useData } from './contexts/DataContext';
 import { InventoryService, OrderRecord } from './services/inventoryService';
 import { Product } from './types';
 
 export default function Dashboard() {
   const { user, login, error, clearError } = useAuth();
-  const [orders, setOrders] = React.useState<OrderRecord[]>([]);
-  const [inventory, setInventory] = React.useState<Product[]>([]);
-  const [loading, setLoading] = React.useState(true);
+  const { inventory, orders, loading: dataLoading } = useData();
+  const [loading, setLoading] = React.useState(false);
   const [selectedDate, setSelectedDate] = React.useState(new Date().toISOString().split('T')[0]);
   const [showOrderDetails, setShowOrderDetails] = React.useState(false);
   const [showTopSellersModal, setShowTopSellersModal] = React.useState(false);
@@ -45,29 +45,8 @@ export default function Dashboard() {
   }, []);
 
   React.useEffect(() => {
-    if (!user) {
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-    
-    // Listen to inventory
-    const inventoryUnsub = InventoryService.listenToInventory((products) => {
-      setInventory(products);
-    });
-
-    // Listen to orders
-    const ordersUnsub = InventoryService.listenToOrders((allOrders) => {
-      setOrders(allOrders);
-      setLoading(false);
-    });
-
-    return () => {
-      inventoryUnsub();
-      ordersUnsub();
-    };
-  }, [user]);
+    setLoading(dataLoading);
+  }, [dataLoading]);
 
   // Derived stats
   const dailyOrders = React.useMemo(() => {
@@ -272,13 +251,13 @@ export default function Dashboard() {
           className="md:col-span-3 lg:col-span-1 lg:row-span-2 glass-morphism rounded-3xl p-6 shadow-sm border border-white/10 overflow-hidden flex flex-col"
         >
           <h3 className="text-lg font-bold text-on-surface mb-6 flex items-center gap-2">
-            <Star className="text-orange-600" size={20} />
+            <Star className="text-primary" size={20} />
             Sản phẩm bán chạy
           </h3>
           
           {bestSeller ? (
             <div className="flex-grow flex flex-col items-center justify-center text-center space-y-4">
-              <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-primary to-orange-400 p-1 shadow-lg">
+              <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-primary to-primary-container p-1 shadow-lg">
                 <div className="w-full h-full rounded-[20px] bg-white flex items-center justify-center text-primary">
                   <Package size={40} />
                 </div>
@@ -302,7 +281,7 @@ export default function Dashboard() {
           
           <button 
             onClick={() => setShowTopSellersModal(true)}
-            className="mt-6 text-orange-600 text-xs font-bold uppercase tracking-widest hover:underline text-center"
+            className="mt-6 text-primary text-xs font-bold uppercase tracking-widest hover:underline text-center"
           >
             XEM BÁO CÁO
           </button>
@@ -485,10 +464,10 @@ export default function Dashboard() {
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
               className="relative w-full max-w-2xl bg-white rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
             >
-              <div className="p-8 border-b border-surface-container flex justify-between items-center bg-gradient-to-r from-orange-50 to-transparent">
+              <div className="p-8 border-b border-surface-container flex justify-between items-center bg-gradient-to-r from-primary/5 to-transparent">
                 <div>
                   <h3 className="text-2xl font-black text-on-surface tracking-tight flex items-center gap-2">
-                    <Star className="text-orange-600" size={24} />
+                    <Star className="text-primary" size={24} />
                     Báo cáo sản phẩm bán chạy
                   </h3>
                   <p className="text-secondary font-medium mt-1">Xếp hạng Top 7 biến thể sản phẩm</p>
@@ -529,12 +508,12 @@ export default function Dashboard() {
                         key={`${product.sku}_${product.variant}`}
                         className={`flex items-center gap-4 p-4 rounded-3xl border transition-all ${
                           index === 0 
-                            ? 'bg-orange-50 border-orange-200 shadow-sm' 
+                            ? 'bg-primary/5 border-primary/20 shadow-sm' 
                             : 'bg-white border-surface-container'
                         }`}
                       >
                         <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-black text-lg ${
-                          index === 0 ? 'bg-orange-500 text-white' : 'bg-surface-container text-secondary'
+                          index === 0 ? 'bg-primary text-white' : 'bg-surface-container text-secondary'
                         }`}>
                           {index + 1}
                         </div>

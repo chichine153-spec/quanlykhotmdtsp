@@ -16,9 +16,14 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { MOCK_PRODUCTS } from './types';
 import { PDFService, ExtractedOrder } from './services/pdfService';
+import { handleFirestoreError, OperationType } from './lib/firestore-errors';
+import { ProfitService } from './services/profitService';
 import { useAuth } from './contexts/AuthContext';
-import { collection, query, limit, getDocs, onSnapshot } from 'firebase/firestore';
+import { collection, query, limit, getDocs, onSnapshot, where, doc, getDoc, orderBy } from 'firebase/firestore';
 import { db } from './firebase';
+import { ThermalLabel } from './components/RePrintModule';
+import { OrderRecord } from './services/inventoryService';
+import { Printer, X } from 'lucide-react';
 
 export default function PDFUpload() {
   const { user, login } = useAuth();
@@ -34,36 +39,64 @@ export default function PDFUpload() {
   const [isProcessingConfirmed, setIsProcessingConfirmed] = React.useState(false);
   const [showNegativeStockWarning, setShowNegativeStockWarning] = React.useState(false);
   const [currentFile, setCurrentFile] = React.useState<File | null>(null);
-  const [recentDeductions, setRecentDeductions] = React.useState<any[]>([]);
+  const [recentDeductions, setRecentDeductions] = React.useState<OrderRecord[]>([]);
   const [confirmingRevert, setConfirmingRevert] = React.useState<string | null>(null);
   const [isReverting, setIsReverting] = React.useState(false);
+  const [selectedOrderToPrint, setSelectedOrderToPrint] = React.useState<OrderRecord | null>(null);
+  const [showPrintTemplate, setShowPrintTemplate] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [isInventoryEmpty, setIsInventoryEmpty] = React.useState(false);
+  const [profitConfig, setProfitConfig] = React.useState<any>(null);
+  const [allProducts, setAllProducts] = React.useState<any[]>([]);
 
   React.useEffect(() => {
     const checkInventory = async () => {
-      const q = query(collection(db, 'inventory'), limit(1));
-      const snap = await getDocs(q);
-      setIsInventoryEmpty(snap.empty);
+      if (!user) return;
+      try {
+        const q = query(collection(db, 'inventory'), where('userId', '==', user.uid), limit(1));
+        const snap = await getDocs(q);
+        setIsInventoryEmpty(snap.empty);
+      } catch (error) {
+        // Only log if it's not a quota error to avoid flooding
+        if (error instanceof Error && !error.message.includes('Quota')) {
+          handleFirestoreError(error, OperationType.LIST, 'inventory');
+        }
+      }
     };
-    if (user) checkInventory();
-  }, [user, status]);
+    checkInventory();
+  }, [user]); // Removed status dependency to avoid redundant checks
+
+  React.useEffect(() => {
+    const fetchConfig = async () => {
+      if (!user) return;
+      try {
+        const snap = await getDoc(doc(db, 'profit_configs', user.uid));
+        if (snap.exists()) {
+          setProfitConfig(snap.data());
+        } else {
+          setProfitConfig({ packagingCostBottle: 6500, packagingCostCup: 8200 });
+        }
+      } catch (error) {
+        handleFirestoreError(error, OperationType.GET, 'profit_configs');
+      }
+    };
+    fetchConfig();
+  }, [user]);
   React.useEffect(() => {
     if (!user) return;
 
     // Listen to recent deductions from Firestore
-    const q = query(collection(db, 'orders'), limit(10));
+    const q = query(
+      collection(db, 'orders'), 
+      where('userId', '==', user.uid),
+      orderBy('processedAt', 'desc'),
+      limit(10)
+    );
     const unsubscribe = onSnapshot(q, (snap) => {
-      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      // Sort by processedAt descending client-side
-      docs.sort((a: any, b: any) => {
-        const dateA = a.processedAt ? new Date(a.processedAt).getTime() : 0;
-        const dateB = b.processedAt ? new Date(b.processedAt).getTime() : 0;
-        return dateB - dateA;
-      });
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() })) as unknown as OrderRecord[];
       setRecentDeductions(docs);
     }, (err) => {
-      console.error('Fetch Recent Error:', err);
+      handleFirestoreError(err, OperationType.LIST, 'orders');
     });
 
     return () => unsubscribe();
@@ -139,32 +172,62 @@ export default function PDFUpload() {
       setExtractedOrdersForReview([]);
       setCurrentFile(file);
 
-      // 1. Extract all orders from PDF
+      // 1. Extract all orders from PDF with a 15-second internal timeout
       setProgress(20);
+      
       const orders = await PDFService.extractOrderData(file);
+
       setTotalOrders(orders.length);
+      setProgress(40);
+
+      // Pre-fetch inventory once for all items to save quota
+      const inventoryRef = collection(db, 'inventory');
+      const allProductsSnap = await getDocs(query(
+        inventoryRef, 
+        where('userId', '==', user.uid)
+      ));
+      const products = allProductsSnap.docs.map(d => ({ 
+        id: d.id, 
+        ref: d.ref, 
+        ...d.data() as any 
+      }));
+      setAllProducts(products);
+
       setProgress(60);
 
-      // 2. Check stock for each item to show in review table
+      // 2. Check stock for each item using pre-fetched inventory
       const ordersWithStock = await Promise.all(orders.map(async (order) => {
         const itemsWithStock = await Promise.all(order.items.map(async (item) => {
-          const stockInfo = await PDFService.checkStockStatus(item.sku, item.color);
+          const stockInfo = await PDFService.checkStockStatus(item.sku, item.color, products);
+          
+          // Calculate packaging fee
+          const packagingFee = item.quantity * ProfitService.calculatePackagingFee(item.sku, stockInfo.productName || item.productName, profitConfig);
+
           return {
             ...item,
             stockStatus: stockInfo.inStock ? 'in_stock' : 'out_of_stock',
             currentStock: stockInfo.currentStock,
-            productName: stockInfo.productName || item.productName
+            productName: stockInfo.productName || item.productName,
+            category: stockInfo.category,
+            packagingFee
           };
         }));
         return { ...order, items: itemsWithStock };
       }));
 
-      setExtractedOrdersForReview(ordersWithStock);
+      setExtractedOrdersForReview(ordersWithStock as any);
       setProgress(100);
       setStatus('idle'); // Wait for user confirmation
     } catch (err: any) {
       console.error('Processing Error:', err);
-      setError(err.message || 'Đã xảy ra lỗi khi xử lý file.');
+      let errMsg = 'Đã xảy ra lỗi khi xử lý file.';
+      try {
+        const parsed = JSON.parse(err.message);
+        errMsg = parsed.userFriendlyMessage || parsed.error || err.message;
+      } catch {
+        errMsg = err.message || 'Đã xảy ra lỗi khi xử lý file.';
+      }
+      setError(errMsg);
       setStatus('error');
     } finally {
       setIsUploading(false);
@@ -172,25 +235,79 @@ export default function PDFUpload() {
   };
 
   const handleUpdateReviewItem = async (orderIdx: number, itemIdx: number, field: string, value: any) => {
-    const updated = [...extractedOrdersForReview];
+    // Create a deep-ish clone to ensure React detects changes in nested objects
+    const updated = extractedOrdersForReview.map((order, oIdx) => {
+      if (oIdx !== orderIdx) return order;
+      return {
+        ...order,
+        items: order.items.map((item, iIdx) => {
+          if (iIdx !== itemIdx) return item;
+          return { ...item };
+        })
+      };
+    });
+
     const item = updated[orderIdx].items[itemIdx];
     
     if (field === 'quantity') {
       item.quantity = Number(value);
+      // Recalculate packaging fee
+      item.packagingFee = item.quantity * ProfitService.calculatePackagingFee(item.sku, item.productName, profitConfig);
     } else {
       (item as any)[field] = value;
       
       // If SKU or Color changed, re-check stock
       if (field === 'sku' || field === 'color') {
         item.stockStatus = 'checking';
-        const stockInfo = await PDFService.checkStockStatus(item.sku, item.color);
-        item.stockStatus = stockInfo.inStock ? 'in_stock' : 'out_of_stock';
-        item.currentStock = stockInfo.currentStock;
-        item.productName = stockInfo.productName || item.productName;
+        // Update state immediately to show "checking"
+        setExtractedOrdersForReview([...updated]);
+        
+        try {
+          const stockInfo = await PDFService.checkStockStatus(item.sku, item.color, allProducts);
+          item.stockStatus = stockInfo.inStock ? 'in_stock' : 'out_of_stock';
+          item.currentStock = stockInfo.currentStock;
+          item.productName = stockInfo.productName || item.productName;
+          item.category = stockInfo.category;
+          
+          // Recalculate packaging fee with new category
+          item.packagingFee = item.quantity * ProfitService.calculatePackagingFee(item.sku, stockInfo.productName || item.productName, profitConfig);
+        } catch (err) {
+          console.error('Check stock error:', err);
+          item.stockStatus = 'out_of_stock';
+        }
       }
     }
     
+    setExtractedOrdersForReview([...updated]);
+  };
+
+  const handleDeleteReviewItem = (orderIdx: number, itemIdx: number) => {
+    const updated = [...extractedOrdersForReview];
+    const order = { ...updated[orderIdx] };
+    order.items = order.items.filter((_, i) => i !== itemIdx);
+    
+    if (order.items.length === 0) {
+      // Remove the entire order if no items left
+      updated.splice(orderIdx, 1);
+    } else {
+      updated[orderIdx] = order;
+    }
+    
     setExtractedOrdersForReview(updated);
+  };
+
+  const handleDeleteCurrentFileOrder = (idx: number) => {
+    setCurrentFileOrders(prev => prev.filter((_, i) => i !== idx));
+    // Also remove from extractedOrdersForReview to keep them in sync if processing hasn't reached it
+    setExtractedOrdersForReview(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleCancelReview = () => {
+    setExtractedOrdersForReview([]);
+    setCurrentFile(null);
+    setStatus('idle');
+    setProgress(0);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleConfirmProcess = async (force: boolean = false) => {
@@ -216,6 +333,30 @@ export default function PDFUpload() {
     const errors: string[] = [];
     let successCount = 0;
 
+    // Pre-fetch inventory and config once for the entire batch to save quota
+    let allProducts: any[] = [];
+    let config: any = null;
+    
+    try {
+      const inventoryRef = collection(db, 'inventory');
+      const allProductsSnap = await getDocs(query(
+        inventoryRef, 
+        where('userId', '==', user.uid)
+      ));
+      allProducts = allProductsSnap.docs.map(d => ({ 
+        id: d.id, 
+        ref: d.ref, 
+        ...d.data() as any 
+      }));
+
+      const configSnap = await getDoc(doc(db, 'profit_configs', user.uid));
+      config = configSnap.exists() ? configSnap.data() as any : { packagingCostBottle: 6500, packagingCostCup: 8200 };
+    } catch (err) {
+      console.error('Pre-fetch Error:', err);
+      // We'll continue, processOrder will fetch individually if needed, 
+      // but this might hit quota faster if we don't catch it here.
+    }
+
     for (let i = 0; i < extractedOrdersForReview.length; i++) {
       const order = extractedOrdersForReview[i];
       setCurrentFileOrders(prev => prev.map((o, idx) => idx === i ? { ...o, status: 'processing' } : o));
@@ -224,14 +365,20 @@ export default function PDFUpload() {
         const orderWeight = 100 / extractedOrdersForReview.length;
         setProgress(Math.floor(i * orderWeight));
         
-        await PDFService.processOrder(currentFile, order);
+        await PDFService.processOrder(currentFile, order, allProducts, config);
         successCount++;
         setProcessedOrders(successCount);
         setLastOrder(order);
         setCurrentFileOrders(prev => prev.map((o, idx) => idx === i ? { ...o, status: 'success' } : o));
       } catch (err: any) {
         console.error(`Error processing order ${order.trackingCode}:`, err);
-        const errMsg = err.message || 'Lỗi không xác định';
+        let errMsg = 'Lỗi không xác định';
+        try {
+          const parsed = JSON.parse(err.message);
+          errMsg = parsed.userFriendlyMessage || parsed.error || err.message;
+        } catch {
+          errMsg = err.message || 'Lỗi không xác định';
+        }
         errors.push(`${order.trackingCode}: ${errMsg}`);
         setCurrentFileOrders(prev => prev.map((o, idx) => idx === i ? { ...o, status: 'error', error: errMsg } : o));
       }
@@ -323,9 +470,9 @@ export default function PDFUpload() {
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
-                className="p-6 bg-green-50 text-green-800 rounded-3xl flex items-start gap-4 border border-green-200 shadow-sm"
+                className="p-6 bg-primary/5 text-primary rounded-3xl flex items-start gap-4 border border-primary/20 shadow-sm"
               >
-                <div className="w-12 h-12 rounded-2xl bg-green-100 flex items-center justify-center text-green-600 flex-shrink-0">
+                <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary flex-shrink-0">
                   <CheckCircle2 size={24} />
                 </div>
                 <div className="text-sm space-y-1 w-full">
@@ -333,8 +480,8 @@ export default function PDFUpload() {
                   <p className="font-bold text-on-surface">Đã khấu trừ thành công {processedOrders}/{totalOrders} đơn hàng.</p>
                   
                   {lastOrder && (
-                    <div className="mt-4 p-3 bg-white/50 rounded-xl border border-green-200">
-                      <p className="text-[10px] uppercase tracking-wider font-bold text-green-700 mb-2">Đơn hàng cuối cùng:</p>
+                    <div className="mt-4 p-3 bg-white/50 rounded-xl border border-primary/20">
+                      <p className="text-[10px] uppercase tracking-wider font-bold text-primary mb-2">Đơn hàng cuối cùng:</p>
                       <p className="font-mono text-xs mb-2">{lastOrder.trackingCode}</p>
                       <div className="space-y-1">
                         {lastOrder.items.map((item, idx) => (
@@ -410,10 +557,11 @@ export default function PDFUpload() {
                     <thead>
                       <tr className="bg-surface-container-low/20">
                         <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary">Mã vận đơn</th>
-                        <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary">Mã SKU</th>
-                        <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary">Màu sắc</th>
+                        <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary">MÃ SKU</th>
+                        <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary">MÀU SẮC</th>
                         <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-center">SL</th>
-                        <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-center">Trạng thái kho</th>
+                        <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-center">Phí ĐG</th>
+                        <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-center">TRẠNG THÁI KHO</th>
                         <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-right">Sửa</th>
                       </tr>
                     </thead>
@@ -424,33 +572,36 @@ export default function PDFUpload() {
                             <tr key={`${oIdx}-${iIdx}`} className="hover:bg-primary/5 transition-colors group">
                               <td className="px-4 py-3 font-mono text-[11px] text-on-surface">{order.trackingCode}</td>
                               <td className="px-4 py-3">
-                                <div className="relative">
-                                  <input 
-                                    type="text"
-                                    id={`sku-${oIdx}-${iIdx}`}
-                                    value={item.sku}
-                                    onChange={(e) => handleUpdateReviewItem(oIdx, iIdx, 'sku', e.target.value)}
-                                    className="bg-surface-container-low/50 border border-transparent focus:border-primary focus:bg-white rounded-lg px-2 py-1 outline-none font-bold text-[11px] text-secondary w-full transition-all"
-                                  />
-                                </div>
+                                <input 
+                                  type="text"
+                                  value={item.sku}
+                                  onChange={(e) => handleUpdateReviewItem(oIdx, iIdx, 'sku', e.target.value)}
+                                  className="bg-surface-container-lowest border border-surface-container focus:border-primary focus:ring-1 focus:ring-primary rounded-lg px-2 py-1 outline-none font-bold text-[11px] text-on-surface w-full transition-all"
+                                  placeholder="Mã SKU"
+                                />
                               </td>
                               <td className="px-4 py-3">
                                 <input 
                                   type="text"
-                                  id={`color-${oIdx}-${iIdx}`}
                                   value={item.color}
                                   onChange={(e) => handleUpdateReviewItem(oIdx, iIdx, 'color', e.target.value)}
-                                  className="bg-surface-container-low/50 border border-transparent focus:border-primary focus:bg-white rounded-lg px-2 py-1 outline-none text-[11px] text-secondary w-full transition-all"
+                                  className="bg-surface-container-lowest border border-surface-container focus:border-primary focus:ring-1 focus:ring-primary rounded-lg px-2 py-1 outline-none text-[11px] text-on-surface w-full transition-all"
+                                  placeholder="Màu sắc"
                                 />
                               </td>
                               <td className="px-4 py-3 text-center">
                                 <input 
                                   type="number"
-                                  id={`qty-${oIdx}-${iIdx}`}
                                   value={item.quantity}
                                   onChange={(e) => handleUpdateReviewItem(oIdx, iIdx, 'quantity', e.target.value)}
-                                  className="bg-surface-container-low/50 border border-transparent focus:border-primary focus:bg-white rounded-lg px-2 py-1 outline-none font-black text-primary text-xs w-12 text-center transition-all"
+                                  className="bg-surface-container-lowest border border-surface-container focus:border-primary focus:ring-1 focus:ring-primary rounded-lg px-1 py-1 outline-none font-black text-primary text-xs w-14 text-center transition-all"
+                                  min="1"
                                 />
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <span className="text-[10px] font-bold text-primary">
+                                  {item.packagingFee?.toLocaleString()}đ
+                                </span>
                               </td>
                               <td className="px-4 py-3 text-center">
                                 {item.stockStatus === 'checking' ? (
@@ -465,13 +616,25 @@ export default function PDFUpload() {
                                 <p className="text-[8px] text-secondary mt-0.5">Tồn: {item.currentStock || 0}</p>
                               </td>
                               <td className="px-4 py-3 text-right">
-                                <button 
-                                  onClick={() => document.getElementById(`sku-${oIdx}-${iIdx}`)?.focus()}
-                                  className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-all"
-                                  title="Chỉnh sửa dòng này"
-                                >
-                                  <Edit2 size={14} />
-                                </button>
+                                <div className="flex justify-end gap-1">
+                                  <button 
+                                    onClick={() => {
+                                      const input = document.querySelector(`input[value="${item.sku}"]`) as HTMLInputElement;
+                                      input?.focus();
+                                    }}
+                                    className="p-2 text-primary hover:bg-primary/10 rounded-xl transition-all"
+                                    title="Chỉnh sửa dòng này"
+                                  >
+                                    <Edit2 size={14} />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleDeleteReviewItem(oIdx, iIdx)}
+                                    className="p-2 text-error hover:bg-error/10 rounded-xl transition-all"
+                                    title="Xóa dòng này"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           ))}
@@ -483,14 +646,19 @@ export default function PDFUpload() {
                 <div className="p-6 bg-surface-container-low/30 border-t border-surface-container">
                   <button 
                     onClick={() => handleConfirmProcess()}
-                    className="w-full bg-gradient-to-br from-primary to-primary-container text-white py-4 rounded-2xl font-black shadow-lg hover:shadow-primary/20 active:scale-[0.98] transition-all flex items-center justify-center gap-3"
+                    disabled={status === 'processing'}
+                    className="w-full bg-gradient-to-br from-primary to-primary-container text-white py-4 rounded-2xl font-black shadow-lg hover:shadow-primary/20 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-3"
                   >
-                    <CheckCircle2 size={24} />
+                    {status === 'processing' ? (
+                      <Loader2 className="animate-spin" size={24} />
+                    ) : (
+                      <CheckCircle2 size={24} />
+                    )}
                     XÁC NHẬN VÀ CẬP NHẬT KHO HÀNG
                   </button>
                   <button 
-                    onClick={() => setExtractedOrdersForReview([])}
-                    className="w-full mt-3 text-xs font-bold text-secondary hover:text-error transition-colors"
+                    onClick={handleCancelReview}
+                    className="w-full mt-3 text-xs font-bold text-secondary hover:text-error transition-colors py-2"
                   >
                     Hủy bỏ và tải lại file khác
                   </button>
@@ -519,6 +687,7 @@ export default function PDFUpload() {
                         <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary">Sản phẩm (SKU - Màu)</th>
                         <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-center">SL</th>
                         <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-right">Trạng thái</th>
+                        <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-right">Thao tác</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-surface-container">
@@ -569,6 +738,16 @@ export default function PDFUpload() {
                                 </div>
                               )}
                             </div>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <button 
+                              onClick={() => handleDeleteCurrentFileOrder(idx)}
+                              disabled={order.status === 'processing'}
+                              className="p-2 text-error hover:bg-error/10 rounded-xl transition-all disabled:opacity-30"
+                              title="Xóa đơn này khỏi danh sách"
+                            >
+                              <Trash2 size={14} />
+                            </button>
                           </td>
                         </tr>
                       ))}
@@ -635,7 +814,7 @@ export default function PDFUpload() {
                   recentDeductions.map((item, idx) => (
                     <div key={idx} className="flex items-start justify-between gap-3 p-3 bg-surface-container-lowest/50 rounded-xl border border-surface-container/50 group">
                       <div className="flex items-start gap-3 min-w-0">
-                        <div className="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center text-green-600 flex-shrink-0">
+                        <div className="w-8 h-8 rounded-lg bg-primary/5 flex items-center justify-center text-primary flex-shrink-0">
                           <Clock size={14} />
                         </div>
                         <div className="min-w-0">
@@ -653,13 +832,36 @@ export default function PDFUpload() {
                           </div>
                         </div>
                       </div>
-                      <button 
-                        onClick={() => setConfirmingRevert(item.trackingCode || item.id)}
-                        className="p-1.5 text-secondary hover:text-error hover:bg-error/10 rounded-lg transition-all"
-                        title="Hoàn tác để tải lại"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        {item.pdfUrl && (
+                          <button 
+                            onClick={() => window.open(item.pdfUrl, '_blank')}
+                            className="p-1.5 text-primary hover:bg-primary/10 rounded-lg transition-all"
+                            title="In nhanh PDF gốc"
+                          >
+                            <Printer size={14} />
+                          </button>
+                        )}
+                        {!item.pdfUrl && (
+                          <button 
+                            onClick={() => {
+                              setSelectedOrderToPrint(item);
+                              setShowPrintTemplate(true);
+                            }}
+                            className="p-1.5 text-primary hover:bg-primary/10 rounded-lg transition-all"
+                            title="In nhiệt (mẫu hệ thống)"
+                          >
+                            <Printer size={14} />
+                          </button>
+                        )}
+                        <button 
+                          onClick={() => setConfirmingRevert(item.trackingCode || item.id)}
+                          className="p-1.5 text-secondary hover:text-error hover:bg-error/10 rounded-lg transition-all"
+                          title="Hoàn tác để tải lại"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
                   ))
                 )}
@@ -745,7 +947,73 @@ export default function PDFUpload() {
               </motion.div>
             </div>
           )}
+
+          {/* Print Template Modal */}
+          {showPrintTemplate && selectedOrderToPrint && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-8">
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setShowPrintTemplate(false)}
+                className="absolute inset-0 bg-black/60 backdrop-blur-sm no-print"
+              />
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                className="relative w-full max-w-2xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] no-print"
+              >
+                <div className="p-6 border-b border-surface-container flex justify-between items-center">
+                  <h3 className="text-xl font-black text-on-surface tracking-tight">Xem trước bản in nhiệt</h3>
+                  <button 
+                    onClick={() => setShowPrintTemplate(false)}
+                    className="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center text-secondary hover:bg-error hover:text-white transition-all"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <div className="flex-grow overflow-y-auto p-8 bg-surface-container-low flex justify-center">
+                  <div className="bg-white p-4 shadow-lg border border-surface-container" style={{ width: '100mm', minHeight: '150mm' }}>
+                    <ThermalLabel order={selectedOrderToPrint} />
+                  </div>
+                </div>
+
+                <div className="p-6 border-t border-surface-container flex gap-4">
+                  <button 
+                    onClick={() => setShowPrintTemplate(false)}
+                    className="flex-1 py-4 rounded-2xl font-bold text-secondary hover:bg-surface-container transition-all"
+                  >
+                    Đóng
+                  </button>
+                  <button 
+                    onClick={() => window.print()}
+                    className="flex-1 py-4 bg-primary text-white rounded-2xl font-black shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+                  >
+                    <Printer size={20} />
+                    IN NHIỆT NGAY
+                  </button>
+                </div>
+              </motion.div>
+
+              {/* Hidden Printable Area */}
+              <div className="print-only fixed inset-0 bg-white z-[200]">
+                <ThermalLabel order={selectedOrderToPrint} />
+              </div>
+            </div>
+          )}
         </AnimatePresence>
+
+        <style>{`
+          @media print {
+            .no-print { display: none !important; }
+            .print-only { display: block !important; }
+            body { background: white !important; }
+            @page { margin: 0; size: 100mm 150mm; }
+          }
+          .print-only { display: none; }
+        `}</style>
       </div>
     </motion.div>
   );

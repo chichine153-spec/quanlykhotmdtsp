@@ -21,16 +21,19 @@ import {
   Clock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { collection, onSnapshot, query, addDoc, getDocs, writeBatch, doc, updateDoc, deleteDoc, orderBy, limit, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, query, addDoc, getDocs, writeBatch, doc, updateDoc, deleteDoc, orderBy, limit, serverTimestamp, where } from 'firebase/firestore';
 import { db } from './firebase';
 import { MOCK_PRODUCTS, Product, InventoryLog } from './types';
 import { useAuth } from './contexts/AuthContext';
-import { X, Save, Trash2, Camera, Upload } from 'lucide-react';
+import { useData } from './contexts/DataContext';
+import { X, Save, Trash2, Camera, Upload, Globe } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import { handleFirestoreError, OperationType } from './lib/firestore-errors';
+import { ShopeeService, ScannedProduct } from './services/shopeeService';
 
 export default function Inventory() {
   const { user, login } = useAuth();
-  const [products, setProducts] = React.useState<Product[]>([]);
-  const [loading, setLoading] = React.useState(true);
+  const { inventory: products, loading } = useData();
   const [isSeeding, setIsSeeding] = React.useState(false);
   const [editingProduct, setEditingProduct] = React.useState<Product | null>(null);
   const [searchTerm, setSearchTerm] = React.useState('');
@@ -43,6 +46,15 @@ export default function Inventory() {
   const [isUpdating, setIsUpdating] = React.useState(false);
   const [isImporting, setIsImporting] = React.useState(false);
   const [isAddingNew, setIsAddingNew] = React.useState(false);
+  const [isScanning, setIsScanning] = React.useState(false);
+  const [shopUrl, setShopUrl] = React.useState('');
+  const [showScanner, setShowScanner] = React.useState(false);
+  const [scanError, setScanError] = React.useState<string | null>(null);
+  const [scannedProducts, setScannedProducts] = React.useState<ScannedProduct[]>([]);
+  const [rawText, setRawText] = React.useState('');
+  const [scanMode, setScanMode] = React.useState<'url' | 'text'>('url');
+  const [apiKeyError, setApiKeyError] = React.useState(false);
+  const confirmingDeleteIdRef = React.useRef<string | null>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const bulkImportRef = React.useRef<HTMLInputElement>(null);
@@ -53,7 +65,9 @@ export default function Inventory() {
     stock: 0,
     variant: '',
     category: 'General',
-    image: 'https://picsum.photos/seed/piti/200/200'
+    image: 'https://picsum.photos/seed/piti/200/200',
+    costPrice: 0,
+    sellingPrice: 0
   });
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -70,6 +84,8 @@ export default function Inventory() {
     }
   };
 
+  // No local inventory listener needed anymore, using global data from DataContext
+  /*
   React.useEffect(() => {
     if (!user) {
       setLoading(false);
@@ -77,7 +93,10 @@ export default function Inventory() {
     }
 
     setLoading(true);
-    const q = query(collection(db, 'inventory'));
+    const q = query(
+      collection(db, 'inventory'),
+      where('userId', '==', user.uid)
+    );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const items = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -92,14 +111,16 @@ export default function Inventory() {
 
     return () => unsubscribe();
   }, [user]);
+  */
 
   React.useEffect(() => {
     if (!user) return;
 
     const q = query(
       collection(db, 'inventory_logs'),
+      where('userId', '==', user.uid),
       orderBy('timestamp', 'desc'),
-      limit(50)
+      limit(20)
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const logs = snapshot.docs.map(doc => ({
@@ -107,6 +128,8 @@ export default function Inventory() {
         ...doc.data()
       })) as InventoryLog[];
       setInventoryLogs(logs);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'inventory_logs');
     });
 
     return () => unsubscribe();
@@ -139,6 +162,7 @@ export default function Inventory() {
       const status = (newProduct.stock || 0) > 10 ? 'in_stock' : ((newProduct.stock || 0) > 0 ? 'low_stock' : 'out_of_stock');
       await addDoc(collection(db, 'inventory'), {
         ...newProduct,
+        userId: user.uid,
         stock: Number(newProduct.stock || 0),
         status: status,
         createdAt: new Date().toISOString()
@@ -282,34 +306,58 @@ export default function Inventory() {
     const reader = new FileReader();
     reader.onload = async (event) => {
       try {
-        const text = event.target?.result as string;
-        const rows = text.split('\n').filter(row => row.trim());
+        const data = new Uint8Array(event.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
         
-        // Skip header if it exists (assuming: Name, SKU, Variant, Stock, Category)
-        const startIdx = rows[0].toLowerCase().includes('sku') ? 1 : 0;
+        // Convert to JSON (array of arrays)
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+        
+        if (jsonData.length < 1) {
+          throw new Error('File không có dữ liệu.');
+        }
+
+        // Identify if first row is header
+        const firstRow = jsonData[0];
+        const hasHeader = firstRow.some(cell => 
+          typeof cell === 'string' && 
+          (cell.toLowerCase().includes('tên') || cell.toLowerCase().includes('sku'))
+        );
+        
+        const rows = hasHeader ? jsonData.slice(1) : jsonData;
         
         const batch = writeBatch(db);
         let count = 0;
 
-        for (let i = startIdx; i < rows.length; i++) {
-          const cols = rows[i].split(',').map(c => c.trim());
-          if (cols.length < 2) continue;
+        for (const row of rows) {
+          if (!row || row.length === 0) continue;
 
-          const name = cols[0];
-          const sku = cols[1];
-          const variant = cols[2] || '';
-          const stock = parseInt(cols[3]) || 0;
-          const category = cols[4] || 'General';
+          // Expected columns based on user image:
+          // A: Name, B: SKU, C: Variant, D: Stock, E: Category, F: Cost Price, G: Selling Price
+          const name = String(row[0] || '').trim();
+          const sku = String(row[1] || '').trim();
+          const variant = String(row[2] || '').trim();
+          const stock = parseInt(String(row[3])) || 0;
+          const category = String(row[4] || 'General').trim();
+          const costPrice = parseInt(String(row[5])) || 0;
+          const sellingPrice = parseInt(String(row[6])) || 0;
+
+          if (!name || !sku) continue;
+
           const status = stock > 10 ? 'in_stock' : (stock > 0 ? 'low_stock' : 'out_of_stock');
 
           const newDocRef = doc(collection(db, 'inventory'));
           batch.set(newDocRef, {
+            userId: user.uid,
             name,
             sku,
             variant,
             stock,
             category,
             status,
+            costPrice,
+            sellingPrice,
             image: 'https://picsum.photos/seed/import/200/200',
             createdAt: new Date().toISOString()
           });
@@ -333,13 +381,13 @@ export default function Inventory() {
         alert(`Đã nhập thành công ${count} sản phẩm!`);
       } catch (error) {
         console.error("Bulk Import Error:", error);
-        alert('Lỗi khi nhập dữ liệu từ file. Vui lòng kiểm tra định dạng CSV (Name, SKU, Variant, Stock, Category).');
+        alert('Lỗi khi nhập dữ liệu từ file. Vui lòng kiểm tra định dạng file Excel/CSV.');
       } finally {
         setIsImporting(false);
         if (bulkImportRef.current) bulkImportRef.current.value = '';
       }
     };
-    reader.readAsText(file);
+    reader.readAsArrayBuffer(file);
   };
 
   const seedData = async () => {
@@ -350,6 +398,7 @@ export default function Inventory() {
         const docRef = doc(collection(db, 'inventory'));
         batch.set(docRef, {
           ...product,
+          userId: user.uid,
           createdAt: new Date().toISOString()
         });
       });
@@ -360,6 +409,52 @@ export default function Inventory() {
       alert('Lỗi khi nạp dữ liệu mẫu.');
     } finally {
       setIsSeeding(false);
+    }
+  };
+
+  const handleScanShop = async () => {
+    const key = localStorage.getItem('gemini_api_key');
+    if (!key) {
+      setApiKeyError(true);
+      return;
+    }
+    setApiKeyError(false);
+
+    if (scanMode === 'url' && !shopUrl) return;
+    if (scanMode === 'text' && !rawText) return;
+
+    setIsScanning(true);
+    setScanError(null);
+    try {
+      const products = await ShopeeService.scanShop(shopUrl, scanMode === 'text' ? rawText : undefined, key);
+      setScannedProducts(products);
+    } catch (error: any) {
+      console.error("Scan Error:", error);
+      if (error.message === 'MISSING_API_KEY') {
+        setApiKeyError(true);
+      } else {
+        setScanError(error.message || "Không thể quét dữ liệu. Vui lòng thử lại.");
+      }
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const handleSaveScanned = async () => {
+    if (!user || scannedProducts.length === 0) return;
+    setIsUpdating(true);
+    try {
+      await ShopeeService.saveToInventory(user.uid, scannedProducts);
+      setShowScanner(false);
+      setScannedProducts([]);
+      setShopUrl('');
+      setRawText('');
+      alert('Đã đồng bộ sản phẩm từ Shopee vào kho!');
+    } catch (error) {
+      console.error("Save Scanned Error:", error);
+      alert('Lỗi khi lưu sản phẩm vào kho.');
+    } finally {
+      setIsUpdating(false);
     }
   };
 
@@ -394,6 +489,13 @@ export default function Inventory() {
         </div>
         <div className="flex items-center gap-3">
           <button 
+            onClick={() => setShowScanner(true)}
+            className="px-4 py-3 rounded-xl border border-primary/20 text-primary font-bold flex items-center gap-2 hover:bg-primary/5 transition-all"
+          >
+            <Globe size={18} />
+            <span>Quét Shop Shopee</span>
+          </button>
+          <button 
             onClick={() => setShowHistory(true)}
             className="px-4 py-3 rounded-xl border border-surface-container text-secondary font-bold flex items-center gap-2 hover:bg-surface-container transition-all"
           >
@@ -413,7 +515,7 @@ export default function Inventory() {
             ref={bulkImportRef} 
             onChange={handleBulkImport} 
             className="hidden" 
-            accept=".csv"
+            accept=".csv, .xlsx, .xls"
           />
           <button 
             onClick={seedData}
@@ -544,6 +646,7 @@ export default function Inventory() {
                 <tr className="bg-surface-container-low/50">
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary">Thông tin sản phẩm</th>
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary">Mã SKU</th>
+                  <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Giá (Vốn/Bán)</th>
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Tồn kho</th>
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Trạng thái</th>
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-right">Thao tác</th>
@@ -561,7 +664,7 @@ export default function Inventory() {
                   <React.Fragment key={name}>
                     {/* Product Group Header Row */}
                     <tr className="bg-surface-container-low/30">
-                      <td colSpan={5} className="px-6 py-4">
+                      <td colSpan={6} className="px-6 py-4">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-4">
                             <div className="w-12 h-12 rounded-xl bg-white flex-shrink-0 overflow-hidden border border-surface-container shadow-sm">
@@ -609,6 +712,12 @@ export default function Inventory() {
                           </div>
                         </td>
                         <td className="px-6 py-4 font-mono text-xs font-bold text-on-surface-variant/70">{variant.sku}</td>
+                        <td className="px-6 py-4 text-center">
+                          <div className="flex flex-col items-center">
+                            <span className="text-xs font-bold text-error">{(variant.costPrice || 0).toLocaleString()}đ</span>
+                            <span className="text-xs font-bold text-green-600">{(variant.sellingPrice || 0).toLocaleString()}đ</span>
+                          </div>
+                        </td>
                         <td className="px-6 py-4 text-center">
                           {editingStockId === variant.id ? (
                             <div className="flex items-center justify-center gap-2">
@@ -697,7 +806,7 @@ export default function Inventory() {
             <button className="p-2 rounded-lg hover:bg-white transition-colors text-secondary disabled:opacity-30">
               <ChevronLeft size={18} />
             </button>
-            <button className="px-3 py-1 rounded-lg bg-orange-600 text-white font-bold text-sm">1</button>
+            <button className="px-3 py-1 rounded-lg bg-primary text-white font-bold text-sm">1</button>
             <button className="p-2 rounded-lg hover:bg-white transition-colors text-secondary">
               <ChevronRight size={18} />
             </button>
@@ -783,6 +892,168 @@ export default function Inventory() {
                 >
                   Đóng
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Shopee Scanner Modal */}
+      <AnimatePresence>
+        {showScanner && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-surface-container-lowest w-full max-w-4xl rounded-[32px] shadow-2xl overflow-hidden border border-surface-container flex flex-col max-h-[90vh]"
+            >
+              <div className="p-8 border-b border-surface-container flex items-center justify-between bg-surface-container-low/50">
+                <div>
+                  <h2 className="text-2xl font-bold text-on-surface flex items-center gap-3">
+                    <Globe className="text-primary" size={28} />
+                    Quét sản phẩm từ Shopee
+                  </h2>
+                  <p className="text-secondary text-sm">Sử dụng AI để tự động lấy danh sách sản phẩm từ link cửa hàng Shopee.</p>
+                </div>
+                <button 
+                  onClick={() => setShowScanner(false)}
+                  className="p-2 hover:bg-surface-container rounded-full transition-colors"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+
+              <div className="p-8 space-y-6 overflow-y-auto custom-scrollbar">
+                {apiKeyError && (
+                  <div className="p-4 bg-error/10 border border-error/20 rounded-2xl flex items-center gap-4 text-error">
+                    <AlertTriangle size={24} />
+                    <div>
+                      <p className="font-black uppercase tracking-widest text-xs">Lỗi API Key</p>
+                      <p className="text-sm font-bold">VUI LÒNG NHẬP API KEY ĐỂ SỬ DỤNG</p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex gap-2 p-1 bg-surface-container-low rounded-2xl w-fit">
+                  <button 
+                    onClick={() => setScanMode('url')}
+                    className={`px-6 py-2 rounded-xl font-bold text-xs transition-all ${scanMode === 'url' ? 'bg-primary text-white shadow-md' : 'text-secondary hover:bg-surface-container'}`}
+                  >
+                    Link Shopee
+                  </button>
+                  <button 
+                    onClick={() => setScanMode('text')}
+                    className={`px-6 py-2 rounded-xl font-bold text-xs transition-all ${scanMode === 'text' ? 'bg-primary text-white shadow-md' : 'text-secondary hover:bg-surface-container'}`}
+                  >
+                    Dán văn bản
+                  </button>
+                </div>
+
+                {scanMode === 'url' ? (
+                  <div className="space-y-2">
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-secondary">Link cửa hàng Shopee</label>
+                    <div className="flex gap-3">
+                      <input 
+                        type="text"
+                        value={shopUrl}
+                        onChange={(e) => setShopUrl(e.target.value)}
+                        placeholder="https://shopee.vn/shop/12345678"
+                        className="flex-1 px-6 py-4 bg-surface-container-low border border-surface-container rounded-2xl focus:ring-2 focus:ring-primary/20 outline-none transition-all font-medium"
+                      />
+                      <button 
+                        onClick={handleScanShop}
+                        disabled={isScanning || !shopUrl}
+                        className="px-8 py-4 bg-primary text-white rounded-2xl font-bold shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 flex items-center gap-2"
+                      >
+                        {isScanning ? <Loader2 className="animate-spin" size={20} /> : <Search size={20} />}
+                        <span>{isScanning ? 'Đang quét...' : 'Bắt đầu quét'}</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-secondary">Dán nội dung trang sản phẩm</label>
+                    <textarea 
+                      value={rawText}
+                      onChange={(e) => setRawText(e.target.value)}
+                      placeholder="Copy toàn bộ nội dung trang sản phẩm Shopee và dán vào đây..."
+                      className="w-full h-48 px-6 py-4 bg-surface-container-low border border-surface-container rounded-2xl focus:ring-2 focus:ring-primary/20 outline-none transition-all font-medium resize-none"
+                    />
+                    <button 
+                      onClick={handleScanShop}
+                      disabled={isScanning || !rawText}
+                      className="w-full py-4 bg-primary text-white rounded-2xl font-bold shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {isScanning ? <Loader2 className="animate-spin" size={20} /> : <Search size={20} />}
+                      <span>{isScanning ? 'Đang xử lý AI...' : 'Bóc tách bằng AI'}</span>
+                    </button>
+                  </div>
+                )}
+
+                {scanError && (
+                  <div className="p-4 bg-error/10 border border-error/20 rounded-2xl text-error text-sm font-bold flex items-center gap-3">
+                    <AlertTriangle size={20} />
+                    {scanError}
+                  </div>
+                )}
+
+                {scannedProducts.length > 0 && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-bold text-on-surface">Kết quả bóc tách ({scannedProducts.length} sản phẩm)</h3>
+                      <p className="text-[10px] font-bold text-secondary uppercase tracking-widest">Vui lòng kiểm tra kỹ trước khi lưu</p>
+                    </div>
+                    <div className="border border-surface-container rounded-2xl overflow-hidden">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-surface-container-low/50">
+                            <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary">Sản phẩm</th>
+                            <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary">Mã SKU</th>
+                            <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary">Phân loại</th>
+                            <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-right">Giá bán</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-surface-container">
+                          {scannedProducts.map((p, idx) => (
+                            <tr key={idx} className="hover:bg-surface-container-low/30 transition-colors">
+                              <td className="px-4 py-3">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-lg overflow-hidden bg-surface-container flex-shrink-0">
+                                    <img src={p.image} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                  </div>
+                                  <span className="text-xs font-bold text-on-surface line-clamp-1">{p.name}</span>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 font-mono text-xs font-bold text-primary">{p.sku}</td>
+                              <td className="px-4 py-3 text-xs text-secondary">{p.variant}</td>
+                              <td className="px-4 py-3 text-xs font-bold text-green-600 text-right">{p.sellingPrice.toLocaleString()}đ</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-8 border-t border-surface-container bg-surface-container-low/50 flex justify-end gap-4">
+                <button 
+                  onClick={() => setShowScanner(false)}
+                  className="px-8 py-3 rounded-2xl border border-surface-container font-bold text-secondary hover:bg-surface-container transition-all"
+                >
+                  Đóng
+                </button>
+                {scannedProducts.length > 0 && (
+                  <button 
+                    onClick={handleSaveScanned}
+                    disabled={isUpdating}
+                    className="px-8 py-3 bg-green-600 text-white rounded-2xl font-bold shadow-lg shadow-green-600/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {isUpdating ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />}
+                    <span>Lưu vào kho hàng</span>
+                  </button>
+                )}
               </div>
             </motion.div>
           </div>
@@ -951,6 +1222,36 @@ export default function Inventory() {
                         else if (editingProduct) setEditingProduct({...editingProduct, category: e.target.value});
                       }}
                       className="w-full px-4 py-3 bg-surface-container-low border border-surface-container rounded-xl focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-xs font-bold uppercase tracking-widest text-secondary">Giá vốn (VNĐ)</label>
+                    <input 
+                      type="number"
+                      value={isAddingNew ? newProduct.costPrice : editingProduct?.costPrice || 0}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value) || 0;
+                        if (isAddingNew) setNewProduct({...newProduct, costPrice: val});
+                        else if (editingProduct) setEditingProduct({...editingProduct, costPrice: val});
+                      }}
+                      className="w-full px-4 py-3 bg-surface-container-low border border-surface-container rounded-xl focus:ring-2 focus:ring-primary/20 outline-none transition-all font-bold text-error"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-xs font-bold uppercase tracking-widest text-secondary">Giá bán (VNĐ)</label>
+                    <input 
+                      type="number"
+                      value={isAddingNew ? newProduct.sellingPrice : editingProduct?.sellingPrice || 0}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value) || 0;
+                        if (isAddingNew) setNewProduct({...newProduct, sellingPrice: val});
+                        else if (editingProduct) setEditingProduct({...editingProduct, sellingPrice: val});
+                      }}
+                      className="w-full px-4 py-3 bg-surface-container-low border border-surface-container rounded-xl focus:ring-2 focus:ring-primary/20 outline-none transition-all font-bold text-green-600"
+                      required
                     />
                   </div>
                 </div>

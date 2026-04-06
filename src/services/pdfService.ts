@@ -16,21 +16,28 @@ import {
   getDocs,
   runTransaction,
   deleteDoc,
-  serverTimestamp
+  Timestamp,
+  orderBy,
+  limit
 } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { db, storage, auth } from '../firebase';
+import { ProfitService } from './profitService';
 
 export interface ExtractedItem {
   sku: string;
   color: string;
   quantity: number;
   productName?: string;
+  currentStock?: number;
+  packagingFee?: number;
+  stockStatus?: 'in_stock' | 'out_of_stock' | 'low_stock' | 'checking';
 }
 
 export interface ExtractedOrder {
   trackingCode: string;
   items: ExtractedItem[];
+  region?: string;
 }
 
 enum OperationType {
@@ -92,8 +99,18 @@ export class PDFService {
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
     const orders: ExtractedOrder[] = [];
+    const startTime = Date.now();
+    const TIMEOUT_MS = 15000; // 15 seconds timeout
 
+    let timedOut = false;
     for (let i = 1; i <= pdf.numPages; i++) {
+      // Check for timeout
+      if (Date.now() - startTime > TIMEOUT_MS) {
+        console.warn(`Extraction timed out after ${TIMEOUT_MS}ms. Returning ${orders.length} partial results.`);
+        timedOut = true;
+        break; 
+      }
+
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
       
@@ -154,6 +171,11 @@ export class PDFService {
         console.warn(`Page ${i}: No tracking code detected.`);
         continue; 
       }
+
+      // 1.5. Mã vùng (Region): Look for something like "HCM-7", "HN-3", etc.
+      const regionPattern = /\b([A-Z]{2,3}-\d{1,3})\b/;
+      const regionMatch = pageText.match(regionPattern);
+      const region = regionMatch ? regionMatch[1] : undefined;
 
       // 2. Mã sản phẩm (SKU), Màu sắc & Số lượng
       const extractedItems: ExtractedItem[] = [];
@@ -217,11 +239,14 @@ export class PDFService {
       }
 
       if (extractedItems.length > 0) {
-        orders.push({ trackingCode, items: extractedItems });
+        orders.push({ trackingCode, items: extractedItems, region });
       }
     }
 
     if (orders.length === 0) {
+      if (timedOut) {
+        throw new Error('Lỗi kết nối, vui lòng thử lại (Quá thời gian xử lý 15s)');
+      }
       throw new Error('Không tìm thấy dữ liệu đơn hàng hợp lệ trong file PDF. Vui lòng kiểm tra xem file có phải là vận đơn Shopee chuẩn không.');
     }
 
@@ -241,85 +266,83 @@ export class PDFService {
       return null;
     }
 
-    // Split by comma or semicolon - Shopee labels often use commas to separate name, SKU, and variant
+    // Split by comma or semicolon
     const parts = cleanedInfo.split(/[,;]/).map(p => p.trim()).filter(p => p.length > 0);
     if (parts.length === 0) return null;
     
     let sku = '';
     let color = '';
     
-    // Strategy 1: Look for a numeric SKU (3+ digits) anywhere in the last part
+    // The last part usually contains the SKU and Variant in Shopee labels
     const lastPart = parts[parts.length - 1];
     
-    // Try to find the first number that looks like a SKU (3+ digits)
-    const skuCandidateMatch = lastPart.match(/\b(\d{3,10})\b/);
-    if (skuCandidateMatch) {
-      sku = skuCandidateMatch[1];
-      // The rest of the string after the SKU is likely the color/variant
-      const skuIndex = lastPart.indexOf(sku);
-      color = lastPart.substring(skuIndex + sku.length).trim();
-      
-      // Clean up color (remove leading SL: or other junk)
-      color = color.replace(/SL:\s*\d+/i, '').trim();
-      color = color.replace(/^[,\-\s]+/, '').trim();
-    }
+    // 1. Clean dimension patterns (e.g., 31x16x7, 1200ml) and "Size"
+    const dimensionPattern = /\b\d+x\d+x\d+\b|\b\d+ml\b/i;
+    const sizePattern = /\bSize\b/i;
 
-    if (!sku) {
-      // If no numeric SKU found, try to extract leading number as SKU (for shorter SKUs)
-      const leadingNumberMatch = lastPart.match(/^(\d+)\s*(.*)$/);
-      if (leadingNumberMatch) {
-        sku = leadingNumberMatch[1];
-        color = leadingNumberMatch[2];
-      }
-    }
-
-    if (!sku) {
-      // Check if lastPart looks like "SKU-Variant" or just "SKU"
-      const skuMatch = lastPart.match(/^([A-Z0-9]{2,})(?:[\s\-]+(.*))?$/i);
+    // 2. Extract SKU: Look for numeric SKU (3+ digits) or BGN prefix
+    // We want to be strict about what counts as an SKU
+    const skuMatch = lastPart.match(/\b(BGN\d*|315|330|336|338|\d{3,10})\b/i);
+    
+    if (skuMatch) {
+      const potentialSku = skuMatch[1].trim();
       
-      if (skuMatch) {
-        sku = skuMatch[1].trim();
-        color = skuMatch[2] ? skuMatch[2].trim() : '';
-      } else {
-        // If lastPart doesn't look like a SKU, maybe the SKU is in the second to last part
-        if (parts.length > 1) {
-          const secondLastPart = parts[parts.length - 2];
-          const secondLastMatch = secondLastPart.match(/^([A-Z0-9]{2,})$/i);
-          if (secondLastMatch) {
-            sku = secondLastMatch[1];
-            color = lastPart;
-          } else {
-            // Fallback: use the last part as SKU if it's alphanumeric
-            sku = lastPart.replace(/[^A-Z0-9]/gi, '');
-          }
+      // Check if this potential SKU is actually a dimension or "Size"
+      if (dimensionPattern.test(potentialSku) || sizePattern.test(potentialSku)) {
+        // If it is garbage, we look for a REAL SKU in the remaining text
+        const remainingText = cleanedInfo.replace(potentialSku, '');
+        const realSkuMatch = remainingText.match(/\b(BGN\d*|315|330|336|338|\d{3,10})\b/i);
+        
+        if (realSkuMatch) {
+          sku = realSkuMatch[1].trim();
+          // Color is the rest of the text, including the garbage we found
+          color = cleanedInfo.replace(sku, '').trim();
         } else {
-          sku = lastPart.replace(/[^A-Z0-9]/gi, '');
+          // If no real SKU found, this might not be a valid product for our inventory
+          sku = '';
+          color = cleanedInfo;
+        }
+      } else {
+        sku = potentialSku;
+        // Color is everything else in the last part or other parts
+        color = lastPart.replace(sku, '').trim();
+        if (!color && parts.length > 1) {
+          color = parts.slice(0, -1).join(', ');
+        }
+      }
+    } else {
+      // Fallback: use the first word of the last part if it looks like a code
+      const firstWord = lastPart.split(/[\s\-]/)[0].trim();
+      if (firstWord.length >= 3 && !dimensionPattern.test(firstWord) && !sizePattern.test(firstWord)) {
+        sku = firstWord;
+        color = lastPart.substring(sku.length).trim();
+      } else {
+        // Try other parts
+        for (let i = parts.length - 2; i >= 0; i--) {
+          const partMatch = parts[i].match(/\b(BGN\d*|315|330|336|338|\d{3,10})\b/i);
+          if (partMatch && !dimensionPattern.test(partMatch[1]) && !sizePattern.test(partMatch[1])) {
+            sku = partMatch[1].trim();
+            color = cleanedInfo.replace(sku, '').trim();
+            break;
+          }
         }
       }
     }
 
-    // Final validation: SKU should not be a common word or too long to be a SKU
-    const commonWords = ['COSTA', 'DUNG', 'TICH', 'BINH', 'COC', 'GIU', 'NHIET'];
-    if (commonWords.includes(sku.toUpperCase())) {
-        // If it's a common word, it's likely part of the name, not the SKU
-        // Try to find a better SKU in the string
-        const allPossibleSkus = cleanedInfo.match(/\b[A-Z0-9]{3,15}\b/gi);
-        if (allPossibleSkus) {
-            // Pick the one that looks most like a SKU (e.g., contains numbers)
-            const bestSku = allPossibleSkus.find(s => /\d/.test(s)) || allPossibleSkus[allPossibleSkus.length - 1];
-            if (bestSku) sku = bestSku;
-        }
+    // 3. Final cleanup of SKU and Color
+    sku = sku.replace(/^[,\-\s]+|[,\-\s]+$/g, '').trim();
+    color = color.replace(/^[,\-\s]+|[,\-\s]+$/g, '').trim();
+    
+    // Remove "SL: X" from color
+    color = color.replace(/SL:\s*\d+/i, '').trim();
+    
+    // If SKU is still a dimension or "Size", move it to color
+    if (dimensionPattern.test(sku) || sizePattern.test(sku)) {
+      color = `${sku} ${color}`.trim();
+      sku = '';
     }
 
-    // Clean SKU to be alphanumeric only for internal matching
-    sku = sku.replace(/[^A-Z0-9]/gi, '');
-    if (sku.length < 2) return null;
-
-    // NEW REQUIREMENT: SKU must start with a number
-    if (!/^\d/.test(sku)) {
-      console.warn(`Skipping SKU [${sku}] because it does not start with a number.`);
-      return null;
-    }
+    if (!sku) return null;
 
     return { sku, color, quantity };
   }
@@ -331,13 +354,21 @@ export class PDFService {
     let allProducts = preFetchedProducts;
     
     if (!allProducts) {
-      const inventoryRef = collection(db, 'inventory');
-      const allProductsSnap = await getDocs(inventoryRef);
-      allProducts = allProductsSnap.docs.map(d => ({ 
-        id: d.id, 
-        ref: d.ref, 
-        ...d.data() as any 
-      }));
+      try {
+        const inventoryRef = collection(db, 'inventory');
+        const allProductsSnap = await getDocs(query(
+          inventoryRef, 
+          where('userId', '==', auth.currentUser?.uid)
+        ));
+        allProducts = allProductsSnap.docs.map(d => ({ 
+          id: d.id, 
+          ref: d.ref, 
+          ...d.data() as any 
+        }));
+      } catch (error) {
+        handleFirestoreError(error, OperationType.LIST, 'inventory');
+        return null;
+      }
     }
 
     const normalize = (s: any) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -376,18 +407,19 @@ export class PDFService {
   /**
    * Checks if a product is in stock
    */
-  static async checkStockStatus(sku: string, color: string): Promise<{ inStock: boolean, currentStock: number, productName?: string }> {
+  static async checkStockStatus(sku: string, color: string, preFetchedProducts?: any[]): Promise<{ inStock: boolean, currentStock: number, productName?: string, category?: string }> {
     try {
-      const matchedProduct = await this.findMatchedProduct(sku, color);
+      const matchedProduct = await this.findMatchedProduct(sku, color, preFetchedProducts);
       if (!matchedProduct) return { inStock: false, currentStock: 0 };
       
       return { 
         inStock: matchedProduct.stock > 0, 
         currentStock: matchedProduct.stock,
-        productName: matchedProduct.name
+        productName: matchedProduct.name,
+        category: matchedProduct.category
       };
     } catch (error) {
-      console.error('Check Stock Error:', error);
+      handleFirestoreError(error, OperationType.GET, 'inventory');
       return { inStock: false, currentStock: 0 };
     }
   }
@@ -395,25 +427,44 @@ export class PDFService {
   /**
    * Processes an entire order: checks for duplicates, updates inventory for all items, and uploads the label.
    */
-  static async processOrder(file: File, order: ExtractedOrder): Promise<{ productNames: string[] }> {
+  static async processOrder(file: File, order: ExtractedOrder, preFetchedProducts?: any[], preFetchedConfig?: any): Promise<{ productNames: string[] }> {
     const { trackingCode, items } = order;
     console.log(`Processing order: ${trackingCode} with ${items.length} items`);
 
     try {
       const processedOrderRef = doc(db, 'processed_orders', trackingCode);
       const orderRef = doc(db, 'orders', trackingCode);
+      const shippingLabelRef = doc(db, 'shipping_labels', trackingCode);
       const productNames: string[] = [];
 
-      // Fetch all inventory once to perform robust matching in memory
-      const inventoryRef = collection(db, 'inventory');
-      const allProductsSnap = await getDocs(inventoryRef);
-      const allProducts = allProductsSnap.docs.map(d => ({ 
-        id: d.id, 
-        ref: d.ref, 
-        ...d.data() as any 
-      }));
+      // Use pre-fetched products if available, otherwise fetch once
+      let allProducts = preFetchedProducts;
+      if (!allProducts) {
+        const inventoryRef = collection(db, 'inventory');
+        const allProductsSnap = await getDocs(query(
+          inventoryRef, 
+          where('userId', '==', auth.currentUser?.uid)
+        ));
+        allProducts = allProductsSnap.docs.map(d => ({ 
+          id: d.id, 
+          ref: d.ref, 
+          ...d.data() as any 
+        }));
+      }
 
-      // 1. Perform atomic transaction for the entire order
+      // 1. Upload PDF to Storage first to get the URL
+      const storageRef = ref(storage, `shipping_labels/${trackingCode}_${Date.now()}.pdf`);
+      const uploadResult = await uploadBytes(storageRef, file);
+      const downloadURL = await getDownloadURL(uploadResult.ref);
+
+      // 1.5 Use pre-fetched config if available, otherwise fetch
+      let config = preFetchedConfig;
+      if (!config) {
+        const configSnap = await getDoc(doc(db, 'profit_configs', auth.currentUser?.uid || ''));
+        config = configSnap.exists() ? configSnap.data() as any : { packagingCostBottle: 6500, packagingCostCup: 8200 };
+      }
+
+      // 2. Perform atomic transaction for the entire order
       await runTransaction(db, async (transaction) => {
         // Check for duplicate order in processed_orders collection
         const tProcessedSnap = await transaction.get(processedOrderRef);
@@ -423,7 +474,6 @@ export class PDFService {
 
         const inventoryUpdates: { ref: any, newStock: number, status: string }[] = [];
         const processedItems: any[] = [];
-        const logEntries: any[] = [];
 
         for (const item of items) {
           const { sku, color, quantity } = item;
@@ -460,23 +510,10 @@ export class PDFService {
             variant: matchedProduct.variant || '',
             quantity,
             productName: matchedProduct.name,
-            productId: productRef.id
-          });
-
-          // Prepare inventory log
-          const logRef = doc(collection(db, 'inventory_logs'));
-          logEntries.push({
-            ref: logRef,
-            data: {
-              timestamp: serverTimestamp(),
-              trackingCode,
-              sku: matchedProduct.sku,
-              productName: matchedProduct.name,
-              variant: matchedProduct.variant || '',
-              change: -deductQty,
-              type: 'deduction',
-              userId: auth.currentUser?.uid
-            }
+            productId: productRef.id,
+            category: matchedProduct.category || '',
+            costPrice: Number(matchedProduct.costPrice || 0),
+            sellingPrice: Number(matchedProduct.sellingPrice || 0)
           });
         }
 
@@ -492,31 +529,52 @@ export class PDFService {
           });
         }
 
-        // Apply all logs
-        for (const log of logEntries) {
-          transaction.set(log.ref, log.data);
-        }
-
         // Save order record
+        const now = new Date();
+        const expiryDate = new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000);
+        
+        const totalRevenue = processedItems.reduce((sum, item) => sum + (item.sellingPrice * item.quantity), 0);
+        const totalCost = processedItems.reduce((sum, item) => sum + (item.costPrice * item.quantity), 0);
+        
+        // Calculate packaging fee based on item category
+        const packagingFee = processedItems.reduce((sum, item) => {
+          const fee = ProfitService.calculatePackagingFee(item.sku, item.productName || '', config);
+          return sum + (item.quantity * fee);
+        }, 0);
+
         transaction.set(orderRef, {
           trackingCode,
-          processedAt: new Date().toISOString(),
+          processedAt: now.toISOString(),
+          expiryDate: expiryDate.toISOString(),
           items: processedItems,
-          userId: auth.currentUser?.uid
+          region: order.region || '',
+          userId: auth.currentUser?.uid,
+          pdfUrl: downloadURL,
+          totalRevenue,
+          totalCost,
+          packagingFee
         });
 
         // Mark as processed
         transaction.set(processedOrderRef, {
           trackingCode,
-          processedAt: new Date().toISOString(),
+          processedAt: now.toISOString(),
+          expiryDate: expiryDate.toISOString(),
           userId: auth.currentUser?.uid
         });
-      });
 
-      // 2. Upload PDF to Storage in background (optional, but good for records)
-      // Since we might have multiple orders in one file, we upload the same file for each tracking code
-      const storageRef = ref(storage, `shipping_labels/${trackingCode}.pdf`);
-      uploadBytes(storageRef, file).catch(err => console.error('Storage Upload Error:', err));
+        // Save to shipping_labels for re-print
+        transaction.set(shippingLabelRef, {
+          trackingCode,
+          pdfUrl: downloadURL,
+          storagePath: storageRef.fullPath,
+          uploadDate: now.toISOString(),
+          expiryDate: expiryDate.toISOString(),
+          userId: auth.currentUser?.uid,
+          region: order.region || '',
+          items: processedItems.map(i => `${i.sku} (${i.quantity})`).join(', ')
+        });
+      });
 
       return { productNames };
     } catch (error: any) {
@@ -524,6 +582,54 @@ export class PDFService {
       if (error.message.includes('Không tìm thấy sản phẩm')) throw error;
       handleFirestoreError(error, OperationType.WRITE, 'transaction');
       throw error;
+    }
+  }
+
+  /**
+   * Cleanup expired orders and PDF files (15 days retention)
+   */
+  static async cleanupExpiredData(userId: string): Promise<number> {
+    try {
+      const now = new Date().toISOString();
+      const labelsRef = collection(db, 'shipping_labels');
+      const q = query(
+        labelsRef, 
+        where('userId', '==', userId),
+        where('expiryDate', '<=', now)
+      );
+      const snapshot = await getDocs(q);
+      
+      let count = 0;
+      for (const docSnap of snapshot.docs) {
+        const data = docSnap.data();
+        
+        // 1. Delete from Storage
+        if (data.storagePath) {
+          try {
+            const fileRef = ref(storage, data.storagePath);
+            await deleteObject(fileRef);
+          } catch (e) {
+            console.error('Error deleting file from storage:', e);
+          }
+        }
+
+        // 2. Delete from Firestore shipping_labels
+        await deleteDoc(docSnap.ref);
+
+        // 3. Delete from orders and processed_orders (optional but keeps DB clean)
+        try {
+          await deleteDoc(doc(db, 'orders', data.trackingCode));
+          await deleteDoc(doc(db, 'processed_orders', data.trackingCode));
+        } catch (e) {
+          console.error('Error deleting order records:', e);
+        }
+
+        count++;
+      }
+      return count;
+    } catch (error) {
+      console.error('Cleanup Error:', error);
+      return 0;
     }
   }
 
@@ -548,19 +654,6 @@ export class PDFService {
             const productRef = doc(db, 'inventory', item.productId);
             transaction.update(productRef, {
               stock: increment(item.quantity)
-            });
-
-            // Log the revert as an addition
-            const logRef = doc(collection(db, 'inventory_logs'));
-            transaction.set(logRef, {
-              timestamp: serverTimestamp(),
-              trackingCode: `REVERT-${trackingCode}`,
-              sku: item.sku,
-              productName: item.productName,
-              variant: item.variant || '',
-              change: item.quantity,
-              type: 'addition',
-              userId: auth.currentUser?.uid
             });
           }
         }

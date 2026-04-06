@@ -1,7 +1,7 @@
 import React from 'react';
 import { 
   CheckCircle2, 
-  Scan, 
+  TrendingUp, 
   LayoutDashboard, 
   Lightbulb 
 } from 'lucide-react';
@@ -74,11 +74,11 @@ export default function ScanSuccess({ onScreenChange }: ScanSuccessProps) {
 
         <div className="flex flex-col w-full gap-3">
           <button 
-            onClick={() => onScreenChange('scanner')}
+            onClick={() => onScreenChange('profit')}
             className="bg-gradient-to-br from-primary to-primary-container text-white font-bold py-4 px-8 rounded-full flex items-center justify-center gap-2 active:scale-95 transition-all duration-200"
           >
-            <Scan size={20} />
-            Tiếp tục quét
+            <TrendingUp size={20} />
+            Xem báo cáo lợi nhuận
           </button>
           <button 
             onClick={() => onScreenChange('dashboard')}

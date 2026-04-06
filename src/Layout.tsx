@@ -5,16 +5,18 @@ import {
   Package, 
   RotateCcw, 
   Search, 
-  Scan,
+  TrendingUp,
   Bell,
   LogOut,
   LogIn,
   Menu,
-  X
+  X,
+  AlertTriangle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Screen } from './types';
 import { useAuth } from './contexts/AuthContext';
+import ApiKeyManager from './components/ApiKeyManager';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -31,8 +33,9 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
     { id: 'upload', label: 'Tải lên PDF', icon: UploadCloud },
     { id: 'inventory', label: 'Kho hàng', icon: Package },
     { id: 'returns', label: 'Hàng Hoàn', icon: RotateCcw },
-    { id: 'search', label: 'Tìm kiếm đơn hàng', icon: Search },
-    { id: 'scanner', label: 'Quét Shopee', icon: Scan },
+    { id: 'stockin', label: 'Nhập kho hàng về', icon: Search },
+    { id: 'reprint', label: 'In lại đơn hàng', icon: RotateCcw },
+    { id: 'profit', label: 'Báo cáo lợi nhuận', icon: TrendingUp },
   ];
 
   return (
@@ -50,11 +53,12 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
             <div className="w-8 h-8 rounded-lg bg-primary-container flex items-center justify-center text-white">
               <Package size={18} />
             </div>
-            <span className="text-lg font-black tracking-tighter text-orange-600 font-headline">LUCID INVENTORY</span>
+            <span className="text-lg font-black tracking-tighter text-primary font-headline">LUCID INVENTORY</span>
           </div>
         </div>
         
         <div className="flex items-center gap-2 md:gap-4">
+          <ApiKeyManager />
           {error && !user && (
             <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-red-50 text-red-600 rounded-full text-[10px] font-bold border border-red-100">
               <AlertTriangle size={12} />
@@ -105,7 +109,7 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
               <Package size={24} />
             </div>
             <div>
-              <p className="text-xl font-bold text-orange-600 font-headline">Quản lý kho</p>
+              <p className="text-xl font-bold text-primary font-headline">Quản lý kho</p>
               <p className="text-[10px] uppercase tracking-widest text-secondary font-bold">Shopee Premium Vendor</p>
             </div>
           </div>
@@ -118,7 +122,7 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
               onClick={() => onScreenChange(item.id as Screen)}
               className={`flex items-center gap-4 px-4 py-3 rounded-xl transition-all font-medium text-sm tracking-tight ${
                 activeScreen === item.id 
-                  ? 'bg-gradient-to-br from-orange-600 to-orange-400 text-white shadow-lg shadow-orange-200' 
+                  ? 'bg-primary text-white shadow-lg shadow-primary/20' 
                   : 'text-secondary hover:bg-surface-container hover:translate-x-1'
               }`}
             >
@@ -168,7 +172,7 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
               className="fixed left-0 top-0 bottom-0 w-72 bg-white z-[80] lg:hidden p-4 flex flex-col gap-6"
             >
               <div className="flex justify-between items-center px-2">
-                <span className="text-lg font-black text-orange-600">LUCID INVENTORY</span>
+                <span className="text-lg font-black text-primary">LUCID INVENTORY</span>
                 <button onClick={() => setIsSidebarOpen(false)} className="p-2">
                   <X size={20} />
                 </button>
@@ -211,12 +215,12 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
             key={item.id}
             onClick={() => onScreenChange(item.id as Screen)}
             className={`flex flex-col items-center justify-center transition-all active:scale-90 ${
-              activeScreen === item.id ? 'text-orange-600' : 'text-secondary'
+              activeScreen === item.id ? 'text-primary' : 'text-secondary'
             }`}
           >
             <item.icon size={20} />
             <span className="text-[10px] font-bold uppercase tracking-widest mt-1">
-              {item.id === 'returns' ? 'Trả hàng' : item.id === 'search' ? 'Tìm kiếm' : item.id === 'upload' ? 'Upload' : item.id === 'inventory' ? 'Kho' : 'Home'}
+              {item.id === 'returns' ? 'Trả hàng' : item.id === 'stockin' ? 'Nhập kho' : item.id === 'upload' ? 'Upload' : item.id === 'inventory' ? 'Kho' : item.id === 'profit' ? 'Lợi nhuận' : 'Home'}
             </span>
           </button>
         ))}

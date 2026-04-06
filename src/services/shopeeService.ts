@@ -10,13 +10,35 @@ export interface ScannedProduct {
   stock: number;
   image: string;
   category: string;
+  sellingPrice: number;
+  costPrice: number;
 }
 
 export class ShopeeService {
-  private static ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  private static getAi(apiKey?: string) {
+    const key = apiKey || localStorage.getItem('gemini_api_key') || process.env.GEMINI_API_KEY;
+    if (!key) throw new Error('MISSING_API_KEY');
+    return new GoogleGenAI({ apiKey: key });
+  }
 
-  static async scanShop(shopUrl: string, rawText?: string): Promise<ScannedProduct[]> {
+  static async validateApiKey(key: string): Promise<boolean> {
     try {
+      const ai = new GoogleGenAI({ apiKey: key });
+      await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: "test",
+        config: { maxOutputTokens: 1 }
+      });
+      return true;
+    } catch (error) {
+      console.error("API Key Validation Error:", error);
+      return false;
+    }
+  }
+
+  static async scanShop(shopUrl: string, rawText?: string, apiKey?: string): Promise<ScannedProduct[]> {
+    try {
+      const ai = this.getAi(apiKey);
       const prompt = rawText 
         ? `DƯỚI ĐÂY LÀ DỮ LIỆU VĂN BẢN THÔ TỪ TRANG SẢN PHẨM HOẶC CỬA HÀNG SHOPEE:
            ---
@@ -46,7 +68,7 @@ export class ShopeeService {
         
         Trả về kết quả dưới dạng mảng JSON các đối tượng.`;
 
-      const response = await this.ai.models.generateContent({
+      const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: prompt,
         config: {
@@ -62,9 +84,11 @@ export class ShopeeService {
                 variant: { type: Type.STRING, description: "Phân loại sản phẩm" },
                 stock: { type: Type.NUMBER, description: "Số lượng tồn kho" },
                 image: { type: Type.STRING, description: "Link hình ảnh sản phẩm" },
-                category: { type: Type.STRING, description: "Danh mục sản phẩm" }
+                category: { type: Type.STRING, description: "Danh mục sản phẩm" },
+                sellingPrice: { type: Type.NUMBER, description: "Giá bán hiện tại (VNĐ)" },
+                costPrice: { type: Type.NUMBER, description: "Giá vốn ước tính (VNĐ)" }
               },
-              required: ["name", "sku", "variant", "stock", "category"]
+              required: ["name", "sku", "variant", "stock", "category", "sellingPrice", "costPrice"]
             }
           }
         }
@@ -89,28 +113,35 @@ export class ShopeeService {
     }
   }
 
-  static async saveToInventory(products: ScannedProduct[]): Promise<void> {
+  static async saveToInventory(userId: string, products: ScannedProduct[]): Promise<void> {
     const inventoryRef = collection(db, 'inventory');
     
     for (const product of products) {
-      // Check if SKU already exists
-      const q = query(inventoryRef, where("sku", "==", product.sku));
+      // Check if SKU already exists for this user
+      const q = query(
+        inventoryRef, 
+        where("userId", "==", userId),
+        where("sku", "==", product.sku)
+      );
       const querySnapshot = await getDocs(q);
 
       if (querySnapshot.empty) {
         // Add new product
         await addDoc(inventoryRef, {
+          userId,
           sku: product.sku,
           name: product.name,
           stock: product.stock,
           variant: product.variant,
           category: product.category,
           image: product.image,
+          sellingPrice: product.sellingPrice,
+          costPrice: product.costPrice,
           status: product.stock > 10 ? 'in_stock' : product.stock > 0 ? 'low_stock' : 'out_of_stock',
           createdAt: new Date().toISOString()
         });
       } else {
-        // Update existing product stock (optional, or just skip)
+        // Update existing product stock
         const docId = querySnapshot.docs[0].id;
         await updateDoc(doc(db, 'inventory', docId), {
           stock: product.stock,

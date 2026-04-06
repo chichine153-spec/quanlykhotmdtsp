@@ -5,15 +5,19 @@ import {
   getDocs, 
   onSnapshot,
   orderBy,
-  Timestamp
+  Timestamp,
+  limit
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Product } from '../types';
+import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
 
 export interface OrderRecord {
   id: string;
   trackingCode: string;
   processedAt: string;
+  expiryDate?: string;
+  region?: string;
   items: {
     sku: string;
     variant: string;
@@ -22,34 +26,59 @@ export interface OrderRecord {
     productId: string;
   }[];
   userId: string;
+  totalRevenue?: number;
+  totalCost?: number;
+  packagingFee?: number;
+  pdfUrl?: string;
+  productName?: string;
+  sku?: string;
+  quantity?: number;
 }
 
 export class InventoryService {
   /**
    * Listen to all inventory changes
    */
-  static listenToInventory(callback: (products: Product[]) => void) {
-    const q = query(collection(db, 'inventory'));
+  static listenToInventory(userId: string, callback: (products: Product[]) => void) {
+    const q = query(
+      collection(db, 'inventory'),
+      where('userId', '==', userId)
+    );
     return onSnapshot(q, (snapshot) => {
       const products = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as Product[];
       callback(products);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'inventory');
     });
   }
 
   /**
-   * Listen to all orders
+   * Listen to all orders (filtered to last 15 days)
    */
-  static listenToOrders(callback: (orders: OrderRecord[]) => void) {
-    const q = query(collection(db, 'orders'), orderBy('processedAt', 'desc'));
+  static listenToOrders(userId: string, callback: (orders: OrderRecord[]) => void) {
+    const fifteenDaysAgo = new Date();
+    fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
+    const fifteenDaysAgoStr = fifteenDaysAgo.toISOString();
+
+    const q = query(
+      collection(db, 'orders'), 
+      where('userId', '==', userId),
+      where('processedAt', '>=', fifteenDaysAgoStr),
+      orderBy('processedAt', 'desc'),
+      limit(200) // Limit to save quota
+    );
+    
     return onSnapshot(q, (snapshot) => {
       const orders = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as OrderRecord[];
       callback(orders);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'orders');
     });
   }
 
