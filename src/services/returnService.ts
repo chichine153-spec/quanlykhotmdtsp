@@ -144,25 +144,30 @@ export class ReturnService {
   /**
    * Delete a return record and revert inventory
    */
-  static async deleteReturn(returnId: string) {
+  static async deleteReturn(returnId: string, performerId: string) {
+    console.log(`[ReturnService] Attempting to delete return: ${returnId} by user: ${performerId}`);
     try {
       await runTransaction(db, async (transaction) => {
         const returnRef = doc(db, 'returns', returnId);
         const returnSnap = await transaction.get(returnRef);
         
         if (!returnSnap.exists()) {
+          console.error(`[ReturnService] Return record not found: ${returnId}`);
           throw new Error('Không tìm thấy bản ghi hàng hoàn.');
         }
 
         const returnData = returnSnap.data() as ReturnRecord;
-        const { trackingCode, items, userId } = returnData;
+        const { trackingCode, items } = returnData;
+        console.log(`[ReturnService] Found return record for tracking: ${trackingCode}, items: ${items?.length}`);
 
         // 1. ALL READS FIRST
         const productSnaps: Record<string, any> = {};
-        for (const item of items) {
-          if (item.productId) {
-            const pRef = doc(db, 'inventory', item.productId);
-            productSnaps[item.productId] = await transaction.get(pRef);
+        if (items && Array.isArray(items)) {
+          for (const item of items) {
+            if (item.productId && !productSnaps[item.productId]) {
+              const pRef = doc(db, 'inventory', item.productId);
+              productSnaps[item.productId] = await transaction.get(pRef);
+            }
           }
         }
         const orderRef = doc(db, 'orders', trackingCode);
@@ -170,43 +175,82 @@ export class ReturnService {
 
         // 2. ALL WRITES AFTER
         // Revert inventory stock
-        for (const item of items) {
-          if (item.productId) {
-            const snap = productSnaps[item.productId];
-            if (snap && snap.exists()) {
-              transaction.update(snap.ref, {
-                stock: increment(-item.quantity)
-              });
+        if (items && Array.isArray(items)) {
+          for (const item of items) {
+            if (item.productId) {
+              const snap = productSnaps[item.productId];
+              if (snap && snap.exists()) {
+                console.log(`[ReturnService] Reverting stock for product ${item.productId}, qty: ${item.quantity}`);
+                transaction.update(snap.ref, {
+                  stock: increment(-item.quantity)
+                });
 
-              // Log the reversion
-              const logRef = doc(collection(db, 'inventory_logs'));
-              transaction.set(logRef, {
-                userId,
-                sku: item.sku,
-                productName: item.productName || 'Sản phẩm (Hoàn tác)',
-                variant: item.variant || '',
-                change: -item.quantity,
-                type: 'manual_edit',
-                trackingCode: `REVERT_${trackingCode}`,
-                timestamp: serverTimestamp()
-              });
+                // Log the reversion
+                const logRef = doc(collection(db, 'inventory_logs'));
+                transaction.set(logRef, {
+                  userId: performerId,
+                  sku: item.sku,
+                  productName: item.productName || 'Sản phẩm (Hoàn tác)',
+                  variant: item.variant || '',
+                  change: -item.quantity,
+                  type: 'manual_edit',
+                  trackingCode: `REVERT_${trackingCode}`,
+                  timestamp: serverTimestamp()
+                });
+              } else {
+                console.warn(`[ReturnService] Product ${item.productId} not found in inventory, skipping stock revert.`);
+              }
             }
           }
         }
 
         // Update order status back if possible
         if (orderSnap.exists()) {
+          console.log(`[ReturnService] Updating order ${trackingCode} status back to delivered`);
           transaction.update(orderRef, {
-            status: 'delivered', // Assume it goes back to delivered or just remove return status
+            status: 'delivered',
             returnStatus: null
           });
+        } else {
+          console.warn(`[ReturnService] Order ${trackingCode} not found, skipping status update.`);
         }
 
         // Delete the return record
+        console.log(`[ReturnService] Deleting return record ${returnId}`);
         transaction.delete(returnRef);
       });
+      console.log(`[ReturnService] Successfully deleted return ${returnId}`);
     } catch (error) {
+      console.error('[ReturnService] Error deleting return:', error);
       handleFirestoreError(error, OperationType.DELETE, `returns/${returnId}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Clears all return records for the current user.
+   */
+  static async clearAllReturns(userId: string): Promise<{ success: number, failed: number }> {
+    try {
+      const returnsRef = collection(db, 'returns');
+      const q = query(returnsRef, where('userId', '==', userId));
+      const snapshot = await getDocs(q);
+      
+      let success = 0;
+      let failed = 0;
+      
+      for (const docSnap of snapshot.docs) {
+        try {
+          await this.deleteReturn(docSnap.id, userId);
+          success++;
+        } catch (err) {
+          console.error(`Failed to delete return ${docSnap.id}:`, err);
+          failed++;
+        }
+      }
+      return { success, failed };
+    } catch (error) {
+      console.error('Clear All Returns Error:', error);
       throw error;
     }
   }

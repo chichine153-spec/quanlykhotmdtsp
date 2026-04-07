@@ -33,6 +33,12 @@ export default function PDFUpload() {
   const { inventory, config: dataConfig, orders: allOrders, loading: dataLoading } = useData();
   const [isUploading, setIsUploading] = React.useState(false);
   const [progress, setProgress] = React.useState(0);
+  const progressRef = React.useRef(0);
+  
+  const updateProgress = (val: number) => {
+    progressRef.current = val;
+    setProgress(val);
+  };
   const [status, setStatus] = React.useState<'idle' | 'processing' | 'success' | 'error'>('idle');
   const [error, setError] = React.useState<string | null>(null);
   const [processedOrders, setProcessedOrders] = React.useState<number>(0);
@@ -49,22 +55,39 @@ export default function PDFUpload() {
   const [currentFile, setCurrentFile] = React.useState<File | null>(null);
   const [recentDeductions, setRecentDeductions] = React.useState<OrderRecord[]>([]);
   const [confirmingRevert, setConfirmingRevert] = React.useState<string | null>(null);
+  const [showClearAllConfirm, setShowClearAllConfirm] = React.useState(false);
   const [isReverting, setIsReverting] = React.useState(false);
   const [selectedOrderToPrint, setSelectedOrderToPrint] = React.useState<OrderRecord | null>(null);
   const [showPrintTemplate, setShowPrintTemplate] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [isInventoryEmpty, setIsInventoryEmpty] = React.useState(false);
   const [profitConfig, setProfitConfig] = React.useState<any>(null);
+  const [toasts, setToasts] = React.useState<{ id: string, message: string, type: 'success' | 'error' | 'info' }[]>([]);
   const abortControllerRef = React.useRef<boolean>(false);
+
+  const addToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 3000);
+  };
 
   // Calculate session stats
   const sessionStats = React.useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
     const todayOrders = allOrders.filter(o => o.processedAt && o.processedAt.startsWith(today));
     
+    const totalDeducted = todayOrders.reduce((acc, order) => {
+      if (order.items) {
+        return acc + order.items.reduce((sum, item) => sum + (item.quantity || 0), 0);
+      }
+      return acc + (order.quantity || 0);
+    }, 0);
+
     return {
       pending: extractedOrdersForReview.length,
-      processedToday: todayOrders.length
+      processedToday: totalDeducted
     };
   }, [allOrders, extractedOrdersForReview]);
 
@@ -82,12 +105,18 @@ export default function PDFUpload() {
   }, [allOrders]);
 
   const handleRevertOrder = async (trackingCode: string) => {
+    if (!trackingCode) {
+      console.warn('[PDFUpload] No tracking code provided for revert.');
+      return;
+    }
+    console.log(`[PDFUpload] Attempting to revert order: ${trackingCode}`);
     setIsReverting(true);
     try {
       await PDFService.revertOrder(trackingCode);
-      
-      // Update local state immediately for better UX
+      console.log(`[PDFUpload] Successfully reverted order: ${trackingCode}`);
       setRecentDeductions(prev => prev.filter(item => (item.trackingCode || item.id) !== trackingCode));
+      
+      addToast('Đã hoàn tác đơn hàng và cộng lại kho.', 'success');
       
       // Reset status if the reverted order was the one just processed
       if (lastOrder?.trackingCode === trackingCode) {
@@ -100,12 +129,32 @@ export default function PDFUpload() {
       let message = 'Lỗi khi hoàn tác đơn hàng.';
       try {
         const parsed = JSON.parse(err.message);
-        message += `\nChi tiết: ${parsed.error}`;
+        message = parsed.userFriendlyMessage || parsed.error || err.message;
       } catch {
-        message += `\n${err.message || 'Vui lòng thử lại.'}`;
+        message = err.message || 'Vui lòng thử lại.';
       }
-      setError(message);
-      setStatus('error');
+      addToast(message, 'error');
+    } finally {
+      setIsReverting(false);
+    }
+  };
+
+  const handleClearAllOrders = async () => {
+    if (!user) return;
+    
+    setIsReverting(true);
+    try {
+      const result = await PDFService.clearAllOrders(user.uid);
+      if (result.failed > 0) {
+        addToast(`Đã xoá ${result.success} đơn. Có ${result.failed} đơn lỗi.`, 'info');
+      } else {
+        addToast(`Đã xoá và hoàn tác ${result.success} đơn hàng.`, 'success');
+      }
+      setRecentDeductions([]);
+      setShowClearAllConfirm(false);
+    } catch (err: any) {
+      console.error('Clear All Error:', err);
+      addToast('Lỗi khi xoá dữ liệu.', 'error');
     } finally {
       setIsReverting(false);
     }
@@ -145,25 +194,51 @@ export default function PDFUpload() {
       setStatus('processing');
       setError(null);
       setIsUploading(true);
-      setProgress(10);
+      updateProgress(0);
+      
+      // Helper for smooth progress
+      const animateProgress = (target: number, duration: number) => {
+        return new Promise<void>((resolve) => {
+          const startValue = progressRef.current;
+          const startTime = Date.now();
+          
+          const step = () => {
+            const now = Date.now();
+            const elapsed = now - startTime;
+            const ratio = Math.min(1, elapsed / duration);
+            const current = startValue + (target - startValue) * ratio;
+            
+            updateProgress(Math.floor(current));
+            
+            if (elapsed < duration) {
+              requestAnimationFrame(step);
+            } else {
+              updateProgress(target);
+              resolve();
+            }
+          };
+          requestAnimationFrame(step);
+        });
+      };
+
+      await animateProgress(5, 500);
       setProcessedOrders(0);
       setCurrentFileOrders([]);
       setExtractedOrdersForReview([]);
       setCurrentFile(file);
 
-      // 1. Extract all orders from PDF with a 15-second internal timeout
-      setProgress(20);
+      // 1. Extract all orders from PDF
+      await animateProgress(15, 800);
       
       const orders = await PDFService.extractOrderData(file);
 
       setTotalOrders(orders.length);
-      setProgress(40);
+      await animateProgress(25, 1000);
 
-      // 2. Check which orders have already been processed to save quota and prevent errors
+      // 2. Check which orders have already been processed
       const trackingCodes = orders.map(o => o.trackingCode);
       const processedStatusMap: Record<string, boolean> = {};
       
-      // Check in batches of 30 for Firestore 'in' query
       for (let i = 0; i < trackingCodes.length; i += 30) {
         const batch = trackingCodes.slice(i, i + 30);
         const processedQuery = query(
@@ -175,17 +250,18 @@ export default function PDFUpload() {
         processedSnap.docs.forEach(doc => {
           processedStatusMap[doc.id] = true;
         });
+        // Incremental progress during check (25% to 35%)
+        await animateProgress(25 + Math.floor((i / trackingCodes.length) * 10), 200);
       }
 
-      // 3. Check stock for each item using pre-fetched inventory from DataContext
+      await animateProgress(35, 500);
+
+      // 3. Check stock for each item
       const ordersWithStock = await Promise.all(orders.map(async (order) => {
         const isProcessed = !!processedStatusMap[order.trackingCode];
         
-        // If already processed, we still check stock for review but mark it
         const itemsWithStock = await Promise.all(order.items.map(async (item) => {
           const stockInfo = await PDFService.checkStockStatus(item.sku, item.color, inventory);
-          
-          // Calculate packaging fee
           const packagingFee = item.quantity * ProfitService.calculatePackagingFee(item.sku, stockInfo.productName || item.productName, profitConfig);
 
           return {
@@ -204,14 +280,16 @@ export default function PDFUpload() {
         };
       }));
 
+      await animateProgress(40, 800);
+
       const alreadyProcessedCount = ordersWithStock.filter(o => o.processedStatus === 'already_processed').length;
       if (alreadyProcessedCount > 0) {
         console.log(`Found ${alreadyProcessedCount} already processed orders.`);
       }
 
       setExtractedOrdersForReview(ordersWithStock as any);
-      setProgress(100);
-      setStatus('idle'); // Wait for user confirmation
+      // Stay at 40% for review
+      setStatus('idle'); 
     } catch (err: any) {
       console.error('Processing Error:', err);
       let errMsg = 'Đã xảy ra lỗi khi xử lý file.';
@@ -304,7 +382,7 @@ export default function PDFUpload() {
     setExtractedOrdersForReview([]);
     setCurrentFile(null);
     setStatus('idle');
-    setProgress(0);
+    updateProgress(0);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -333,7 +411,7 @@ export default function PDFUpload() {
     setShowNegativeStockWarning(false);
     setIsProcessingConfirmed(true);
     setStatus('processing');
-    setProgress(0);
+    // Don't reset progress to 0, start from current (which is 40)
     setProcessedOrders(0);
     setCurrentFileOrders(ordersToProcess.map(o => ({ ...o, status: 'pending' })));
     abortControllerRef.current = false;
@@ -346,7 +424,6 @@ export default function PDFUpload() {
     
     try {
       // 1. Skip PDF Upload to Storage to avoid CORS errors
-      // We now use Firestore data for re-printing, so the PDF file is no longer strictly necessary.
       preUploadedUrl = '';
       setUploadFailed(false);
 
@@ -361,9 +438,17 @@ export default function PDFUpload() {
         setCurrentFileOrders(prev => prev.map((o, idx) => idx === i ? { ...o, status: 'processing' } : o));
         
         try {
-          const orderWeight = 100 / ordersToProcess.length;
-          setProgress(Math.floor(i * orderWeight));
+          // Progress from 40% to 100%
+          const baseProgress = 40 + Math.floor((i / ordersToProcess.length) * 60);
+          const nextBaseProgress = 40 + Math.floor(((i + 1) / ordersToProcess.length) * 60);
           
+          // Start a small interval to simulate progress within an order
+          const progressInterval = setInterval(() => {
+            if (progressRef.current < nextBaseProgress - 1) {
+              updateProgress(progressRef.current + 1);
+            }
+          }, 200);
+
           // Add a 30-second timeout per order to prevent hanging
           const timeoutPromise = new Promise((_, reject) => 
             setTimeout(() => reject(new Error('Hết thời gian xử lý đơn hàng (30s)')), 30000)
@@ -373,6 +458,9 @@ export default function PDFUpload() {
             PDFService.processOrder(currentFile!, order, inventory, profitConfig, preUploadedUrl),
             timeoutPromise
           ]);
+
+          clearInterval(progressInterval);
+          updateProgress(nextBaseProgress);
 
           successCount++;
           setProcessedOrders(successCount);
@@ -400,7 +488,7 @@ export default function PDFUpload() {
         }
       }
 
-      setProgress(100);
+      updateProgress(100);
       
       if (errors.length > 0) {
         if (successCount > 0) {
@@ -864,7 +952,18 @@ export default function PDFUpload() {
 
             {/* Recent Activity */}
             <div className="space-y-4 pt-4 border-t border-surface-container">
-              <h4 className="text-[10px] uppercase tracking-widest font-extrabold text-secondary">Hoạt động gần đây</h4>
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-[10px] uppercase tracking-widest font-extrabold text-secondary">Hoạt động gần đây</h4>
+                {recentDeductions.length > 0 && (
+                  <button 
+                    onClick={() => setShowClearAllConfirm(true)}
+                    disabled={isReverting}
+                    className="text-[10px] font-bold text-error hover:underline disabled:opacity-50"
+                  >
+                    Xoá tất cả
+                  </button>
+                )}
+              </div>
               <div className="space-y-3">
                 {recentDeductions.length === 0 ? (
                   <p className="text-xs text-secondary italic">Chưa có hoạt động nào.</p>
@@ -1006,6 +1105,41 @@ export default function PDFUpload() {
             </div>
           )}
 
+          {showClearAllConfirm && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="bg-surface-container-lowest rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-error/20"
+              >
+                <div className="w-12 h-12 bg-error/10 rounded-2xl flex items-center justify-center text-error mb-4">
+                  <Trash2 size={24} />
+                </div>
+                <h3 className="text-lg font-bold text-on-surface mb-2">Xoá tất cả hoạt động?</h3>
+                <p className="text-sm text-secondary mb-6 leading-relaxed">
+                  Thao tác này sẽ <strong>hoàn tác tồn kho</strong> cho TẤT CẢ đơn hàng trong danh sách này và xoá vĩnh viễn dữ liệu. Bạn có chắc chắn?
+                </p>
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => setShowClearAllConfirm(false)}
+                    disabled={isReverting}
+                    className="flex-1 px-4 py-2.5 rounded-xl font-bold text-secondary hover:bg-surface-container transition-all"
+                  >
+                    Hủy
+                  </button>
+                  <button 
+                    onClick={handleClearAllOrders}
+                    disabled={isReverting}
+                    className="flex-1 px-4 py-2.5 rounded-xl font-bold bg-error text-white hover:bg-error/90 transition-all flex items-center justify-center gap-2"
+                  >
+                    {isReverting ? <Loader2 className="animate-spin" size={16} /> : 'Xoá tất cả'}
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
           {/* Print Template Modal */}
           {showPrintTemplate && selectedOrderToPrint && (
             <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-8">
@@ -1063,7 +1197,31 @@ export default function PDFUpload() {
           )}
         </AnimatePresence>
 
-        <style>{`
+        {/* Toast Notifications */}
+      <div className="fixed bottom-6 right-6 z-[200] flex flex-col gap-3 pointer-events-none">
+        <AnimatePresence>
+          {toasts.map(toast => (
+            <motion.div
+              key={toast.id}
+              initial={{ opacity: 0, x: 20, scale: 0.9 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 20, scale: 0.9 }}
+              className={`pointer-events-auto px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 min-w-[300px] border ${
+                toast.type === 'success' ? 'bg-green-600 border-green-500 text-white' :
+                toast.type === 'error' ? 'bg-error border-error-container text-white' :
+                'bg-surface-container-highest border-surface-container text-on-surface'
+              }`}
+            >
+              {toast.type === 'success' && <CheckCircle2 size={20} />}
+              {toast.type === 'error' && <AlertCircle size={20} />}
+              {toast.type === 'info' && <Info size={20} />}
+              <span className="text-sm font-bold">{toast.message}</span>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+
+      <style>{`
           @media print {
             .no-print { display: none !important; }
             .print-only { display: block !important; }

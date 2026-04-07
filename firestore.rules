@@ -87,14 +87,19 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isDocOwner() {
-      return isAuthenticated() && request.auth.uid == resource.data.userId;
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == "chichine153@gmail.com" ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
     }
 
-    function isAdmin() {
-      return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          (request.auth.token.email == "chichine153@gmail.com" && request.auth.token.email_verified == true));
+    function isDocOwner() {
+      return isAuthenticated() && (
+        isAdmin() ||
+        (resource != null && resource.data.userId == request.auth.uid)
+      );
     }
 
     function hasRequiredFields(fields) {
@@ -116,26 +121,34 @@ service cloud.firestore {
     }
 
     function isValidProduct(data) {
-      return hasRequiredFields(['name', 'sku', 'stock', 'userId']) &&
-             data.name is string && data.name.size() > 0 && data.name.size() < 500 &&
-             data.sku is string && data.sku.size() > 0 && data.sku.size() < 200 &&
-             data.stock is number &&
-             data.userId == request.auth.uid;
+      return isAdmin() || (
+        hasRequiredFields(['name', 'sku', 'stock', 'userId']) &&
+        data.name is string && data.name.size() > 0 && data.name.size() < 500 &&
+        data.sku is string && data.sku.size() > 0 && data.sku.size() < 200 &&
+        data.stock is number &&
+        data.userId == request.auth.uid
+      );
     }
 
     function isValidLog(data) {
-      return hasRequiredFields(['sku', 'productName', 'change', 'type', 'userId', 'timestamp']) &&
-             data.userId == request.auth.uid;
+      return isAdmin() || (
+        hasRequiredFields(['sku', 'productName', 'change', 'type', 'userId', 'timestamp']) &&
+        data.userId == request.auth.uid
+      );
     }
 
     function isValidOrder(data) {
-      return hasRequiredFields(['trackingCode', 'items', 'userId']) &&
-             data.userId == request.auth.uid;
+      return isAdmin() || (
+        hasRequiredFields(['trackingCode', 'items', 'userId']) &&
+        data.userId == request.auth.uid
+      );
     }
 
     function isValidReturn(data) {
-      return hasRequiredFields(['trackingCode', 'items', 'userId']) &&
-             data.userId == request.auth.uid;
+      return isAdmin() || (
+        hasRequiredFields(['trackingCode', 'items', 'userId']) &&
+        data.userId == request.auth.uid
+      );
     }
 
     // ===============================================================
@@ -151,15 +164,15 @@ service cloud.firestore {
     }
 
     match /inventory/{productId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read: if isDocOwner();
       allow list: if isAuthenticated(); 
       allow create: if isAuthenticated() && isValidProduct(request.resource.data);
-      allow update: if isAuthenticated() && (isDocOwner() || isAdmin()) && isValidProduct(request.resource.data);
-      allow delete: if isAuthenticated() && (isDocOwner() || isAdmin());
+      allow update: if isDocOwner() && isValidProduct(request.resource.data);
+      allow delete: if isDocOwner();
     }
 
     match /inventory_logs/{logId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read: if isDocOwner();
       allow list: if isAuthenticated();
       allow create: if isAuthenticated() && isValidLog(request.resource.data);
       allow update: if isAdmin();
@@ -167,40 +180,40 @@ service cloud.firestore {
     }
 
     match /orders/{orderId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read: if isDocOwner();
       allow list: if isAuthenticated();
       allow create: if isAuthenticated() && isValidOrder(request.resource.data);
-      allow update: if isAuthenticated() && (isDocOwner() || isAdmin());
-      allow delete: if isAuthenticated() && (isDocOwner() || isAdmin());
+      allow update: if isDocOwner();
+      allow delete: if isDocOwner();
     }
 
     match /returns/{returnId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read: if isDocOwner();
       allow list: if isAuthenticated();
       allow create: if isAuthenticated() && isValidReturn(request.resource.data);
-      allow update: if isAuthenticated() && (isDocOwner() || isAdmin());
-      allow delete: if isAuthenticated() && (isDocOwner() || isAdmin());
+      allow update: if isDocOwner();
+      allow delete: if isDocOwner();
     }
 
     match /profit_configs/{userId} {
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      allow write: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if isOwner(userId) || isAdmin();
     }
 
     match /shipping_labels/{labelId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read: if isDocOwner();
       allow list: if isAuthenticated();
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      allow update: if isAuthenticated() && (isDocOwner() || isAdmin());
-      allow delete: if isAuthenticated() && (isDocOwner() || isAdmin());
+      allow create: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || isAdmin());
+      allow update: if isDocOwner();
+      allow delete: if isDocOwner();
     }
 
     match /processed_orders/{orderId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read: if isDocOwner();
       allow list: if isAuthenticated();
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      allow update: if isAuthenticated() && (isDocOwner() || isAdmin());
-      allow delete: if isAuthenticated() && (isDocOwner() || isAdmin());
+      allow create: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || isAdmin());
+      allow update: if isDocOwner();
+      allow delete: if isDocOwner();
     }
   }
 }

@@ -36,6 +36,7 @@ export default function Returns() {
   const [isProcessing, setIsProcessing] = React.useState(false);
   const [toasts, setToasts] = React.useState<Toast[]>([]);
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
+  const [showClearAllConfirm, setShowClearAllConfirm] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
 
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -88,16 +89,36 @@ export default function Returns() {
   };
 
   const handleDeleteReturn = async () => {
-    if (!confirmDeleteId) return;
+    if (!confirmDeleteId || !user) return;
     
     setIsDeleting(true);
     try {
-      await ReturnService.deleteReturn(confirmDeleteId);
+      await ReturnService.deleteReturn(confirmDeleteId, user.uid);
       addToast('Đã xoá bản ghi hàng hoàn.', 'info');
       setConfirmDeleteId(null);
     } catch (error) {
       console.error('Delete Return Error:', error);
       addToast('Lỗi khi xoá bản ghi.', 'error');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleClearAllReturns = async () => {
+    if (!user) return;
+    
+    setIsDeleting(true);
+    try {
+      const result = await ReturnService.clearAllReturns(user.uid);
+      if (result.failed > 0) {
+        addToast(`Đã xoá ${result.success} bản ghi. Có ${result.failed} bản ghi lỗi.`, 'info');
+      } else {
+        addToast(`Đã xoá ${result.success} bản ghi hàng hoàn.`, 'info');
+      }
+      setShowClearAllConfirm(false);
+    } catch (error) {
+      console.error('Clear All Returns Error:', error);
+      addToast('Lỗi khi xoá dữ liệu.', 'error');
     } finally {
       setIsDeleting(false);
     }
@@ -267,7 +288,18 @@ export default function Returns() {
             <History className="text-primary" size={20} />
             <h3 className="text-xl font-bold text-on-surface tracking-tight">Lịch sử hàng hoàn</h3>
           </div>
-          <span className="text-xs font-bold text-secondary uppercase tracking-widest">Sắp xếp theo Thời gian</span>
+          <div className="flex items-center gap-4">
+            {returnsHistory.length > 0 && (
+              <button 
+                onClick={() => setShowClearAllConfirm(true)}
+                disabled={isDeleting}
+                className="text-xs font-bold text-red-500 hover:underline disabled:opacity-50"
+              >
+                Xoá tất cả
+              </button>
+            )}
+            <span className="text-xs font-bold text-secondary uppercase tracking-widest">Sắp xếp theo Thời gian</span>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
@@ -393,6 +425,44 @@ export default function Returns() {
                   className="flex-1 px-4 py-3 rounded-xl font-bold bg-red-500 text-white hover:bg-red-600 transition-all flex items-center justify-center gap-2 shadow-lg shadow-red-500/20"
                 >
                   {isDeleting ? <Loader2 className="animate-spin" size={18} /> : 'Xác nhận xoá'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Clear All Confirmation Modal */}
+      <AnimatePresence>
+        {showClearAllConfirm && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl border border-surface-container"
+            >
+              <div className="w-16 h-16 bg-red-50 rounded-2xl flex items-center justify-center text-red-500 mb-6 mx-auto">
+                <Trash2 size={32} />
+              </div>
+              <h3 className="text-xl font-black text-on-surface mb-2 text-center">Xoá tất cả lịch sử?</h3>
+              <p className="text-sm text-secondary mb-8 text-center leading-relaxed">
+                Bạn có chắc chắn muốn xoá TẤT CẢ lịch sử hàng hoàn? Hệ thống sẽ <strong>hoàn tác tồn kho</strong> cho toàn bộ bản ghi này.
+              </p>
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setShowClearAllConfirm(false)}
+                  disabled={isDeleting}
+                  className="flex-1 px-4 py-3 rounded-xl font-bold text-secondary hover:bg-surface-container transition-all"
+                >
+                  Hủy
+                </button>
+                <button 
+                  onClick={handleClearAllReturns}
+                  disabled={isDeleting}
+                  className="flex-1 px-4 py-3 rounded-xl font-bold bg-red-500 text-white hover:bg-red-600 transition-all flex items-center justify-center gap-2 shadow-lg shadow-red-500/20"
+                >
+                  {isDeleting ? <Loader2 className="animate-spin" size={18} /> : 'Xác nhận xoá tất cả'}
                 </button>
               </div>
             </motion.div>

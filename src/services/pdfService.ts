@@ -706,12 +706,33 @@ export class PDFService {
    */
   static async revertOrder(trackingCode: string): Promise<void> {
     try {
+      const currentUserId = auth.currentUser?.uid;
+      if (!currentUserId) {
+        throw new Error('Bạn cần đăng nhập để thực hiện thao tác này.');
+      }
+
+      // Find any associated returns first (cannot query inside transaction)
+      const returnsRef = collection(db, 'returns');
+      const q = query(returnsRef, where('trackingCode', '==', trackingCode), where('userId', '==', currentUserId));
+      const returnSnapshot = await getDocs(q);
+      const returnRefs = returnSnapshot.docs.map(d => d.ref);
+
       await runTransaction(db, async (transaction) => {
         const orderRef = doc(db, 'orders', trackingCode);
+        const processedOrderRef = doc(db, 'processed_orders', trackingCode);
+        const shippingLabelRef = doc(db, 'shipping_labels', trackingCode);
+        const inventoryLogsRef = collection(db, 'inventory_logs');
+        
         const orderSnap = await transaction.get(orderRef);
         
         if (!orderSnap.exists()) {
-          throw new Error('Không tìm thấy bản ghi đơn hàng.');
+          // If order record is missing, we still try to delete other records if they exist
+          // But we need the items to revert stock. If order is missing, we can't revert stock.
+          // However, we should still delete the other records to be "clean".
+          transaction.delete(orderRef);
+          transaction.delete(processedOrderRef);
+          transaction.delete(shippingLabelRef);
+          return;
         }
 
         const data = orderSnap.data();
@@ -720,17 +741,72 @@ export class PDFService {
         for (const item of items) {
           if (item.productId) {
             const productRef = doc(db, 'inventory', item.productId);
-            transaction.update(productRef, {
-              stock: increment(item.quantity)
-            });
+            const productSnap = await transaction.get(productRef);
+            
+            if (productSnap.exists()) {
+              transaction.update(productRef, {
+                stock: increment(item.quantity)
+              });
+
+              // Add log for reversion
+              const newLogRef = doc(inventoryLogsRef);
+              transaction.set(newLogRef, {
+                userId: currentUserId,
+                sku: item.sku,
+                productName: item.productName || 'Sản phẩm (Hoàn tác)',
+                variant: item.variant || '',
+                change: item.quantity,
+                type: 'manual_edit',
+                trackingCode: `REVERT_${trackingCode}`,
+                timestamp: Timestamp.now()
+              });
+            } else {
+              console.warn(`[PDFService] Product ${item.productId} not found for order ${trackingCode}, skipping stock revert.`);
+            }
           }
         }
 
-        // Delete order record
+        // Delete records
         transaction.delete(orderRef);
+        transaction.delete(processedOrderRef);
+        transaction.delete(shippingLabelRef);
+        
+        // Delete associated returns
+        for (const rRef of returnRefs) {
+          transaction.delete(rRef);
+        }
       });
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `revert/${trackingCode}`);
+    }
+  }
+
+  /**
+   * Clears all orders for the current user.
+   */
+  static async clearAllOrders(userId: string): Promise<{ success: number, failed: number }> {
+    try {
+      const ordersRef = collection(db, 'orders');
+      const q = query(ordersRef, where('userId', '==', userId));
+      const snapshot = await getDocs(q);
+      
+      let success = 0;
+      let failed = 0;
+      
+      for (const docSnap of snapshot.docs) {
+        try {
+          const trackingCode = docSnap.id;
+          await this.revertOrder(trackingCode);
+          success++;
+        } catch (err) {
+          console.error(`Failed to revert order ${docSnap.id}:`, err);
+          failed++;
+        }
+      }
+      return { success, failed };
+    } catch (error) {
+      console.error('Clear All Orders Error:', error);
+      throw error;
     }
   }
 }

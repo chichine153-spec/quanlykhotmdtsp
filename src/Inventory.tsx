@@ -3,7 +3,8 @@ import {
   Search, 
   Plus, 
   Package, 
-  AlertTriangle, 
+  AlertTriangle,
+  AlertCircle, 
   TrendingUp, 
   Edit2, 
   MoreVertical,
@@ -26,15 +27,17 @@ import { db } from './firebase';
 import { MOCK_PRODUCTS, Product, InventoryLog } from './types';
 import { useAuth } from './contexts/AuthContext';
 import { useData } from './contexts/DataContext';
-import { X, Save, Trash2, Camera, Upload, Globe } from 'lucide-react';
+import { X, Save, Trash2, Camera, Upload } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { handleFirestoreError, OperationType } from './lib/firestore-errors';
-import { ShopeeService, ScannedProduct } from './services/shopeeService';
 
 export default function Inventory() {
   const { user, login } = useAuth();
   const { inventory: products, loading } = useData();
   const [isSeeding, setIsSeeding] = React.useState(false);
+  const [isClearing, setIsClearing] = React.useState(false);
+  const [showClearConfirm, setShowClearConfirm] = React.useState(false);
+  const [toasts, setToasts] = React.useState<{id: string, message: string, type: 'success' | 'error' | 'info'}[]>([]);
   const [editingProduct, setEditingProduct] = React.useState<Product | null>(null);
   const [searchTerm, setSearchTerm] = React.useState('');
   const [categoryFilter, setCategoryFilter] = React.useState('All');
@@ -46,18 +49,17 @@ export default function Inventory() {
   const [isUpdating, setIsUpdating] = React.useState(false);
   const [isImporting, setIsImporting] = React.useState(false);
   const [isAddingNew, setIsAddingNew] = React.useState(false);
-  const [isScanning, setIsScanning] = React.useState(false);
-  const [shopUrl, setShopUrl] = React.useState('');
-  const [showScanner, setShowScanner] = React.useState(false);
-  const [scanError, setScanError] = React.useState<string | null>(null);
-  const [scannedProducts, setScannedProducts] = React.useState<ScannedProduct[]>([]);
-  const [rawText, setRawText] = React.useState('');
-  const [scanMode, setScanMode] = React.useState<'url' | 'text'>('url');
-  const [apiKeyError, setApiKeyError] = React.useState(false);
-  const confirmingDeleteIdRef = React.useRef<string | null>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const bulkImportRef = React.useRef<HTMLInputElement>(null);
+
+  const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 3000);
+  };
 
   const [newProduct, setNewProduct] = React.useState<Partial<Product>>({
     name: '',
@@ -188,9 +190,10 @@ export default function Inventory() {
         category: 'General',
         image: 'https://picsum.photos/seed/piti/200/200'
       });
+      addToast('Đã thêm sản phẩm mới thành công!', 'success');
     } catch (error) {
       console.error("Add Error:", error);
-      alert('Lỗi khi thêm sản phẩm mới.');
+      addToast('Lỗi khi thêm sản phẩm mới.', 'error');
     } finally {
       setIsUpdating(false);
     }
@@ -244,22 +247,27 @@ export default function Inventory() {
       }
 
       setEditingProduct(null);
+      addToast('Đã cập nhật thông tin sản phẩm.', 'success');
     } catch (error) {
       console.error("Update Error:", error);
-      alert('Lỗi khi cập nhật sản phẩm.');
+      addToast('Lỗi khi cập nhật sản phẩm.', 'error');
     } finally {
       setIsUpdating(false);
     }
   };
 
   const handleDeleteProduct = async (id: string) => {
+    setIsUpdating(true);
     try {
       await deleteDoc(doc(db, 'inventory', id));
       setEditingProduct(null);
       setConfirmingDeleteId(null);
+      addToast('Đã xoá sản phẩm khỏi kho.', 'info');
     } catch (error) {
       console.error("Delete Error:", error);
-      alert('Lỗi khi xóa sản phẩm.');
+      addToast('Lỗi khi xóa sản phẩm.', 'error');
+    } finally {
+      setIsUpdating(false);
     }
   };
   const handleQuickStockUpdate = async (product: Product, newValue: number) => {
@@ -290,9 +298,10 @@ export default function Inventory() {
       });
 
       setEditingStockId(null);
+      addToast('Đã cập nhật tồn kho.', 'success');
     } catch (error) {
       console.error("Quick Update Error:", error);
-      alert('Lỗi khi cập nhật tồn kho.');
+      addToast('Lỗi khi cập nhật tồn kho.', 'error');
     } finally {
       setIsUpdating(false);
     }
@@ -402,10 +411,10 @@ export default function Inventory() {
         }
 
         await batch.commit();
-        alert(`Đã nhập thành công ${count} sản phẩm!`);
+        addToast(`Đã nhập thành công ${count} sản phẩm!`, 'success');
       } catch (error) {
         console.error("Bulk Import Error:", error);
-        alert('Lỗi khi nhập dữ liệu từ file. Vui lòng kiểm tra định dạng file Excel/CSV.');
+        addToast('Lỗi khi nhập dữ liệu từ file. Vui lòng kiểm tra định dạng file Excel/CSV.', 'error');
       } finally {
         setIsImporting(false);
         if (bulkImportRef.current) bulkImportRef.current.value = '';
@@ -427,59 +436,50 @@ export default function Inventory() {
         });
       });
       await batch.commit();
-      alert('Đã nạp dữ liệu mẫu thành công!');
+      addToast('Đã nạp dữ liệu mẫu thành công!', 'success');
     } catch (error) {
       console.error("Seed Error:", error);
-      alert('Lỗi khi nạp dữ liệu mẫu.');
+      addToast('Lỗi khi nạp dữ liệu mẫu.', 'error');
     } finally {
       setIsSeeding(false);
     }
   };
 
-  const handleScanShop = async () => {
-    const key = localStorage.getItem('gemini_api_key');
-    if (!key) {
-      setApiKeyError(true);
-      return;
-    }
-    setApiKeyError(false);
-
-    if (scanMode === 'url' && !shopUrl) return;
-    if (scanMode === 'text' && !rawText) return;
-
-    setIsScanning(true);
-    setScanError(null);
+  const clearInventory = async () => {
+    setIsClearing(true);
     try {
-      const products = await ShopeeService.scanShop(shopUrl, scanMode === 'text' ? rawText : undefined, key);
-      setScannedProducts(products);
-    } catch (error: any) {
-      console.error("Scan Error:", error);
-      if (error.message === 'MISSING_API_KEY' || error.message.includes('API Key')) {
-        setScanError("Lỗi kết nối AI - Vui lòng kiểm tra lại API Key");
-        setApiKeyError(true);
-      } else {
-        setScanError(error.message || "Không thể quét dữ liệu. Vui lòng thử lại.");
+      const collectionsToClear = [
+        'inventory',
+        'inventory_logs',
+        'orders',
+        'processed_orders',
+        'returns',
+        'shipping_labels'
+      ];
+
+      for (const collectionName of collectionsToClear) {
+        const q = query(collection(db, collectionName), where('userId', '==', user.uid));
+        const snapshot = await getDocs(q);
+        
+        if (!snapshot.empty) {
+          const docs = snapshot.docs;
+          // Process in batches of 500
+          for (let i = 0; i < docs.length; i += 500) {
+            const batch = writeBatch(db);
+            const chunk = docs.slice(i, i + 500);
+            chunk.forEach(doc => batch.delete(doc.ref));
+            await batch.commit();
+          }
+        }
       }
-    } finally {
-      setIsScanning(false);
-    }
-  };
-
-  const handleSaveScanned = async () => {
-    if (!user || scannedProducts.length === 0) return;
-    setIsUpdating(true);
-    try {
-      await ShopeeService.saveToInventory(user.uid, scannedProducts);
-      setShowScanner(false);
-      setScannedProducts([]);
-      setShopUrl('');
-      setRawText('');
-      alert('Đã đồng bộ sản phẩm từ Shopee vào kho!');
+      
+      setShowClearConfirm(false);
+      addToast('Đã khôi phục kho về trạng thái gốc thành công!', 'success');
     } catch (error) {
-      console.error("Save Scanned Error:", error);
-      alert('Lỗi khi lưu sản phẩm vào kho.');
+      console.error("Clear Error:", error);
+      addToast('Lỗi khi xoá sạch kho hàng.', 'error');
     } finally {
-      setIsUpdating(false);
+      setIsClearing(false);
     }
   };
 
@@ -510,16 +510,9 @@ export default function Inventory() {
       <section className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
           <h1 className="text-4xl font-extrabold tracking-tight text-on-surface mb-2">Kho hàng</h1>
-          <p className="text-secondary font-medium">Quản lý mã SKU nội bộ và số lượng tồn kho Shopee.</p>
+          <p className="text-secondary font-medium">Quản lý mã SKU nội bộ và số lượng tồn kho.</p>
         </div>
         <div className="flex items-center gap-3">
-          <button 
-            onClick={() => setShowScanner(true)}
-            className="px-4 py-3 rounded-xl border border-primary/20 text-primary font-bold flex items-center gap-2 hover:bg-primary/5 transition-all"
-          >
-            <Globe size={18} />
-            <span>Quét Shop Shopee</span>
-          </button>
           <button 
             onClick={() => setShowHistory(true)}
             className="px-4 py-3 rounded-xl border border-surface-container text-secondary font-bold flex items-center gap-2 hover:bg-surface-container transition-all"
@@ -549,6 +542,14 @@ export default function Inventory() {
           >
             {isSeeding ? <Loader2 className="animate-spin" size={18} /> : <Database size={18} />}
             <span>Nạp dữ liệu mẫu</span>
+          </button>
+          <button 
+            onClick={() => setShowClearConfirm(true)}
+            disabled={isClearing}
+            className="px-4 py-3 rounded-xl border border-error/20 text-error font-bold flex items-center gap-2 hover:bg-error/5 transition-all disabled:opacity-50"
+          >
+            {isClearing ? <Loader2 className="animate-spin" size={18} /> : <Trash2 size={18} />}
+            <span>Xoá sạch kho</span>
           </button>
           <div className="relative group">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary group-focus-within:text-primary transition-colors" size={18} />
@@ -791,29 +792,10 @@ export default function Inventory() {
                               <Edit2 size={18} />
                             </button>
                             <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (confirmingDeleteId === variant.id) {
-                                  handleDeleteProduct(variant.id);
-                                } else {
-                                  setConfirmingDeleteId(variant.id);
-                                  setTimeout(() => setConfirmingDeleteId(null), 3000);
-                                }
-                              }}
-                              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
-                                confirmingDeleteId === variant.id 
-                                  ? 'bg-error text-white scale-105 shadow-lg' 
-                                  : 'hover:bg-error/10 text-error active:scale-90'
-                              }`}
+                              onClick={() => setConfirmingDeleteId(variant.id)}
+                              className="p-2 hover:bg-error/10 text-error rounded-lg transition-colors active:scale-90"
                             >
-                              {confirmingDeleteId === variant.id ? (
-                                <>
-                                  <CheckCircle2 size={14} className="animate-pulse" />
-                                  <span className="text-[10px] font-black uppercase tracking-widest">Xác nhận</span>
-                                </>
-                              ) : (
-                                <Trash2 size={18} />
-                              )}
+                              <Trash2 size={18} />
                             </button>
                           </div>
                         </td>
@@ -838,6 +820,45 @@ export default function Inventory() {
           </div>
         </div>
       </div>
+      {/* Clear Inventory Confirmation Modal */}
+      <AnimatePresence>
+        {showClearConfirm && (
+          <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-surface-container-lowest w-full max-w-md rounded-[32px] shadow-2xl overflow-hidden border border-surface-container p-8 text-center"
+            >
+              <div className="w-20 h-20 bg-error/10 rounded-full flex items-center justify-center text-error mx-auto mb-6">
+                <AlertTriangle size={40} />
+              </div>
+              <h2 className="text-2xl font-bold text-on-surface mb-2">Xác nhận xoá sạch kho?</h2>
+              <p className="text-secondary mb-8">
+                Hành động này sẽ xoá <strong>toàn bộ sản phẩm</strong> và <strong>lịch sử biến động kho</strong> của bạn. Dữ liệu sẽ không thể khôi phục.
+              </p>
+              <div className="flex flex-col gap-3">
+                <button 
+                  onClick={clearInventory}
+                  disabled={isClearing}
+                  className="w-full py-4 bg-error text-white rounded-2xl font-bold shadow-lg shadow-error/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isClearing ? <Loader2 className="animate-spin" size={20} /> : <Trash2 size={20} />}
+                  <span>{isClearing ? 'Đang xoá...' : 'Xác nhận xoá sạch'}</span>
+                </button>
+                <button 
+                  onClick={() => setShowClearConfirm(false)}
+                  disabled={isClearing}
+                  className="w-full py-4 bg-surface-container-low text-secondary rounded-2xl font-bold hover:bg-surface-container transition-all"
+                >
+                  Huỷ bỏ
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* History Modal */}
       <AnimatePresence>
         {showHistory && (
@@ -917,168 +938,6 @@ export default function Inventory() {
                 >
                   Đóng
                 </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Shopee Scanner Modal */}
-      <AnimatePresence>
-        {showScanner && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-surface-container-lowest w-full max-w-4xl rounded-[32px] shadow-2xl overflow-hidden border border-surface-container flex flex-col max-h-[90vh]"
-            >
-              <div className="p-8 border-b border-surface-container flex items-center justify-between bg-surface-container-low/50">
-                <div>
-                  <h2 className="text-2xl font-bold text-on-surface flex items-center gap-3">
-                    <Globe className="text-primary" size={28} />
-                    Quét sản phẩm từ Shopee
-                  </h2>
-                  <p className="text-secondary text-sm">Sử dụng AI để tự động lấy danh sách sản phẩm từ link cửa hàng Shopee.</p>
-                </div>
-                <button 
-                  onClick={() => setShowScanner(false)}
-                  className="p-2 hover:bg-surface-container rounded-full transition-colors"
-                >
-                  <X size={24} />
-                </button>
-              </div>
-
-              <div className="p-8 space-y-6 overflow-y-auto custom-scrollbar">
-                {apiKeyError && (
-                  <div className="p-4 bg-error/10 border border-error/20 rounded-2xl flex items-center gap-4 text-error">
-                    <AlertTriangle size={24} />
-                    <div>
-                      <p className="font-black uppercase tracking-widest text-xs">Lỗi API Key</p>
-                      <p className="text-sm font-bold">VUI LÒNG NHẬP API KEY ĐỂ SỬ DỤNG</p>
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex gap-2 p-1 bg-surface-container-low rounded-2xl w-fit">
-                  <button 
-                    onClick={() => setScanMode('url')}
-                    className={`px-6 py-2 rounded-xl font-bold text-xs transition-all ${scanMode === 'url' ? 'bg-primary text-white shadow-md' : 'text-secondary hover:bg-surface-container'}`}
-                  >
-                    Link Shopee
-                  </button>
-                  <button 
-                    onClick={() => setScanMode('text')}
-                    className={`px-6 py-2 rounded-xl font-bold text-xs transition-all ${scanMode === 'text' ? 'bg-primary text-white shadow-md' : 'text-secondary hover:bg-surface-container'}`}
-                  >
-                    Dán văn bản
-                  </button>
-                </div>
-
-                {scanMode === 'url' ? (
-                  <div className="space-y-2">
-                    <label className="block text-[10px] font-black uppercase tracking-widest text-secondary">Link cửa hàng Shopee</label>
-                    <div className="flex gap-3">
-                      <input 
-                        type="text"
-                        value={shopUrl}
-                        onChange={(e) => setShopUrl(e.target.value)}
-                        placeholder="https://shopee.vn/shop/12345678"
-                        className="flex-1 px-6 py-4 bg-surface-container-low border border-surface-container rounded-2xl focus:ring-2 focus:ring-primary/20 outline-none transition-all font-medium"
-                      />
-                      <button 
-                        onClick={handleScanShop}
-                        disabled={isScanning || !shopUrl}
-                        className="px-8 py-4 bg-primary text-white rounded-2xl font-bold shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 flex items-center gap-2"
-                      >
-                        {isScanning ? <Loader2 className="animate-spin" size={20} /> : <Search size={20} />}
-                        <span>{isScanning ? 'Đang quét...' : 'Bắt đầu quét'}</span>
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <label className="block text-[10px] font-black uppercase tracking-widest text-secondary">Dán nội dung trang sản phẩm</label>
-                    <textarea 
-                      value={rawText}
-                      onChange={(e) => setRawText(e.target.value)}
-                      placeholder="Copy toàn bộ nội dung trang sản phẩm Shopee và dán vào đây..."
-                      className="w-full h-48 px-6 py-4 bg-surface-container-low border border-surface-container rounded-2xl focus:ring-2 focus:ring-primary/20 outline-none transition-all font-medium resize-none"
-                    />
-                    <button 
-                      onClick={handleScanShop}
-                      disabled={isScanning || !rawText}
-                      className="w-full py-4 bg-primary text-white rounded-2xl font-bold shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                    >
-                      {isScanning ? <Loader2 className="animate-spin" size={20} /> : <Search size={20} />}
-                      <span>{isScanning ? 'Đang xử lý AI...' : 'Bóc tách bằng AI'}</span>
-                    </button>
-                  </div>
-                )}
-
-                {scanError && (
-                  <div className="p-4 bg-error/10 border border-error/20 rounded-2xl text-error text-sm font-bold flex items-center gap-3">
-                    <AlertTriangle size={20} />
-                    {scanError}
-                  </div>
-                )}
-
-                {scannedProducts.length > 0 && (
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="font-bold text-on-surface">Kết quả bóc tách ({scannedProducts.length} sản phẩm)</h3>
-                      <p className="text-[10px] font-bold text-secondary uppercase tracking-widest">Vui lòng kiểm tra kỹ trước khi lưu</p>
-                    </div>
-                    <div className="border border-surface-container rounded-2xl overflow-hidden">
-                      <table className="w-full text-left border-collapse">
-                        <thead>
-                          <tr className="bg-surface-container-low/50">
-                            <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary">Sản phẩm</th>
-                            <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary">Mã SKU</th>
-                            <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary">Phân loại</th>
-                            <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-right">Giá bán</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-surface-container">
-                          {scannedProducts.map((p, idx) => (
-                            <tr key={idx} className="hover:bg-surface-container-low/30 transition-colors">
-                              <td className="px-4 py-3">
-                                <div className="flex items-center gap-3">
-                                  <div className="w-10 h-10 rounded-lg overflow-hidden bg-surface-container flex-shrink-0">
-                                    <img src={p.image} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                                  </div>
-                                  <span className="text-xs font-bold text-on-surface line-clamp-1">{p.name}</span>
-                                </div>
-                              </td>
-                              <td className="px-4 py-3 font-mono text-xs font-bold text-primary">{p.sku}</td>
-                              <td className="px-4 py-3 text-xs text-secondary">{p.variant}</td>
-                              <td className="px-4 py-3 text-xs font-bold text-green-600 text-right">{p.sellingPrice.toLocaleString()}đ</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="p-8 border-t border-surface-container bg-surface-container-low/50 flex justify-end gap-4">
-                <button 
-                  onClick={() => setShowScanner(false)}
-                  className="px-8 py-3 rounded-2xl border border-surface-container font-bold text-secondary hover:bg-surface-container transition-all"
-                >
-                  Đóng
-                </button>
-                {scannedProducts.length > 0 && (
-                  <button 
-                    onClick={handleSaveScanned}
-                    disabled={isUpdating}
-                    className="px-8 py-3 bg-green-600 text-white rounded-2xl font-bold shadow-lg shadow-green-600/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center gap-2 disabled:opacity-50"
-                  >
-                    {isUpdating ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />}
-                    <span>Lưu vào kho hàng</span>
-                  </button>
-                )}
               </div>
             </motion.div>
           </div>
@@ -1282,36 +1141,6 @@ export default function Inventory() {
                 </div>
 
                 <div className="pt-6 flex flex-col sm:flex-row gap-4">
-                  {editingProduct && (
-                    <button 
-                      type="button"
-                      onClick={() => {
-                        if (confirmingDeleteId === editingProduct.id) {
-                          handleDeleteProduct(editingProduct.id);
-                        } else {
-                          setConfirmingDeleteId(editingProduct.id);
-                          setTimeout(() => setConfirmingDeleteId(null), 3000);
-                        }
-                      }}
-                      className={`px-6 py-4 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 ${
-                        confirmingDeleteId === editingProduct.id
-                          ? 'bg-error text-white scale-105 shadow-lg'
-                          : 'border border-error/30 text-error hover:bg-error/5'
-                      }`}
-                    >
-                      {confirmingDeleteId === editingProduct.id ? (
-                        <>
-                          <CheckCircle2 size={20} />
-                          <span>Xác nhận xóa</span>
-                        </>
-                      ) : (
-                        <>
-                          <Trash2 size={20} />
-                          <span>Xóa sản phẩm</span>
-                        </>
-                      )}
-                    </button>
-                  )}
                   <div className="flex-1 flex gap-4">
                     <button 
                       type="button"
@@ -1338,6 +1167,68 @@ export default function Inventory() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Product Delete Confirmation Modal */}
+      <AnimatePresence>
+        {confirmingDeleteId && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl border border-surface-container"
+            >
+              <div className="w-16 h-16 bg-red-50 rounded-2xl flex items-center justify-center text-red-500 mb-6 mx-auto">
+                <Trash2 size={32} />
+              </div>
+              <h3 className="text-xl font-black text-on-surface mb-2 text-center">Xác nhận xoá</h3>
+              <p className="text-sm text-secondary mb-8 text-center leading-relaxed">
+                Bạn có chắc chắn muốn xoá sản phẩm này khỏi kho? Hành động này không thể hoàn tác.
+              </p>
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setConfirmingDeleteId(null)}
+                  disabled={isUpdating}
+                  className="flex-1 px-4 py-3 rounded-xl font-bold text-secondary hover:bg-surface-container transition-all"
+                >
+                  Hủy
+                </button>
+                <button 
+                  onClick={() => handleDeleteProduct(confirmingDeleteId)}
+                  disabled={isUpdating}
+                  className="flex-1 px-4 py-3 rounded-xl font-bold bg-red-500 text-white hover:bg-red-600 transition-all flex items-center justify-center gap-2 shadow-lg shadow-red-500/20"
+                >
+                  {isUpdating ? <Loader2 className="animate-spin" size={18} /> : 'Xác nhận xoá'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Toast Notifications */}
+      <div className="fixed bottom-24 right-8 z-[100] flex flex-col gap-3 pointer-events-none">
+        <AnimatePresence>
+          {toasts.map(toast => (
+            <motion.div
+              key={toast.id}
+              initial={{ opacity: 0, x: 50, scale: 0.9 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 20, scale: 0.9 }}
+              className={`pointer-events-auto px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 min-w-[300px] border ${
+                toast.type === 'success' ? 'bg-green-50 border-green-100 text-green-800' :
+                toast.type === 'error' ? 'bg-red-50 border-red-100 text-red-800' :
+                'bg-blue-50 border-blue-100 text-blue-800'
+              }`}
+            >
+              {toast.type === 'success' ? <CheckCircle2 size={20} /> : 
+               toast.type === 'error' ? <AlertCircle size={20} /> : 
+               <Package size={20} />}
+              <span className="text-sm font-bold">{toast.message}</span>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
     </motion.div>
   );
 }
