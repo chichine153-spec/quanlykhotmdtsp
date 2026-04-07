@@ -11,22 +11,60 @@ import {
   LogIn,
   Menu,
   X,
-  AlertTriangle
+  AlertTriangle,
+  Key,
+  RefreshCw,
+  Clock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Screen } from './types';
 import { useAuth } from './contexts/AuthContext';
-import ApiKeyManager from './components/ApiKeyManager';
+import { useData } from './contexts/DataContext';
 
 interface LayoutProps {
   children: React.ReactNode;
   activeScreen: Screen;
   onScreenChange: (screen: Screen) => void;
+  onOpenKeyModal: () => void;
 }
 
-export default function Layout({ children, activeScreen, onScreenChange }: LayoutProps) {
+export default function Layout({ children, activeScreen, onScreenChange, onOpenKeyModal }: LayoutProps) {
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
   const { user, login, logout, error, clearError } = useAuth();
+  const { refreshData, lastUpdated, loading } = useData();
+  const [hasApiKey, setHasApiKey] = React.useState(!!localStorage.getItem('gemini_api_key'));
+  const [isRefreshing, setIsRefreshing] = React.useState(false);
+  const [quotaExceeded, setQuotaExceeded] = React.useState(false);
+
+  // Check for quota error in global error state
+  React.useEffect(() => {
+    if (error?.includes('Quota limit exceeded') || error?.includes('Hệ thống đã đạt giới hạn')) {
+      setQuotaExceeded(true);
+    }
+  }, [error]);
+
+  React.useEffect(() => {
+    const checkKey = () => setHasApiKey(!!localStorage.getItem('gemini_api_key'));
+    window.addEventListener('storage', checkKey);
+    const interval = setInterval(checkKey, 1000);
+    return () => {
+      window.removeEventListener('storage', checkKey);
+      clearInterval(interval);
+    };
+  }, []);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshData();
+    } catch (err: any) {
+      if (err.message?.includes('Quota') || JSON.stringify(err).includes('Quota')) {
+        setQuotaExceeded(true);
+      }
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const navItems = [
     { id: 'dashboard', label: 'Bảng điều khiển', icon: LayoutDashboard },
@@ -40,8 +78,34 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
 
   return (
     <div className="min-h-screen bg-surface">
+      {/* Quota Exceeded Banner */}
+      <AnimatePresence>
+        {quotaExceeded && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="fixed top-0 left-0 w-full z-[100] bg-red-600 text-white px-4 py-3 flex items-center justify-between shadow-2xl"
+          >
+            <div className="flex items-center gap-3">
+              <AlertTriangle size={20} className="animate-pulse" />
+              <div className="flex flex-col">
+                <span className="text-sm font-black uppercase tracking-widest">Hết hạn mức truy cập (Quota Exceeded)</span>
+                <span className="text-[10px] opacity-80 font-medium">Hệ thống đã đạt giới hạn truy cập miễn phí trong ngày. Vui lòng quay lại sau 24h hoặc nâng cấp gói dịch vụ.</span>
+              </div>
+            </div>
+            <button 
+              onClick={() => setQuotaExceeded(false)}
+              className="p-2 hover:bg-white/20 rounded-full transition-colors"
+            >
+              <X size={20} />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Top Bar */}
-      <header className="fixed top-0 w-full z-50 bg-white/60 backdrop-blur-xl border-b border-surface-container flex justify-between items-center px-4 md:px-8 h-16">
+      <header className={`fixed top-0 w-full z-50 bg-white/60 backdrop-blur-xl border-b border-surface-container flex justify-between items-center px-4 md:px-8 h-16 transition-all ${quotaExceeded ? 'mt-16' : ''}`}>
         <div className="flex items-center gap-3">
           <button 
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -58,7 +122,39 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
         </div>
         
         <div className="flex items-center gap-2 md:gap-4">
-          <ApiKeyManager />
+          {/* Refresh Button */}
+          {user && (
+            <div className="hidden md:flex items-center gap-2 mr-2">
+              {lastUpdated && (
+                <div className="flex items-center gap-1 text-[10px] text-secondary font-bold opacity-60">
+                  <Clock size={10} />
+                  <span>Cập nhật: {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+              )}
+              <button 
+                onClick={handleRefresh}
+                disabled={isRefreshing || loading}
+                className={`p-2 rounded-xl transition-all ${isRefreshing ? 'bg-primary/10 text-primary' : 'hover:bg-surface-container text-secondary'}`}
+                title="Làm mới dữ liệu"
+              >
+                <RefreshCw size={18} className={isRefreshing || loading ? 'animate-spin' : ''} />
+              </button>
+            </div>
+          )}
+
+          <button 
+            onClick={onOpenKeyModal}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border ${
+              hasApiKey 
+                ? 'bg-green-50 border-green-200 text-green-600' 
+                : 'bg-red-50 border-red-200 text-red-600 animate-pulse'
+            }`}
+          >
+            <Key size={18} />
+            <span className="text-xs font-bold uppercase tracking-tight">
+              {hasApiKey ? 'API Key: Đã kích hoạt' : 'VUI LÒNG NHẬP API KEY'}
+            </span>
+          </button>
           {error && !user && (
             <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-red-50 text-red-600 rounded-full text-[10px] font-bold border border-red-100">
               <AlertTriangle size={12} />

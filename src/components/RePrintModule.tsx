@@ -18,15 +18,21 @@ import { collection, query, where, orderBy, limit, onSnapshot } from 'firebase/f
 import { db } from '../firebase';
 import Barcode from 'react-barcode';
 import { QRCodeSVG } from 'qrcode.react';
+import { useReactToPrint } from 'react-to-print';
+import { GeminiService } from '../services/gemini';
+import GeminiKeyModal from './GeminiKeyModal';
+import { getDoc, doc, getDocs } from 'firebase/firestore';
+
+import { getSupabase } from '../lib/supabase';
 
 interface ShippingLabelRecord {
   id: string;
-  trackingCode: string;
-  pdfUrl: string;
-  uploadDate: string;
-  expiryDate: string;
-  items: string;
-  region?: string;
+  tracking_number: string;
+  product_name: string;
+  quantity: number;
+  raw_pdf_content: string;
+  created_at: string;
+  user_id: string;
 }
 
 export default function RePrintModule() {
@@ -34,51 +40,158 @@ export default function RePrintModule() {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [labels, setLabels] = React.useState<ShippingLabelRecord[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const [refreshKey, setRefreshKey] = React.useState(0);
+  const [showApiKeyModal, setShowApiKeyModal] = React.useState(false);
+  const [orderToPrint, setOrderToPrint] = React.useState<any>(null);
+  const printRef = React.useRef<HTMLDivElement>(null);
+
+  const handlePrint = useReactToPrint({
+    contentRef: printRef,
+    documentTitle: `Vận đơn ${orderToPrint?.trackingCode || ''}`,
+  });
+
+  React.useEffect(() => {
+    if (orderToPrint) {
+      // Small delay to ensure the component is rendered in the hidden container
+      const timer = setTimeout(() => {
+        handlePrint();
+        setOrderToPrint(null);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [orderToPrint, handlePrint]);
 
   React.useEffect(() => {
     if (!user) return;
 
-    const labelsRef = collection(db, 'shipping_labels');
-    const q = query(
-      labelsRef, 
-      where('userId', '==', user.uid),
-      orderBy('uploadDate', 'desc'),
-      limit(50)
-    );
+    const fetchSupabaseLabels = async () => {
+      const supabase = getSupabase();
+      if (!supabase) {
+        setLoading(false);
+        return;
+      }
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const recentLabels = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as ShippingLabelRecord[];
-      setLabels(recentLabels);
-      setLoading(false);
-    });
+      setLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('user_id', user.uid)
+          .order('created_at', { ascending: false })
+          .limit(100);
 
-    return () => unsubscribe();
-  }, [user]);
+        if (error) throw error;
+        setLabels(data || []);
+      } catch (err) {
+        console.error('[RePrintModule] Supabase fetch error:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  const handleSearch = (e: React.FormEvent) => {
+    fetchSupabaseLabels();
+
+    // Real-time subscription
+    const supabase = getSupabase();
+    let channel: any = null;
+    
+    if (supabase) {
+      channel = supabase
+        .channel('orders_changes')
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'orders',
+          filter: `user_id=eq.${user.uid}`
+        }, (payload) => {
+          console.log('[RePrintModule] Real-time update:', payload);
+          fetchSupabaseLabels();
+        })
+        .subscribe();
+    }
+
+    return () => {
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
+    };
+  }, [user, refreshKey]);
+
+  const handleRefresh = () => {
+    setLoading(true);
+    setRefreshKey(prev => prev + 1);
+  };
+
+  const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!searchQuery.trim()) return;
+    if (!searchQuery.trim() || !user) return;
 
-    const found = labels.find(l => 
-      l.trackingCode.toLowerCase() === searchQuery.trim().toLowerCase()
-    );
+    const queryStr = searchQuery.trim();
+    const supabase = getSupabase();
+    if (!supabase) {
+      alert('Supabase chưa được cấu hình. Vui lòng kiểm tra API Key.');
+      return;
+    }
 
-    if (found) {
-      handleQuickPrint(found.pdfUrl);
-    } else {
-      alert('Không tìm thấy đơn hàng trong 15 ngày qua. Vui lòng kiểm tra lại mã vận đơn.');
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('user_id', user.uid)
+        .eq('tracking_number', queryStr)
+        .limit(1);
+
+      if (error) throw error;
+      if (data && data.length > 0) {
+        handleQuickPrint(data[0]);
+      } else {
+        alert('Không tìm thấy đơn hàng. Vui lòng kiểm tra lại mã vận đơn.');
+      }
+    } catch (error) {
+      console.error('Search error:', error);
+      alert('Lỗi khi tìm kiếm đơn hàng. Vui lòng thử lại.');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleQuickPrint = (pdfUrl: string) => {
+  const handleQuickPrint = async (label: ShippingLabelRecord) => {
+    setLoading(true);
+    try {
+      // For Supabase-based reprint, we use the data already in the record
+      // or we can try to fetch the full order from Firestore if it exists
+      const orderSnap = await getDoc(doc(db, 'orders', label.tracking_number));
+      
+      if (orderSnap.exists()) {
+        const orderData = orderSnap.data();
+        setOrderToPrint({
+          ...orderData,
+          trackingCode: label.tracking_number
+        });
+      } else {
+        // Fallback: Use data from Supabase record
+        setOrderToPrint({
+          trackingCode: label.tracking_number,
+          region: 'N/A',
+          items: label.product_name, // This will be the combined SKU/Variant string
+          destination: 'Chưa xác định',
+          uploadDate: label.created_at
+        });
+      }
+    } catch (error) {
+      console.error('Print error:', error);
+      alert('Lỗi khi tải dữ liệu in. Vui lòng thử lại.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOpenPDF = (pdfUrl: string) => {
     if (!pdfUrl) {
       alert('Không tìm thấy URL file PDF cho đơn hàng này.');
       return;
     }
-    // Open PDF in a new tab for printing
     window.open(pdfUrl, '_blank');
   };
 
@@ -118,7 +231,13 @@ export default function RePrintModule() {
       <div className="glass-morphism rounded-[2rem] overflow-hidden border border-white/10 shadow-lg">
         <div className="p-6 border-b border-surface-container bg-surface-container-low/30 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Clock className="text-primary" size={20} />
+            <button 
+              onClick={handleRefresh}
+              className="p-2 text-primary hover:bg-primary/10 rounded-xl transition-all"
+              title="Tải lại dữ liệu"
+            >
+              <RotateCcw size={20} className={loading ? 'animate-spin' : ''} />
+            </button>
             <h3 className="text-lg font-black text-on-surface tracking-tight">Đơn hàng mới tải lên (15 ngày qua)</h3>
           </div>
           <div className="px-4 py-1 bg-primary/10 text-primary rounded-full text-xs font-bold">
@@ -156,33 +275,26 @@ export default function RePrintModule() {
                       <div className="flex items-center gap-2">
                         <Calendar size={14} className="text-secondary" />
                         <span className="text-sm font-medium text-on-surface">
-                          {new Date(label.uploadDate).toLocaleDateString('vi-VN')}
+                          {new Date(label.created_at).toLocaleDateString('vi-VN')}
                         </span>
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className="font-mono font-bold text-primary">{label.trackingCode}</span>
+                      <span className="font-mono font-bold text-[#FF4500]">{label.tracking_number}</span>
                     </td>
                     <td className="px-6 py-4">
                       <div className="text-xs font-medium text-secondary line-clamp-1 max-w-xs">
-                        {label.items}
+                        {label.product_name} (x{label.quantity})
                       </div>
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex justify-end gap-2">
                         <button 
-                          onClick={() => handleQuickPrint(label.pdfUrl)}
+                          onClick={() => handleQuickPrint(label)}
                           className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl font-bold text-xs shadow-lg hover:scale-105 active:scale-95 transition-all"
                         >
                           <Printer size={14} />
                           In nhanh
-                        </button>
-                        <button 
-                          onClick={() => handleQuickPrint(label.pdfUrl)}
-                          className="p-2 text-secondary hover:bg-surface-container rounded-xl transition-all"
-                          title="Mở PDF gốc"
-                        >
-                          <ExternalLink size={18} />
                         </button>
                       </div>
                     </td>
@@ -202,6 +314,17 @@ export default function RePrintModule() {
           </table>
         </div>
       </div>
+      {/* Hidden Print Container */}
+      <div style={{ display: 'none' }}>
+        <div ref={printRef}>
+          {orderToPrint && <ThermalLabel order={orderToPrint} />}
+        </div>
+      </div>
+
+      <GeminiKeyModal 
+        isOpen={showApiKeyModal} 
+        onClose={() => setShowApiKeyModal(false)} 
+      />
     </div>
   );
 }
@@ -212,15 +335,44 @@ export function ThermalLabel({ order }: { order: any }) {
   const timeStr = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 
   const items = Array.isArray(order.items) ? order.items : [];
+  const totalQty = items.length > 0 
+    ? items.reduce((acc: number, i: any) => acc + (i.quantity || 0), 0)
+    : (order.quantity || 1);
 
   return (
-    <div className="thermal-label text-black font-sans" style={{ width: '100%', padding: '2mm' }}>
+    <div className="thermal-label text-black font-sans bg-white" style={{ 
+      width: '100mm', 
+      height: '150mm', 
+      padding: '5mm',
+      boxSizing: 'border-box',
+      display: 'flex',
+      flexDirection: 'column'
+    }}>
+      <style>
+        {`
+          @media print {
+            @page {
+              size: 100mm 150mm;
+              margin: 0;
+            }
+            body {
+              margin: 0;
+              -webkit-print-color-adjust: exact;
+            }
+            .thermal-label {
+              width: 100mm !important;
+              height: 150mm !important;
+              padding: 5mm !important;
+            }
+          }
+        `}
+      </style>
       {/* Header */}
       <div className="flex justify-between items-start border-b-2 border-black pb-2 mb-2">
-        <div className="text-2xl font-black italic tracking-tighter">Shopee</div>
+        <div className="text-3xl font-black italic tracking-tighter">Shopee</div>
         <div className="text-right">
-          <div className="text-[8px] font-bold uppercase">Ngày đặt hàng: {dateStr}</div>
-          <div className="text-[10px] font-black">{order.region || 'HCM-7'}</div>
+          <div className="text-[10px] font-bold uppercase">Ngày đặt hàng: {dateStr}</div>
+          <div className="text-sm font-black">{order.region || 'HCM-7'}</div>
         </div>
       </div>
 
@@ -228,50 +380,56 @@ export function ThermalLabel({ order }: { order: any }) {
       <div className="flex flex-col items-center py-4 border-b-2 border-black">
         <Barcode 
           value={order.trackingCode} 
-          width={1.5} 
-          height={60} 
-          fontSize={14} 
+          width={2} 
+          height={70} 
+          fontSize={16} 
           margin={0}
           displayValue={true}
         />
       </div>
 
       {/* QR and Info */}
-      <div className="grid grid-cols-3 gap-2 py-4 border-b-2 border-black">
+      <div className="grid grid-cols-3 gap-4 py-4 border-b-2 border-black">
         <div className="col-span-1 flex items-center justify-center">
-          <QRCodeSVG value={order.trackingCode} size={80} />
+          <QRCodeSVG value={order.trackingCode} size={100} />
         </div>
         <div className="col-span-2 space-y-1">
           <div className="text-[10px] font-black uppercase">Người nhận:</div>
-          <div className="text-xs font-bold leading-tight line-clamp-2">NGUYỄN VĂN A (090****123)</div>
-          <div className="text-[9px] leading-tight line-clamp-3">
-            123 Đường Lê Lợi, Phường Bến Thành, Quận 1, TP. Hồ Chí Minh
+          <div className="text-sm font-bold leading-tight">
+            {order.recipientName || 'KHÁCH HÀNG'} {order.recipientPhone ? `(${order.recipientPhone})` : ''}
+          </div>
+          <div className="text-[10px] leading-tight">
+            {order.recipientAddress || 'Vui lòng xem địa chỉ chi tiết trên vận đơn gốc'}
           </div>
         </div>
       </div>
 
       {/* Items Section */}
-      <div className="py-4">
-        <div className="text-[10px] font-black uppercase mb-2">Nội dung hàng (Tổng SL: {items.reduce((acc: number, i: any) => acc + (i.quantity || 0), 0)})</div>
+      <div className="py-4 flex-grow overflow-hidden">
+        <div className="text-[11px] font-black uppercase mb-2 border-b border-black pb-1">
+          Nội dung hàng (Tổng SL: {totalQty})
+        </div>
         <div className="space-y-2">
           {items.length > 0 ? items.map((item: any, idx: number) => (
             <div key={idx} className="flex justify-between items-start border-b border-dotted border-black/30 pb-1">
               <div className="flex-grow pr-2">
-                <div className="text-[11px] font-black leading-tight">{item.productName}</div>
+                <div className="text-[12px] font-black leading-tight">{item.productName}</div>
                 <div className="text-[10px] font-bold text-gray-700">SKU: {item.sku} | Phân loại: {item.variant}</div>
               </div>
-              <div className="text-xs font-black">x{item.quantity}</div>
+              <div className="text-sm font-black">x{item.quantity}</div>
             </div>
           )) : (
-            <div className="text-[10px] italic text-gray-500">{order.items || 'Không có dữ liệu sản phẩm'}</div>
+            <div className="text-[12px] font-black leading-tight">
+              {order.items || 'Không có dữ liệu sản phẩm'}
+            </div>
           )}
         </div>
       </div>
 
       {/* Footer */}
       <div className="mt-auto pt-4 border-t-2 border-black flex justify-between items-end">
-        <div className="text-[8px] italic">In bởi Lucid Inventory lúc {timeStr} {dateStr}</div>
-        <div className="text-xs font-black border-2 border-black px-2 py-1">SPX</div>
+        <div className="text-[9px] italic">In bởi Lucid Inventory lúc {timeStr} {dateStr}</div>
+        <div className="text-sm font-black border-2 border-black px-3 py-1">SPX</div>
       </div>
     </div>
   );

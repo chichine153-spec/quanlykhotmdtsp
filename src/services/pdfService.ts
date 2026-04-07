@@ -24,6 +24,11 @@ import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage
 import { db, storage, auth } from '../firebase';
 import { ProfitService } from './profitService';
 
+import { GeminiService } from './gemini';
+import { Type } from "@google/genai";
+
+import { getSupabase } from '../lib/supabase';
+
 export interface ExtractedItem {
   sku: string;
   color: string;
@@ -38,6 +43,10 @@ export interface ExtractedOrder {
   trackingCode: string;
   items: ExtractedItem[];
   region?: string;
+  recipientName?: string;
+  recipientPhone?: string;
+  recipientAddress?: string;
+  rawText?: string;
 }
 
 enum OperationType {
@@ -93,28 +102,36 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 
 export class PDFService {
   /**
-   * Extracts text from a PDF file and parses it for Shopee order data (supports multiple orders/pages).
+   * Extracts text from a PDF file or URL and parses it for Shopee order data.
    */
-  static async extractOrderData(file: File): Promise<ExtractedOrder[]> {
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
-    const orders: ExtractedOrder[] = [];
-    const startTime = Date.now();
-    const TIMEOUT_MS = 15000; // 15 seconds timeout
-
-    let timedOut = false;
-    for (let i = 1; i <= pdf.numPages; i++) {
-      // Check for timeout
-      if (Date.now() - startTime > TIMEOUT_MS) {
-        console.warn(`Extraction timed out after ${TIMEOUT_MS}ms. Returning ${orders.length} partial results.`);
-        timedOut = true;
-        break; 
+  static async extractOrderData(input: File | string): Promise<ExtractedOrder[]> {
+    let arrayBuffer: ArrayBuffer;
+    
+    if (typeof input === 'string') {
+      console.log(`[PDFService] Fetching PDF from URL: ${input}`);
+      try {
+        const response = await fetch(input);
+        if (!response.ok) throw new Error(`Failed to fetch PDF: ${response.statusText}`);
+        arrayBuffer = await response.arrayBuffer();
+      } catch (error) {
+        console.error('[PDFService] URL fetch error (CORS?):', error);
+        throw new Error('Không thể tải file PDF từ máy chủ (Lỗi CORS hoặc kết nối). Vui lòng thử tải lại trang.');
       }
+    } else {
+      arrayBuffer = await input.arrayBuffer();
+    }
 
+    const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+    let fullText = '';
+    const startTime = Date.now();
+    const TIMEOUT_MS = 60000;
+
+    for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
-      
       const items = textContent.items as any[];
+      
+      // Sort items by position
       items.sort((a, b) => {
         if (Math.abs(a.transform[5] - b.transform[5]) < 5) {
           return a.transform[4] - b.transform[4];
@@ -122,7 +139,7 @@ export class PDFService {
         return b.transform[5] - a.transform[5];
       });
 
-      let pageText = '';
+      let pageText = `--- TRANG ${i} ---\n`;
       for (let j = 0; j < items.length; j++) {
         const item = items[j];
         const nextItem = items[j + 1];
@@ -132,125 +149,86 @@ export class PDFService {
           const isSameLine = Math.abs(item.transform[5] - nextItem.transform[5]) < 5;
           if (isSameLine) {
             const gap = nextItem.transform[4] - (item.transform[4] + (item.width || 0));
-            if (gap > 2.5) {
-              pageText += ' ';
-            }
+            if (gap > 2.5) pageText += ' ';
           } else {
             pageText += '\n';
           }
         }
       }
-
-      // 1. Mã vận đơn: Extremely flexible search
-      let trackingCode: string | null = null;
-      
-      // Try multiple patterns for tracking code
-      const trackingPatterns = [
-        // Standard keyword search
-        /(?:M\s*ã\s*v\s*ậ\s*n\s*đ\s*ơ\s*n|M\s*a\s*v\s*a\s*n\s*d\s*o\s*n)[\s\n:]*([A-Z0-9]{8,20})\b/i,
-        // Common Shopee prefixes
-        /\b(SPX[A-Z0-9]{10,20})\b/i,
-        /\b(GY[A-Z0-9]{10,20})\b/i,
-        /\b(VN[0-9]{10,20})\b/i,
-        /\b([A-Z]{2}[0-9]{10,20})\b/i,
-        // Any long alphanumeric string (10-20 chars) that starts with SPX or GY
-        /\b((?:SPX|GY)[A-Z0-9]{8,20})\b/i,
-        // Any long alphanumeric string that looks like a code (12-20 chars)
-        /\b([A-Z0-9]{12,20})\b/
-      ];
-
-      for (const pattern of trackingPatterns) {
-        const match = pageText.match(pattern);
-        if (match) {
-          trackingCode = (match[1] || match[0]).trim();
-          if (trackingCode.length >= 8) break;
-        }
-      }
-
-      if (!trackingCode) {
-        console.warn(`Page ${i}: No tracking code detected.`);
-        continue; 
-      }
-
-      // 1.5. Mã vùng (Region): Look for something like "HCM-7", "HN-3", etc.
-      const regionPattern = /\b([A-Z]{2,3}-\d{1,3})\b/;
-      const regionMatch = pageText.match(regionPattern);
-      const region = regionMatch ? regionMatch[1] : undefined;
-
-      // 2. Mã sản phẩm (SKU), Màu sắc & Số lượng
-      const extractedItems: ExtractedItem[] = [];
-      
-      // Look for the items section
-      const contentKeywords = [/N\s*ộ\s*i\s*d\s*u\s*n\s*g\s*h\s*à\s*n\s*g/i, /T\s*ê\s*n\s*s\s*ả\s*n\s*p\s*h\s*ẩ\s*m/i, /S\s*ả\s*n\s*p\s*h\s*ẩ\s*m/i, /C\s*h\s*i\s*t\s*i\s*ế\s*t/i];
-      let contentSection = pageText;
-      
-      for (const kw of contentKeywords) {
-        const match = pageText.match(kw);
-        if (match) {
-          contentSection = pageText.substring(match.index!);
-          break;
-        }
-      }
-      
-      // Pattern A: Numbered list items (e.g., "1. Product Name, SKU, SL: 1")
-      // This is the most reliable pattern for Shopee labels and avoids "Tổng SL"
-      const numberedItemPattern = /(\d+)\.\s+([\s\S]*?)\s*(?:S\s*L|S\s*ố\s*l\s*ư\s*ợ\s*n\s*g|S\s*o\s*l\s*u\s*o\s*n\s*g|Q\s*t\s*y)[\s\n:]*(\d+)/gi;
-      let match;
-      
-      while ((match = numberedItemPattern.exec(contentSection)) !== null) {
-        const rawInfo = match[2].trim().replace(/\n/g, ' ');
-        const quantity = parseInt(match[3], 10);
-        if (quantity > 0) {
-          const item = this.parseSkuAndColor(rawInfo, quantity);
-          if (item) {
-            item.productName = rawInfo;
-            extractedItems.push(item);
-          }
-        }
-      }
-
-      // Pattern B: Fallback if no numbered items found (less strict, but excludes "Tổng")
-      if (extractedItems.length === 0) {
-        const fallbackPattern = /(?!\bTổng\b)(?:^|\n)(.*?)\s*(?:S\s*L|S\s*ố\s*l\s*ư\s*ợ\s*n\s*g)[\s\n:]*(\d+)/gi;
-        while ((match = fallbackPattern.exec(contentSection)) !== null) {
-          const rawInfo = match[1].trim();
-          const quantity = parseInt(match[2], 10);
-          if (quantity > 0 && !rawInfo.toLowerCase().includes('tổng')) {
-            const item = this.parseSkuAndColor(rawInfo, quantity);
-            if (item) {
-              item.productName = rawInfo;
-              extractedItems.push(item);
-            }
-          }
-        }
-      }
-
-      // Pattern C: Last resort - look for any SKU-like string followed by a number
-      if (extractedItems.length === 0) {
-        const fallbackPattern = /\b([A-Z0-9]{3,15})\b.*?\b(\d{1,2})\b/g;
-        let fMatch;
-        while ((fMatch = fallbackPattern.exec(contentSection)) !== null) {
-          const sku = fMatch[1];
-          const qty = parseInt(fMatch[2], 10);
-          if (sku.length >= 3 && qty > 0 && qty < 50) { // Sanity check
-            extractedItems.push({ sku, color: '', quantity: qty });
-          }
-        }
-      }
-
-      if (extractedItems.length > 0) {
-        orders.push({ trackingCode, items: extractedItems, region });
-      }
+      fullText += pageText + '\n';
     }
 
-    if (orders.length === 0) {
-      if (timedOut) {
-        throw new Error('Lỗi kết nối, vui lòng thử lại (Quá thời gian xử lý 15s)');
+    // Gửi dữ liệu thô sang Gemini bóc tách
+    try {
+      const extractedOrders = await this.parseWithGemini(fullText);
+      // Attach raw text to each order for Supabase storage
+      return extractedOrders.map(order => ({
+        ...order,
+        rawText: fullText
+      }));
+    } catch (error: any) {
+      console.error('[PDFService] Gemini Parsing Error:', error);
+      if (error.message === 'MISSING_API_KEY') {
+        throw new Error('Lỗi kết nối AI - VUI LÒNG KIỂM TRA LẠI API KEY');
       }
-      throw new Error('Không tìm thấy dữ liệu đơn hàng hợp lệ trong file PDF. Vui lòng kiểm tra xem file có phải là vận đơn Shopee chuẩn không.');
+      throw new Error(`Lỗi kết nối AI - Vui lòng kiểm tra lại API Key (${error.message})`);
     }
+  }
 
-    return orders;
+  private static async parseWithGemini(text: string): Promise<ExtractedOrder[]> {
+    const ai = GeminiService.getInstance();
+    if (!ai) throw new Error('MISSING_API_KEY');
+
+    const prompt = `DƯỚI ĐÂY LÀ NỘI DUNG VĂN BẢN TRÍCH XUẤT TỪ FILE VẬN ĐƠN SHOPEE (PDF):
+    ---
+    ${text}
+    ---
+    NHIỆM VỤ: Trích xuất danh sách các đơn hàng và sản phẩm tương ứng.
+    
+    YÊU CẦU:
+    1. Trích xuất Mã vận đơn (Tracking Code): Thường bắt đầu bằng SPX, GY, VN...
+    2. Trích xuất Mã SKU, Màu sắc/Phân loại và Số lượng cho từng sản phẩm trong mỗi đơn hàng.
+    3. Trích xuất Mã vùng (Region) nếu có (ví dụ: HN-3, HCM-7).
+    4. Trích xuất Thông tin người nhận: Tên (recipientName), Số điện thoại (recipientPhone), Địa chỉ (recipientAddress).
+    5. Loại bỏ các sản phẩm quà tặng, sticker, túi đựng không có trong kho.
+    6. Trả về kết quả dưới dạng mảng JSON các đối tượng ExtractedOrder.`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              trackingCode: { type: Type.STRING },
+              region: { type: Type.STRING },
+              recipientName: { type: Type.STRING },
+              recipientPhone: { type: Type.STRING },
+              recipientAddress: { type: Type.STRING },
+              items: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    sku: { type: Type.STRING },
+                    color: { type: Type.STRING },
+                    quantity: { type: Type.NUMBER }
+                  },
+                  required: ["sku", "quantity"]
+                }
+              }
+            },
+            required: ["trackingCode", "items"]
+          }
+        }
+      }
+    });
+
+    const result = JSON.parse(response.text || "[]");
+    return result as ExtractedOrder[];
   }
 
   private static parseSkuAndColor(rawInfo: string, quantity: number): ExtractedItem | null {
@@ -353,7 +331,7 @@ export class PDFService {
   static async findMatchedProduct(sku: string, color: string, preFetchedProducts?: any[]) {
     let allProducts = preFetchedProducts;
     
-    if (!allProducts) {
+    if (!allProducts || allProducts.length === 0) {
       try {
         const inventoryRef = collection(db, 'inventory');
         const allProductsSnap = await getDocs(query(
@@ -371,19 +349,35 @@ export class PDFService {
       }
     }
 
-    const normalize = (s: any) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const removeAccents = (str: string) => {
+      return str.normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/đ/g, 'd')
+                .replace(/Đ/g, 'D');
+    };
+
+    const normalize = (s: any) => {
+      const str = String(s || '');
+      return removeAccents(str).toLowerCase().replace(/[^a-z0-9]/g, '');
+    };
+
     const normExtractedSku = normalize(sku);
     const normExtractedColor = normalize(color);
     const normExtractedCombined = normalize(sku + color);
 
+    console.log(`[PDFService] Normalizing for match: SKU="${sku}"->"${normExtractedSku}", Color="${color}"->"${normExtractedColor}"`);
+
+    // 1. Exact match (normalized)
     let matchedProduct = allProducts.find(p => {
       return normalize(p.sku) === normExtractedSku && normalize(p.variant) === normExtractedColor;
     });
 
+    // 2. Combined match (SKU+Variant in one field)
     if (!matchedProduct) {
       matchedProduct = allProducts.find(p => normalize(p.sku) === normExtractedCombined);
     }
 
+    // 3. SKU match + partial variant match
     if (!matchedProduct) {
       const skuMatches = allProducts.filter(p => normalize(p.sku) === normExtractedSku);
       if (skuMatches.length > 0) {
@@ -394,11 +388,16 @@ export class PDFService {
       }
     }
 
+    // 4. Partial SKU match
     if (!matchedProduct) {
       matchedProduct = allProducts.find(p => {
         const pSku = normalize(p.sku);
         return pSku.includes(normExtractedSku) || normExtractedSku.includes(pSku);
       });
+    }
+
+    if (matchedProduct && !matchedProduct.ref && matchedProduct.id) {
+      matchedProduct.ref = doc(db, 'inventory', matchedProduct.id);
     }
 
     return matchedProduct;
@@ -427,19 +426,26 @@ export class PDFService {
   /**
    * Processes an entire order: checks for duplicates, updates inventory for all items, and uploads the label.
    */
-  static async processOrder(file: File, order: ExtractedOrder, preFetchedProducts?: any[], preFetchedConfig?: any): Promise<{ productNames: string[] }> {
+  static async processOrder(file: File, order: ExtractedOrder, preFetchedProducts?: any[], preFetchedConfig?: any, preUploadedUrl?: string): Promise<{ productNames: string[] }> {
     const { trackingCode, items } = order;
-    console.log(`Processing order: ${trackingCode} with ${items.length} items`);
+    console.log(`[PDFService] Processing order: ${trackingCode} with ${items.length} items`);
+
+    if (!db) {
+      console.error('[PDFService] CRITICAL: Firestore database instance is undefined in processOrder');
+      throw new Error('Hệ thống cơ sở dữ liệu chưa sẵn sàng. Vui lòng thử lại sau.');
+    }
 
     try {
       const processedOrderRef = doc(db, 'processed_orders', trackingCode);
       const orderRef = doc(db, 'orders', trackingCode);
       const shippingLabelRef = doc(db, 'shipping_labels', trackingCode);
+      const inventoryLogsRef = collection(db, 'inventory_logs');
       const productNames: string[] = [];
 
       // Use pre-fetched products if available, otherwise fetch once
       let allProducts = preFetchedProducts;
-      if (!allProducts) {
+      if (!allProducts || allProducts.length === 0) {
+        console.log('[PDFService] No pre-fetched products, fetching from Firestore...');
         const inventoryRef = collection(db, 'inventory');
         const allProductsSnap = await getDocs(query(
           inventoryRef, 
@@ -451,11 +457,10 @@ export class PDFService {
           ...d.data() as any 
         }));
       }
+      console.log(`[PDFService] Total products in inventory for matching: ${allProducts.length}`);
 
-      // 1. Upload PDF to Storage first to get the URL
-      const storageRef = ref(storage, `shipping_labels/${trackingCode}_${Date.now()}.pdf`);
-      const uploadResult = await uploadBytes(storageRef, file);
-      const downloadURL = await getDownloadURL(uploadResult.ref);
+      // 1. Skip PDF Upload to Storage to avoid CORS errors
+      let downloadURL = preUploadedUrl || '';
 
       // 1.5 Use pre-fetched config if available, otherwise fetch
       let config = preFetchedConfig;
@@ -465,32 +470,37 @@ export class PDFService {
       }
 
       // 2. Perform atomic transaction for the entire order
+      console.log(`[PDFService] Starting transaction for order ${trackingCode}...`);
       await runTransaction(db, async (transaction) => {
         // Check for duplicate order in processed_orders collection
         const tProcessedSnap = await transaction.get(processedOrderRef);
         if (tProcessedSnap.exists()) {
+          console.warn(`[PDFService] Order ${trackingCode} already processed.`);
           throw new Error(`Đơn hàng [${trackingCode}] đã được xử lý trước đó, không thể trừ kho thêm lần nữa`);
         }
 
-        const inventoryUpdates: { ref: any, newStock: number, status: string }[] = [];
+        const inventoryUpdates: { ref: any, newStock: number, status: string, log: any }[] = [];
         const processedItems: any[] = [];
 
         for (const item of items) {
           const { sku, color, quantity } = item;
+          console.log(`[PDFService] Matching item: SKU=${sku}, Color=${color}, Qty=${quantity}`);
           
           const matchedProduct = await PDFService.findMatchedProduct(sku, color, allProducts);
 
           if (!matchedProduct) {
-            console.warn(`Skipping item [${sku}] - [${color || 'Mặc định'}] for order ${trackingCode} as it's not in inventory.`);
+            console.warn(`[PDFService] SKIPPING: Item [${sku}] - [${color || 'Mặc định'}] not found in inventory.`);
             continue;
           }
 
-          const productRef = matchedProduct.ref;
+          console.log(`[PDFService] MATCH FOUND: ${matchedProduct.sku} (${matchedProduct.variant}) - ID: ${matchedProduct.id}`);
+
+          const productRef = matchedProduct.ref || doc(db, 'inventory', matchedProduct.id);
           
           // Get latest stock in transaction
           const tProductSnap = await transaction.get(productRef);
           if (!tProductSnap.exists()) {
-            console.error(`Product document ${productRef.id} not found in transaction!`);
+            console.error(`[PDFService] Product document ${productRef.id} not found in transaction!`);
             continue;
           }
           
@@ -500,9 +510,23 @@ export class PDFService {
           const newStock = currentStock - deductQty;
           const status = newStock > 10 ? 'in_stock' : (newStock > 0 ? 'low_stock' : 'out_of_stock');
 
-          console.log(`[Transaction] Updating ${matchedProduct.sku} (${matchedProduct.variant}): ${currentStock} - ${deductQty} = ${newStock}`);
+          console.log(`[PDFService] Transaction Update: ${matchedProduct.sku} | Stock: ${currentStock} -> ${newStock}`);
 
-          inventoryUpdates.push({ ref: productRef, newStock, status });
+          inventoryUpdates.push({ 
+            ref: productRef, 
+            newStock, 
+            status,
+            log: {
+              userId: auth.currentUser?.uid,
+              sku: matchedProduct.sku,
+              productName: matchedProduct.name,
+              variant: matchedProduct.variant || '',
+              change: -deductQty,
+              type: 'deduction',
+              trackingCode: trackingCode,
+              timestamp: Timestamp.now()
+            }
+          });
           productNames.push(matchedProduct.name);
           
           processedItems.push({
@@ -518,6 +542,7 @@ export class PDFService {
         }
 
         if (processedItems.length === 0) {
+          console.error(`[PDFService] No items matched for order ${trackingCode}`);
           throw new Error(`Không tìm thấy bất kỳ sản phẩm nào trong kho khớp với đơn hàng ${trackingCode}. Vui lòng kiểm tra lại mã SKU.`);
         }
 
@@ -525,8 +550,13 @@ export class PDFService {
         for (const update of inventoryUpdates) {
           transaction.update(update.ref, { 
             stock: update.newStock,
-            status: update.status
+            status: update.status,
+            updatedAt: new Date().toISOString()
           });
+          
+          // Create log
+          const newLogRef = doc(inventoryLogsRef);
+          transaction.set(newLogRef, update.log);
         }
 
         // Save order record
@@ -542,17 +572,27 @@ export class PDFService {
           return sum + (item.quantity * fee);
         }, 0);
 
+        // Infer destination from region
+        let destination = 'Chưa xác định';
+        const region = order.region || '';
+        if (region.toUpperCase().startsWith('HN')) destination = 'Hà Nội';
+        else if (region.toUpperCase().startsWith('SG') || region.toUpperCase().startsWith('HCM')) destination = 'Hồ Chí Minh';
+
         transaction.set(orderRef, {
           trackingCode,
           processedAt: now.toISOString(),
           expiryDate: expiryDate.toISOString(),
           items: processedItems,
-          region: order.region || '',
+          region: region,
+          destination,
           userId: auth.currentUser?.uid,
-          pdfUrl: downloadURL,
+          pdfUrl: downloadURL || '',
           totalRevenue,
           totalCost,
-          packagingFee
+          packagingFee,
+          recipientName: order.recipientName || '',
+          recipientPhone: order.recipientPhone || '',
+          recipientAddress: order.recipientAddress || ''
         });
 
         // Mark as processed
@@ -566,8 +606,7 @@ export class PDFService {
         // Save to shipping_labels for re-print
         transaction.set(shippingLabelRef, {
           trackingCode,
-          pdfUrl: downloadURL,
-          storagePath: storageRef.fullPath,
+          pdfUrl: downloadURL || '',
           uploadDate: now.toISOString(),
           expiryDate: expiryDate.toISOString(),
           userId: auth.currentUser?.uid,
@@ -576,10 +615,39 @@ export class PDFService {
         });
       });
 
+      // 3. Save to Supabase as requested by user
+      try {
+        const supabase = getSupabase();
+        if (supabase) {
+          const supabaseData = order.items.map(item => ({
+            tracking_number: trackingCode,
+            product_name: `${item.sku} ${item.color || ''}`.trim(),
+            quantity: item.quantity,
+            raw_pdf_content: order.rawText || '',
+            user_id: auth.currentUser?.uid,
+            created_at: new Date().toISOString()
+          }));
+
+          const { error: supabaseError } = await supabase
+            .from('orders')
+            .insert(supabaseData);
+
+          if (supabaseError) {
+            console.error('[PDFService] Supabase insertion error:', supabaseError);
+          } else {
+            console.log('[PDFService] Order successfully saved to Supabase.');
+          }
+        }
+      } catch (err) {
+        console.error('[PDFService] Supabase fatal error:', err);
+      }
+
+      console.log(`[PDFService] Order ${trackingCode} processed successfully.`);
       return { productNames };
     } catch (error: any) {
-      if (error.message.includes('đã được nhập kho')) throw error;
-      if (error.message.includes('Không tìm thấy sản phẩm')) throw error;
+      console.error(`[PDFService] Error processing order ${trackingCode}:`, error);
+      if (error.message.includes('đã được xử lý')) throw error;
+      if (error.message.includes('Không tìm thấy bất kỳ sản phẩm nào')) throw error;
       handleFirestoreError(error, OperationType.WRITE, 'transaction');
       throw error;
     }

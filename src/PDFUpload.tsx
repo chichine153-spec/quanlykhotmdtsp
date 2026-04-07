@@ -11,7 +11,8 @@ import {
   LogIn,
   Trash2,
   Edit2,
-  AlertTriangle
+  AlertTriangle,
+  RotateCcw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { MOCK_PRODUCTS } from './types';
@@ -19,14 +20,17 @@ import { PDFService, ExtractedOrder } from './services/pdfService';
 import { handleFirestoreError, OperationType } from './lib/firestore-errors';
 import { ProfitService } from './services/profitService';
 import { useAuth } from './contexts/AuthContext';
+import { useData } from './contexts/DataContext';
 import { collection, query, limit, getDocs, onSnapshot, where, doc, getDoc, orderBy } from 'firebase/firestore';
-import { db } from './firebase';
+import { db, storage } from './firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { ThermalLabel } from './components/RePrintModule';
 import { OrderRecord } from './services/inventoryService';
 import { Printer, X } from 'lucide-react';
 
 export default function PDFUpload() {
   const { user, login } = useAuth();
+  const { inventory, config: dataConfig, orders: allOrders, loading: dataLoading } = useData();
   const [isUploading, setIsUploading] = React.useState(false);
   const [progress, setProgress] = React.useState(0);
   const [status, setStatus] = React.useState<'idle' | 'processing' | 'success' | 'error'>('idle');
@@ -34,8 +38,12 @@ export default function PDFUpload() {
   const [processedOrders, setProcessedOrders] = React.useState<number>(0);
   const [totalOrders, setTotalOrders] = React.useState<number>(0);
   const [lastOrder, setLastOrder] = React.useState<ExtractedOrder | null>(null);
+  const [uploadFailed, setUploadFailed] = React.useState(false);
   const [currentFileOrders, setCurrentFileOrders] = React.useState<(ExtractedOrder & { status: 'pending' | 'processing' | 'success' | 'error', error?: string })[]>([]);
-  const [extractedOrdersForReview, setExtractedOrdersForReview] = React.useState<(ExtractedOrder & { items: (any & { stockStatus?: 'in_stock' | 'out_of_stock' | 'checking', currentStock?: number })[] })[]>([]);
+  const [extractedOrdersForReview, setExtractedOrdersForReview] = React.useState<(ExtractedOrder & { 
+    processedStatus?: 'already_processed' | 'new',
+    items: (any & { stockStatus?: 'in_stock' | 'out_of_stock' | 'checking', currentStock?: number })[] 
+  })[]>([]);
   const [isProcessingConfirmed, setIsProcessingConfirmed] = React.useState(false);
   const [showNegativeStockWarning, setShowNegativeStockWarning] = React.useState(false);
   const [currentFile, setCurrentFile] = React.useState<File | null>(null);
@@ -47,60 +55,31 @@ export default function PDFUpload() {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [isInventoryEmpty, setIsInventoryEmpty] = React.useState(false);
   const [profitConfig, setProfitConfig] = React.useState<any>(null);
-  const [allProducts, setAllProducts] = React.useState<any[]>([]);
+  const abortControllerRef = React.useRef<boolean>(false);
 
-  React.useEffect(() => {
-    const checkInventory = async () => {
-      if (!user) return;
-      try {
-        const q = query(collection(db, 'inventory'), where('userId', '==', user.uid), limit(1));
-        const snap = await getDocs(q);
-        setIsInventoryEmpty(snap.empty);
-      } catch (error) {
-        // Only log if it's not a quota error to avoid flooding
-        if (error instanceof Error && !error.message.includes('Quota')) {
-          handleFirestoreError(error, OperationType.LIST, 'inventory');
-        }
-      }
+  // Calculate session stats
+  const sessionStats = React.useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    const todayOrders = allOrders.filter(o => o.processedAt && o.processedAt.startsWith(today));
+    
+    return {
+      pending: extractedOrdersForReview.length,
+      processedToday: todayOrders.length
     };
-    checkInventory();
-  }, [user]); // Removed status dependency to avoid redundant checks
+  }, [allOrders, extractedOrdersForReview]);
+
+  // Sync with DataContext
+  React.useEffect(() => {
+    setIsInventoryEmpty(inventory.length === 0);
+  }, [inventory]);
 
   React.useEffect(() => {
-    const fetchConfig = async () => {
-      if (!user) return;
-      try {
-        const snap = await getDoc(doc(db, 'profit_configs', user.uid));
-        if (snap.exists()) {
-          setProfitConfig(snap.data());
-        } else {
-          setProfitConfig({ packagingCostBottle: 6500, packagingCostCup: 8200 });
-        }
-      } catch (error) {
-        handleFirestoreError(error, OperationType.GET, 'profit_configs');
-      }
-    };
-    fetchConfig();
-  }, [user]);
+    if (dataConfig) setProfitConfig(dataConfig);
+  }, [dataConfig]);
+
   React.useEffect(() => {
-    if (!user) return;
-
-    // Listen to recent deductions from Firestore
-    const q = query(
-      collection(db, 'orders'), 
-      where('userId', '==', user.uid),
-      orderBy('processedAt', 'desc'),
-      limit(10)
-    );
-    const unsubscribe = onSnapshot(q, (snap) => {
-      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() })) as unknown as OrderRecord[];
-      setRecentDeductions(docs);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'orders');
-    });
-
-    return () => unsubscribe();
-  }, [user]);
+    setRecentDeductions(allOrders.slice(0, 10));
+  }, [allOrders]);
 
   const handleRevertOrder = async (trackingCode: string) => {
     setIsReverting(true);
@@ -180,25 +159,31 @@ export default function PDFUpload() {
       setTotalOrders(orders.length);
       setProgress(40);
 
-      // Pre-fetch inventory once for all items to save quota
-      const inventoryRef = collection(db, 'inventory');
-      const allProductsSnap = await getDocs(query(
-        inventoryRef, 
-        where('userId', '==', user.uid)
-      ));
-      const products = allProductsSnap.docs.map(d => ({ 
-        id: d.id, 
-        ref: d.ref, 
-        ...d.data() as any 
-      }));
-      setAllProducts(products);
+      // 2. Check which orders have already been processed to save quota and prevent errors
+      const trackingCodes = orders.map(o => o.trackingCode);
+      const processedStatusMap: Record<string, boolean> = {};
+      
+      // Check in batches of 30 for Firestore 'in' query
+      for (let i = 0; i < trackingCodes.length; i += 30) {
+        const batch = trackingCodes.slice(i, i + 30);
+        const processedQuery = query(
+          collection(db, 'processed_orders'),
+          where('userId', '==', user.uid),
+          where('trackingCode', 'in', batch)
+        );
+        const processedSnap = await getDocs(processedQuery);
+        processedSnap.docs.forEach(doc => {
+          processedStatusMap[doc.id] = true;
+        });
+      }
 
-      setProgress(60);
-
-      // 2. Check stock for each item using pre-fetched inventory
+      // 3. Check stock for each item using pre-fetched inventory from DataContext
       const ordersWithStock = await Promise.all(orders.map(async (order) => {
+        const isProcessed = !!processedStatusMap[order.trackingCode];
+        
+        // If already processed, we still check stock for review but mark it
         const itemsWithStock = await Promise.all(order.items.map(async (item) => {
-          const stockInfo = await PDFService.checkStockStatus(item.sku, item.color, products);
+          const stockInfo = await PDFService.checkStockStatus(item.sku, item.color, inventory);
           
           // Calculate packaging fee
           const packagingFee = item.quantity * ProfitService.calculatePackagingFee(item.sku, stockInfo.productName || item.productName, profitConfig);
@@ -212,8 +197,17 @@ export default function PDFUpload() {
             packagingFee
           };
         }));
-        return { ...order, items: itemsWithStock };
+        return { 
+          ...order, 
+          processedStatus: isProcessed ? 'already_processed' : 'new',
+          items: itemsWithStock 
+        };
       }));
+
+      const alreadyProcessedCount = ordersWithStock.filter(o => o.processedStatus === 'already_processed').length;
+      if (alreadyProcessedCount > 0) {
+        console.log(`Found ${alreadyProcessedCount} already processed orders.`);
+      }
 
       setExtractedOrdersForReview(ordersWithStock as any);
       setProgress(100);
@@ -221,11 +215,15 @@ export default function PDFUpload() {
     } catch (err: any) {
       console.error('Processing Error:', err);
       let errMsg = 'Đã xảy ra lỗi khi xử lý file.';
-      try {
-        const parsed = JSON.parse(err.message);
-        errMsg = parsed.userFriendlyMessage || parsed.error || err.message;
-      } catch {
-        errMsg = err.message || 'Đã xảy ra lỗi khi xử lý file.';
+      if (err.message?.includes('Quota limit exceeded') || JSON.stringify(err).includes('Quota limit exceeded')) {
+        errMsg = 'Hệ thống đã đạt giới hạn truy cập miễn phí trong ngày (Quota). Vui lòng quay lại sau 24h hoặc nâng cấp gói dịch vụ.';
+      } else {
+        try {
+          const parsed = JSON.parse(err.message);
+          errMsg = parsed.userFriendlyMessage || parsed.error || err.message;
+        } catch {
+          errMsg = err.message || 'Đã xảy ra lỗi khi xử lý file.';
+        }
       }
       setError(errMsg);
       setStatus('error');
@@ -263,7 +261,7 @@ export default function PDFUpload() {
         setExtractedOrdersForReview([...updated]);
         
         try {
-          const stockInfo = await PDFService.checkStockStatus(item.sku, item.color, allProducts);
+          const stockInfo = await PDFService.checkStockStatus(item.sku, item.color, inventory);
           item.stockStatus = stockInfo.inStock ? 'in_stock' : 'out_of_stock';
           item.currentStock = stockInfo.currentStock;
           item.productName = stockInfo.productName || item.productName;
@@ -313,8 +311,17 @@ export default function PDFUpload() {
   const handleConfirmProcess = async (force: boolean = false) => {
     if (!currentFile || extractedOrdersForReview.length === 0) return;
 
+    // Filter out already processed orders to save quota and prevent errors
+    const ordersToProcess = extractedOrdersForReview.filter(o => o.processedStatus !== 'already_processed');
+    
+    if (ordersToProcess.length === 0) {
+      setError('Tất cả đơn hàng trong file này đã được xử lý trước đó.');
+      setStatus('error');
+      return;
+    }
+
     // Check for negative stock
-    const hasOutOfStock = extractedOrdersForReview.some(order => 
+    const hasOutOfStock = ordersToProcess.some(order => 
       order.items.some(item => (item.currentStock || 0) < item.quantity)
     );
 
@@ -328,76 +335,94 @@ export default function PDFUpload() {
     setStatus('processing');
     setProgress(0);
     setProcessedOrders(0);
-    setCurrentFileOrders(extractedOrdersForReview.map(o => ({ ...o, status: 'pending' })));
+    setCurrentFileOrders(ordersToProcess.map(o => ({ ...o, status: 'pending' })));
+    abortControllerRef.current = false;
 
     const errors: string[] = [];
     let successCount = 0;
 
-    // Pre-fetch inventory and config once for the entire batch to save quota
-    let allProducts: any[] = [];
-    let config: any = null;
+    // Use inventory and config from DataContext
+    let preUploadedUrl: string | undefined = undefined;
     
     try {
-      const inventoryRef = collection(db, 'inventory');
-      const allProductsSnap = await getDocs(query(
-        inventoryRef, 
-        where('userId', '==', user.uid)
-      ));
-      allProducts = allProductsSnap.docs.map(d => ({ 
-        id: d.id, 
-        ref: d.ref, 
-        ...d.data() as any 
-      }));
+      // 1. Skip PDF Upload to Storage to avoid CORS errors
+      // We now use Firestore data for re-printing, so the PDF file is no longer strictly necessary.
+      preUploadedUrl = '';
+      setUploadFailed(false);
 
-      const configSnap = await getDoc(doc(db, 'profit_configs', user.uid));
-      config = configSnap.exists() ? configSnap.data() as any : { packagingCostBottle: 6500, packagingCostCup: 8200 };
-    } catch (err) {
-      console.error('Pre-fetch Error:', err);
-      // We'll continue, processOrder will fetch individually if needed, 
-      // but this might hit quota faster if we don't catch it here.
-    }
-
-    for (let i = 0; i < extractedOrdersForReview.length; i++) {
-      const order = extractedOrdersForReview[i];
-      setCurrentFileOrders(prev => prev.map((o, idx) => idx === i ? { ...o, status: 'processing' } : o));
-      
-      try {
-        const orderWeight = 100 / extractedOrdersForReview.length;
-        setProgress(Math.floor(i * orderWeight));
-        
-        await PDFService.processOrder(currentFile, order, allProducts, config);
-        successCount++;
-        setProcessedOrders(successCount);
-        setLastOrder(order);
-        setCurrentFileOrders(prev => prev.map((o, idx) => idx === i ? { ...o, status: 'success' } : o));
-      } catch (err: any) {
-        console.error(`Error processing order ${order.trackingCode}:`, err);
-        let errMsg = 'Lỗi không xác định';
-        try {
-          const parsed = JSON.parse(err.message);
-          errMsg = parsed.userFriendlyMessage || parsed.error || err.message;
-        } catch {
-          errMsg = err.message || 'Lỗi không xác định';
+      for (let i = 0; i < ordersToProcess.length; i++) {
+        // Check if aborted
+        if (abortControllerRef.current) {
+          console.log('Processing aborted by user');
+          break;
         }
-        errors.push(`${order.trackingCode}: ${errMsg}`);
-        setCurrentFileOrders(prev => prev.map((o, idx) => idx === i ? { ...o, status: 'error', error: errMsg } : o));
-      }
-    }
 
-    setProgress(100);
-    setIsProcessingConfirmed(false);
-    setExtractedOrdersForReview([]); // Clear review table
-    
-    if (errors.length > 0) {
-      if (successCount > 0) {
-        setError(`Đã xử lý ${successCount}/${extractedOrdersForReview.length} đơn. Một số đơn lỗi: ${errors.slice(0, 2).join(', ')}...`);
-        setStatus('success');
-      } else {
-        setError(`Lỗi xử lý tất cả đơn hàng: ${errors[0]}`);
-        setStatus('error');
+        const order = ordersToProcess[i];
+        setCurrentFileOrders(prev => prev.map((o, idx) => idx === i ? { ...o, status: 'processing' } : o));
+        
+        try {
+          const orderWeight = 100 / ordersToProcess.length;
+          setProgress(Math.floor(i * orderWeight));
+          
+          // Add a 30-second timeout per order to prevent hanging
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Hết thời gian xử lý đơn hàng (30s)')), 30000)
+          );
+
+          await Promise.race([
+            PDFService.processOrder(currentFile!, order, inventory, profitConfig, preUploadedUrl),
+            timeoutPromise
+          ]);
+
+          successCount++;
+          setProcessedOrders(successCount);
+          setLastOrder(order);
+          setCurrentFileOrders(prev => prev.map((o, idx) => idx === i ? { ...o, status: 'success' } : o));
+        } catch (err: any) {
+          console.error(`Error processing order ${order.trackingCode}:`, err);
+          let errMsg = 'Lỗi không xác định';
+          try {
+            const parsed = JSON.parse(err.message);
+            if (parsed.error?.includes('Quota limit exceeded')) {
+              errMsg = 'Hết hạn mức truy cập (Quota).';
+            } else {
+              errMsg = parsed.userFriendlyMessage || parsed.error || err.message;
+            }
+          } catch {
+            if (err.message?.includes('Quota limit exceeded')) {
+              errMsg = 'Hết hạn mức truy cập (Quota).';
+            } else {
+              errMsg = err.message || 'Lỗi không xác định';
+            }
+          }
+          errors.push(`${order.trackingCode}: ${errMsg}`);
+          setCurrentFileOrders(prev => prev.map((o, idx) => idx === i ? { ...o, status: 'error', error: errMsg } : o));
+        }
       }
-    } else {
-      setStatus('success');
+
+      setProgress(100);
+      
+      if (errors.length > 0) {
+        if (successCount > 0) {
+          setError(`Đã xử lý ${successCount}/${ordersToProcess.length} đơn. Một số đơn lỗi: ${errors.slice(0, 2).join(', ')}...`);
+          setStatus('success');
+        } else {
+          setError(`Lỗi xử lý tất cả đơn hàng: ${errors[0]}`);
+          setStatus('error');
+        }
+      } else if (abortControllerRef.current) {
+        setError(`Đã dừng xử lý. Đã hoàn thành ${successCount} đơn.`);
+        setStatus('idle');
+      } else {
+        setStatus('success');
+      }
+    } catch (err: any) {
+      console.error('Batch processing fatal error:', err);
+      setError(`Lỗi hệ thống: ${err.message}`);
+      setStatus('error');
+    } finally {
+      setIsProcessingConfirmed(false);
+      setExtractedOrdersForReview([]); // Clear review table
     }
   };
 
@@ -479,6 +504,13 @@ export default function PDFUpload() {
                   <p className="font-black text-lg leading-none mb-2">Xử lý hoàn tất!</p>
                   <p className="font-bold text-on-surface">Đã khấu trừ thành công {processedOrders}/{totalOrders} đơn hàng.</p>
                   
+                  {uploadFailed && (
+                    <div className="mt-2 p-2 bg-orange-50 text-orange-700 rounded-xl border border-orange-100 flex items-center gap-2">
+                      <AlertTriangle size={14} />
+                      <span className="text-[10px] font-bold uppercase tracking-tight">Lưu ý: Không thể lưu file PDF vào bộ nhớ (Lỗi CORS), nhưng kho hàng đã được cập nhật.</span>
+                    </div>
+                  )}
+                  
                   {lastOrder && (
                     <div className="mt-4 p-3 bg-white/50 rounded-xl border border-primary/20">
                       <p className="text-[10px] uppercase tracking-wider font-bold text-primary mb-2">Đơn hàng cuối cùng:</p>
@@ -532,6 +564,23 @@ export default function PDFUpload() {
                   <>Đang xử lý đơn hàng {processedOrders + 1}/{totalOrders}...</>
                 )}
               </p>
+              
+              {/* Cancel Button */}
+              <div className="mt-6 flex justify-center">
+                <button 
+                  onClick={() => {
+                    abortControllerRef.current = true;
+                    setStatus('idle');
+                    setIsUploading(false);
+                    setIsProcessingConfirmed(false);
+                    setError('Đã hủy bỏ quá trình xử lý.');
+                  }}
+                  className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-lg shadow-orange-500/20 transition-all flex items-center gap-2"
+                >
+                  <RotateCcw size={14} />
+                  Hủy bỏ & Làm lại ngay
+                </button>
+              </div>
             </motion.div>
           )}
 
@@ -569,8 +618,17 @@ export default function PDFUpload() {
                       {extractedOrdersForReview.map((order, oIdx) => (
                         <React.Fragment key={oIdx}>
                           {order.items.map((item, iIdx) => (
-                            <tr key={`${oIdx}-${iIdx}`} className="hover:bg-primary/5 transition-colors group">
-                              <td className="px-4 py-3 font-mono text-[11px] text-on-surface">{order.trackingCode}</td>
+                            <tr key={`${oIdx}-${iIdx}`} className={`transition-colors group ${order.processedStatus === 'already_processed' ? 'bg-orange-50/50 opacity-75' : 'hover:bg-primary/5'}`}>
+                              <td className="px-4 py-3 font-mono text-[11px] text-on-surface">
+                                <div className="flex flex-col">
+                                  <span className={order.processedStatus === 'already_processed' ? 'line-through text-secondary' : ''}>{order.trackingCode}</span>
+                                  {order.processedStatus === 'already_processed' && (
+                                    <span className="text-[8px] font-black text-orange-600 uppercase tracking-tighter flex items-center gap-1">
+                                      <AlertCircle size={8} /> Đã xử lý
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
                               <td className="px-4 py-3">
                                 <input 
                                   type="text"
@@ -787,7 +845,7 @@ export default function PDFUpload() {
                   </div>
                   <div>
                     <p className="text-xs text-secondary font-medium">Số đơn chờ duyệt</p>
-                    <p className="text-lg font-bold">42</p>
+                    <p className="text-lg font-bold">{sessionStats.pending.toLocaleString()}</p>
                   </div>
                 </div>
               </div>
@@ -798,7 +856,7 @@ export default function PDFUpload() {
                   </div>
                   <div>
                     <p className="text-xs text-secondary font-medium">Đã khấu trừ hôm nay</p>
-                    <p className="text-lg font-bold">1,204</p>
+                    <p className="text-lg font-bold">{sessionStats.processedToday.toLocaleString()}</p>
                   </div>
                 </div>
               </div>

@@ -11,6 +11,7 @@ export interface Product {
   variant?: string;
   costPrice?: number;
   sellingPrice?: number;
+  destination?: string;
 }
 
 export interface InventoryLog {
@@ -42,6 +43,13 @@ export interface Order {
   totalCost?: number;
 }
 
+export interface PricingTier {
+  kgHN: number;
+  m3HN: number;
+  kgSG: number;
+  m3SG: number;
+}
+
 export interface ProfitConfig {
   platformFeePercent: number;
   packagingCostBottle: number;
@@ -49,6 +57,12 @@ export interface ProfitConfig {
   marketingCost: number;
   otherCosts: number;
   lastUpdated: string;
+  pricingTiers?: {
+    standard: PricingTier;
+    cosmetics: PricingTier;
+    electronics: PricingTier;
+    heavy: PricingTier;
+  };
 }
 
 export interface ReturnRecord {
@@ -60,7 +74,9 @@ export interface ReturnRecord {
     sku: string;
     variant: string;
     quantity: number;
-    sellingPrice: number;
+    sellingPrice?: number;
+    productName?: string;
+    productId?: string;
   }[];
   userId: string;
 }

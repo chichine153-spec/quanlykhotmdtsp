@@ -1,72 +1,206 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields:
+    //   - role: string ('admin', 'user')
+    //   - email: string
+    //   - name: string
+    //
+    // Collection: inventory
+    // Fields:
+    //   - userId: string (owner)
+    //   - name: string
+    //   - sku: string
+    //   - stock: number
+    //   - variant: string
+    //   - category: string
+    //   - image: string
+    //   - status: string
+    //   - costPrice: number
+    //   - sellingPrice: number
+    //   - destination: string
+    //   - createdAt: string
+    //
+    // Collection: inventory_logs
+    // Fields:
+    //   - userId: string (owner)
+    //   - sku: string
+    //   - productName: string
+    //   - variant: string
+    //   - change: number
+    //   - type: string
+    //   - timestamp: timestamp
+    //
+    // Collection: orders
+    // Fields:
+    //   - userId: string (owner)
+    //   - trackingCode: string
+    //   - processedAt: string
+    //   - items: list
+    //   - totalRevenue: number
+    //   - totalCost: number
+    //   - packagingFee: number
+    //   - destination: string
+    //
+    // Collection: returns
+    // Fields:
+    //   - userId: string (owner)
+    //   - trackingCode: string
+    //   - returnedAt: string
+    //   - items: list
+    //
+    // Collection: profit_configs
+    // Document ID: userId
+    // Fields:
+    //   - packagingCostBottle: number
+    //   - packagingCostCup: number
+    //   - pricingTiers: map
+    //
+    // Collection: shipping_labels
+    // Fields:
+    //   - userId: string (owner)
+    //   - trackingCode: string
+    //   - pdfUrl: string
+    //   - uploadDate: string
+    //
+    // Collection: processed_orders
+    // Fields:
+    //   - userId: string (owner)
+    //   - trackingCode: string
+    //   - processedAt: string
+    //
+    // ===============================================================
+
+    // ===============================================================
     // Helper Functions
+    // ===============================================================
     function isAuthenticated() {
       return request.auth != null;
     }
-    
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+
     function isAdmin() {
       return isAuthenticated() &&
         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          (request.auth.token.email.lower() == "chichine153@gmail.com" && request.auth.token.email_verified == true));
+          (request.auth.token.email == "chichine153@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['role', 'email', 'name']) &&
+             data.role in ['admin', 'user'] &&
+             data.email is string;
     }
 
     function isValidProduct(data) {
-      return data.sku is string && data.sku.size() > 0 &&
-             data.name is string && data.name.size() > 0 &&
-             (data.stock is int || data.stock is float);
+      return hasRequiredFields(['name', 'sku', 'stock', 'userId']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 500 &&
+             data.sku is string && data.sku.size() > 0 && data.sku.size() < 200 &&
+             data.stock is number &&
+             data.userId == request.auth.uid;
+    }
+
+    function isValidLog(data) {
+      return hasRequiredFields(['sku', 'productName', 'change', 'type', 'userId', 'timestamp']) &&
+             data.userId == request.auth.uid;
     }
 
     function isValidOrder(data) {
-      return data.trackingCode is string && data.trackingCode.size() > 0 &&
-             data.processedAt is string &&
-             data.sku is string &&
-             data.quantity is int;
+      return hasRequiredFields(['trackingCode', 'items', 'userId']) &&
+             data.userId == request.auth.uid;
+    }
+
+    function isValidReturn(data) {
+      return hasRequiredFields(['trackingCode', 'items', 'userId']) &&
+             data.userId == request.auth.uid;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      // Allow users to create their own document with 'user' role
+      allow create: if isAuthenticated() && request.auth.uid == userId && request.resource.data.role == 'user';
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
     match /inventory/{productId} {
       allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || isAdmin());
-      allow update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
-    }
-
-    match /orders/{orderId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated() && (isAdmin() || request.resource.data.userId == request.auth.uid);
-      allow update: if isAdmin();
-      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
-    }
-
-    match /processed_orders/{orderId} {
-      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
-      allow write: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || isAdmin());
-    }
-
-    match /shipping_labels/{labelId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || isAdmin());
-      allow update: if isAdmin();
-      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if isAuthenticated(); 
+      allow create: if isAuthenticated() && isValidProduct(request.resource.data);
+      allow update: if isAuthenticated() && (isDocOwner() || isAdmin()) && isValidProduct(request.resource.data);
+      allow delete: if isAuthenticated() && (isDocOwner() || isAdmin());
     }
 
     match /inventory_logs/{logId} {
       allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || isAdmin());
-    }
-    
-    match /users/{userId} {
-      allow read, write: if request.auth.uid == userId || isAdmin();
+      allow list: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidLog(request.resource.data);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
-    match /profit_configs/{userId} {
-      allow read, write: if request.auth.uid == userId || isAdmin();
+    match /orders/{orderId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidOrder(request.resource.data);
+      allow update: if isAuthenticated() && (isDocOwner() || isAdmin());
+      allow delete: if isAuthenticated() && (isDocOwner() || isAdmin());
     }
 
     match /returns/{returnId} {
       allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || isAdmin());
-      allow update, delete: if isAdmin();
+      allow list: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidReturn(request.resource.data);
+      allow update: if isAuthenticated() && (isDocOwner() || isAdmin());
+      allow delete: if isAuthenticated() && (isDocOwner() || isAdmin());
+    }
+
+    match /profit_configs/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+    }
+
+    match /shipping_labels/{labelId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && (isDocOwner() || isAdmin());
+      allow delete: if isAuthenticated() && (isDocOwner() || isAdmin());
+    }
+
+    match /processed_orders/{orderId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && (isDocOwner() || isAdmin());
+      allow delete: if isAuthenticated() && (isDocOwner() || isAdmin());
     }
   }
 }

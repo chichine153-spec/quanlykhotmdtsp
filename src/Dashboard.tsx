@@ -407,7 +407,11 @@ export default function Dashboard() {
                             <div>
                               <p className="text-[10px] font-bold text-primary uppercase tracking-widest mb-1">Mã vận đơn</p>
                               <h4 className="text-lg font-black text-on-surface font-mono">{order.trackingCode}</h4>
-                              <p className="text-xs text-secondary mt-1">Xử lý lúc: {new Date(order.processedAt).toLocaleTimeString('vi-VN')}</p>
+                              <div className="flex items-center gap-2 mt-1">
+                                <p className="text-xs text-secondary">Xử lý lúc: {new Date(order.processedAt).toLocaleTimeString('vi-VN')}</p>
+                                <span className="text-xs text-secondary">•</span>
+                                <p className="text-xs font-bold text-primary">Nơi đến: {order.destination || 'Chưa xác định'}</p>
+                              </div>
                             </div>
                           </div>
                           <div className="flex flex-col gap-2">

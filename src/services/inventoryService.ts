@@ -18,6 +18,7 @@ export interface OrderRecord {
   processedAt: string;
   expiryDate?: string;
   region?: string;
+  destination?: string;
   items: {
     sku: string;
     variant: string;

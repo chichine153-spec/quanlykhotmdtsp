@@ -13,6 +13,9 @@ export default function ApiKeyManager() {
     if (savedKey) {
       setApiKey(savedKey);
       setStatus('valid');
+    } else {
+      // Automatically show input if key is missing on startup
+      setShowInput(true);
     }
   }, []);
 

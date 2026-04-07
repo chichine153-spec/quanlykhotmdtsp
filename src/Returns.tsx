@@ -35,6 +35,8 @@ export default function Returns() {
   const [currentOrder, setCurrentOrder] = React.useState<any | null>(null);
   const [isProcessing, setIsProcessing] = React.useState(false);
   const [toasts, setToasts] = React.useState<Toast[]>([]);
+  const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = React.useState(false);
 
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -85,15 +87,19 @@ export default function Returns() {
     }
   };
 
-  const handleDeleteReturn = async (id: string) => {
-    if (!confirm('Bạn có chắc chắn muốn xoá bản ghi hàng hoàn này?')) return;
+  const handleDeleteReturn = async () => {
+    if (!confirmDeleteId) return;
     
+    setIsDeleting(true);
     try {
-      await ReturnService.deleteReturn(id);
+      await ReturnService.deleteReturn(confirmDeleteId);
       addToast('Đã xoá bản ghi hàng hoàn.', 'info');
+      setConfirmDeleteId(null);
     } catch (error) {
       console.error('Delete Return Error:', error);
       addToast('Lỗi khi xoá bản ghi.', 'error');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -317,7 +323,7 @@ export default function Returns() {
                     </td>
                     <td className="px-6 py-4 text-right">
                       <button 
-                        onClick={() => handleDeleteReturn(record.id)}
+                        onClick={() => setConfirmDeleteId(record.id)}
                         className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition-all"
                         title="Xoá bản ghi"
                       >
@@ -355,6 +361,44 @@ export default function Returns() {
           ))}
         </AnimatePresence>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {confirmDeleteId && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl border border-surface-container"
+            >
+              <div className="w-16 h-16 bg-red-50 rounded-2xl flex items-center justify-center text-red-500 mb-6 mx-auto">
+                <Trash2 size={32} />
+              </div>
+              <h3 className="text-xl font-black text-on-surface mb-2 text-center">Xác nhận xoá</h3>
+              <p className="text-sm text-secondary mb-8 text-center leading-relaxed">
+                Bạn có chắc chắn muốn xoá bản ghi hàng hoàn này? Hệ thống sẽ <strong>hoàn tác tồn kho</strong> và cập nhật trạng thái đơn hàng.
+              </p>
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setConfirmDeleteId(null)}
+                  disabled={isDeleting}
+                  className="flex-1 px-4 py-3 rounded-xl font-bold text-secondary hover:bg-surface-container transition-all"
+                >
+                  Hủy
+                </button>
+                <button 
+                  onClick={handleDeleteReturn}
+                  disabled={isDeleting}
+                  className="flex-1 px-4 py-3 rounded-xl font-bold bg-red-500 text-white hover:bg-red-600 transition-all flex items-center justify-center gap-2 shadow-lg shadow-red-500/20"
+                >
+                  {isDeleting ? <Loader2 className="animate-spin" size={18} /> : 'Xác nhận xoá'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }

@@ -8,17 +8,36 @@ import StockIn from './StockIn';
 import ProfitDashboard from './ProfitDashboard';
 import ScanSuccess from './ScanSuccess';
 import Returns from './Returns';
+import GeminiKeyModal from './components/GeminiKeyModal';
 import { Screen } from './types';
 import { PDFService } from './services/pdfService';
 import { useAuth } from './contexts/AuthContext';
+import { GeminiService } from './services/gemini';
 
 export default function App() {
   const { user } = useAuth();
   const [activeScreen, setActiveScreen] = React.useState<Screen>('dashboard');
+  const [showKeyModal, setShowKeyModal] = React.useState(false);
 
-  // Automatic cleanup of expired data on app load
+  // Check for API key on load
+  React.useEffect(() => {
+    if (!GeminiService.hasApiKey()) {
+      setShowKeyModal(true);
+    }
+  }, []);
+
+  // Automatic cleanup of expired data on app load - only once per session
   React.useEffect(() => {
     if (!user) return;
+
+    // Check if cleanup was already run in this session
+    const lastCleanup = sessionStorage.getItem(`last_cleanup_${user.uid}`);
+    const now = new Date().getTime();
+    
+    // Run cleanup if not run in the last 24 hours (or if it's a new session)
+    if (lastCleanup && (now - parseInt(lastCleanup)) < 24 * 60 * 60 * 1000) {
+      return;
+    }
 
     const runCleanup = async () => {
       try {
@@ -26,12 +45,12 @@ export default function App() {
         if (cleanedCount > 0) {
           console.log(`Successfully cleaned up ${cleanedCount} expired orders and PDF files.`);
         }
+        sessionStorage.setItem(`last_cleanup_${user.uid}`, now.toString());
       } catch (error) {
         console.error('Cleanup failed:', error);
       }
     };
     
-    // Run cleanup once when app starts
     runCleanup();
   }, [user]);
 
@@ -59,8 +78,13 @@ export default function App() {
   };
 
   return (
-    <Layout activeScreen={activeScreen} onScreenChange={setActiveScreen}>
+    <Layout 
+      activeScreen={activeScreen} 
+      onScreenChange={setActiveScreen}
+      onOpenKeyModal={() => setShowKeyModal(true)}
+    >
       {renderScreen()}
+      <GeminiKeyModal isOpen={showKeyModal} onClose={() => setShowKeyModal(false)} />
     </Layout>
   );
 }

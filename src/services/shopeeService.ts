@@ -1,4 +1,5 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { Type } from "@google/genai";
+import { GeminiService } from "./gemini";
 import { collection, addDoc, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Product } from '../types';
@@ -15,15 +16,22 @@ export interface ScannedProduct {
 }
 
 export class ShopeeService {
-  private static getAi(apiKey?: string) {
-    const key = apiKey || localStorage.getItem('gemini_api_key') || process.env.GEMINI_API_KEY;
-    if (!key) throw new Error('MISSING_API_KEY');
-    return new GoogleGenAI({ apiKey: key });
-  }
-
   static async validateApiKey(key: string): Promise<boolean> {
     try {
-      const ai = new GoogleGenAI({ apiKey: key });
+      const ai = GeminiService.getInstance() || GeminiService.getInstance(); // Ensure initialization
+      if (!ai) {
+        // If getInstance returns null, it means no key is set yet, but we are validating a NEW key
+        // So we can't use getInstance here. We need a temporary one.
+        const { GoogleGenAI } = await import("@google/genai");
+        const tempAi = new GoogleGenAI({ apiKey: key });
+        await tempAi.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: "test",
+          config: { maxOutputTokens: 1 }
+        });
+        return true;
+      }
+      
       await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: "test",
@@ -38,7 +46,8 @@ export class ShopeeService {
 
   static async scanShop(shopUrl: string, rawText?: string, apiKey?: string): Promise<ScannedProduct[]> {
     try {
-      const ai = this.getAi(apiKey);
+      const ai = GeminiService.getInstance();
+      if (!ai) throw new Error('MISSING_API_KEY');
       const prompt = rawText 
         ? `DƯỚI ĐÂY LÀ DỮ LIỆU VĂN BẢN THÔ TỪ TRANG SẢN PHẨM HOẶC CỬA HÀNG SHOPEE:
            ---

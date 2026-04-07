@@ -142,9 +142,72 @@ export class ReturnService {
   }
 
   /**
-   * Delete a return record
+   * Delete a return record and revert inventory
    */
   static async deleteReturn(returnId: string) {
-    await deleteDoc(doc(db, 'returns', returnId));
+    try {
+      await runTransaction(db, async (transaction) => {
+        const returnRef = doc(db, 'returns', returnId);
+        const returnSnap = await transaction.get(returnRef);
+        
+        if (!returnSnap.exists()) {
+          throw new Error('Không tìm thấy bản ghi hàng hoàn.');
+        }
+
+        const returnData = returnSnap.data() as ReturnRecord;
+        const { trackingCode, items, userId } = returnData;
+
+        // 1. ALL READS FIRST
+        const productSnaps: Record<string, any> = {};
+        for (const item of items) {
+          if (item.productId) {
+            const pRef = doc(db, 'inventory', item.productId);
+            productSnaps[item.productId] = await transaction.get(pRef);
+          }
+        }
+        const orderRef = doc(db, 'orders', trackingCode);
+        const orderSnap = await transaction.get(orderRef);
+
+        // 2. ALL WRITES AFTER
+        // Revert inventory stock
+        for (const item of items) {
+          if (item.productId) {
+            const snap = productSnaps[item.productId];
+            if (snap && snap.exists()) {
+              transaction.update(snap.ref, {
+                stock: increment(-item.quantity)
+              });
+
+              // Log the reversion
+              const logRef = doc(collection(db, 'inventory_logs'));
+              transaction.set(logRef, {
+                userId,
+                sku: item.sku,
+                productName: item.productName || 'Sản phẩm (Hoàn tác)',
+                variant: item.variant || '',
+                change: -item.quantity,
+                type: 'manual_edit',
+                trackingCode: `REVERT_${trackingCode}`,
+                timestamp: serverTimestamp()
+              });
+            }
+          }
+        }
+
+        // Update order status back if possible
+        if (orderSnap.exists()) {
+          transaction.update(orderRef, {
+            status: 'delivered', // Assume it goes back to delivered or just remove return status
+            returnStatus: null
+          });
+        }
+
+        // Delete the return record
+        transaction.delete(returnRef);
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `returns/${returnId}`);
+      throw error;
+    }
   }
 }

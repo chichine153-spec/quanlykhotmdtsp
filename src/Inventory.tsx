@@ -325,6 +325,23 @@ export default function Inventory() {
           (cell.toLowerCase().includes('tên') || cell.toLowerCase().includes('sku'))
         );
         
+        // Find column indices if header exists
+        let nameIdx = 0, skuIdx = 1, variantIdx = 2, stockIdx = 3, catIdx = 4, costIdx = 5, sellIdx = 6, destIdx = -1;
+        
+        if (hasHeader) {
+          firstRow.forEach((cell, idx) => {
+            const c = String(cell || '').toLowerCase();
+            if (c.includes('tên')) nameIdx = idx;
+            else if (c.includes('sku')) skuIdx = idx;
+            else if (c.includes('biến thể') || c.includes('màu')) variantIdx = idx;
+            else if (c.includes('tồn') || c.includes('số lượng')) stockIdx = idx;
+            else if (c.includes('danh mục')) catIdx = idx;
+            else if (c.includes('giá vốn')) costIdx = idx;
+            else if (c.includes('giá bán')) sellIdx = idx;
+            else if (c.includes('noi den')) destIdx = idx;
+          });
+        }
+
         const rows = hasHeader ? jsonData.slice(1) : jsonData;
         
         const batch = writeBatch(db);
@@ -333,15 +350,21 @@ export default function Inventory() {
         for (const row of rows) {
           if (!row || row.length === 0) continue;
 
-          // Expected columns based on user image:
-          // A: Name, B: SKU, C: Variant, D: Stock, E: Category, F: Cost Price, G: Selling Price
-          const name = String(row[0] || '').trim();
-          const sku = String(row[1] || '').trim();
-          const variant = String(row[2] || '').trim();
-          const stock = parseInt(String(row[3])) || 0;
-          const category = String(row[4] || 'General').trim();
-          const costPrice = parseInt(String(row[5])) || 0;
-          const sellingPrice = parseInt(String(row[6])) || 0;
+          const name = String(row[nameIdx] || '').trim();
+          const sku = String(row[skuIdx] || '').trim();
+          const variant = String(row[variantIdx] || '').trim();
+          const stock = parseInt(String(row[stockIdx])) || 0;
+          const category = String(row[catIdx] || 'General').trim();
+          const costPrice = parseInt(String(row[costIdx])) || 0;
+          const sellingPrice = parseInt(String(row[sellIdx])) || 0;
+          
+          let destination = '';
+          if (destIdx !== -1) {
+            const rawDest = String(row[destIdx] || '').trim().toUpperCase();
+            if (rawDest === 'HN') destination = 'Hà Nội';
+            else if (rawDest === 'SG') destination = 'Hồ Chí Minh';
+            else destination = rawDest;
+          }
 
           if (!name || !sku) continue;
 
@@ -358,6 +381,7 @@ export default function Inventory() {
             status,
             costPrice,
             sellingPrice,
+            destination,
             image: 'https://picsum.photos/seed/import/200/200',
             createdAt: new Date().toISOString()
           });
@@ -430,7 +454,8 @@ export default function Inventory() {
       setScannedProducts(products);
     } catch (error: any) {
       console.error("Scan Error:", error);
-      if (error.message === 'MISSING_API_KEY') {
+      if (error.message === 'MISSING_API_KEY' || error.message.includes('API Key')) {
+        setScanError("Lỗi kết nối AI - Vui lòng kiểm tra lại API Key");
         setApiKeyError(true);
       } else {
         setScanError(error.message || "Không thể quét dữ liệu. Vui lòng thử lại.");

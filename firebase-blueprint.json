@@ -1,55 +1,122 @@
 {
   "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and role information.",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string", "enum": ["admin", "user"], "description": "The user's role." },
+        "email": { "type": "string", "format": "email", "description": "The user's email address." },
+        "name": { "type": "string", "description": "The user's display name." }
+      },
+      "required": ["role", "email"]
+    },
     "Product": {
       "title": "Product",
       "description": "An item in the warehouse inventory.",
       "type": "object",
       "properties": {
+        "userId": { "type": "string", "description": "The ID of the user who owns this product." },
         "sku": { "type": "string", "description": "Internal SKU code." },
         "name": { "type": "string", "description": "Product name." },
         "stock": { "type": "integer", "description": "Current stock quantity." },
-        "category": { "type": "string", "description": "Product category." }
+        "variant": { "type": "string", "description": "Product variant (e.g., color, size)." },
+        "category": { "type": "string", "description": "Product category." },
+        "image": { "type": "string", "format": "uri", "description": "URL to the product image." },
+        "status": { "type": "string", "description": "Stock status (e.g., in_stock, low_stock)." },
+        "costPrice": { "type": "number", "description": "Cost price of the product." },
+        "sellingPrice": { "type": "number", "description": "Selling price of the product." },
+        "destination": { "type": "string", "description": "Warehouse destination (e.g., Hà Nội, Hồ Chí Minh)." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the product was created." }
       },
-      "required": ["sku", "name", "stock"]
+      "required": ["userId", "sku", "name", "stock"]
     },
     "Order": {
       "title": "Order",
-      "description": "A shipping label record to prevent duplicate processing.",
+      "description": "A processed order record.",
       "type": "object",
       "properties": {
+        "userId": { "type": "string", "description": "The ID of the user who owns this order." },
         "trackingCode": { "type": "string", "description": "Shopee tracking code." },
-        "processedAt": { "type": "string", "format": "date-time", "description": "When the label was processed." }
+        "processedAt": { "type": "string", "format": "date-time", "description": "When the order was processed." },
+        "items": { "type": "array", "items": { "type": "object" }, "description": "List of items in the order." },
+        "totalRevenue": { "type": "number", "description": "Total revenue from the order." },
+        "totalCost": { "type": "number", "description": "Total cost of items in the order." },
+        "packagingFee": { "type": "number", "description": "Packaging fee for the order." },
+        "destination": { "type": "string", "description": "Shipping destination." }
       },
-      "required": ["trackingCode", "processedAt"]
+      "required": ["userId", "trackingCode", "processedAt", "items"]
+    },
+    "Return": {
+      "title": "Return",
+      "description": "A returned order record.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "The ID of the user who owns this return." },
+        "trackingCode": { "type": "string", "description": "Shopee tracking code." },
+        "returnedAt": { "type": "string", "format": "date-time", "description": "When the return was processed." },
+        "items": { "type": "array", "items": { "type": "object" }, "description": "List of items returned." }
+      },
+      "required": ["userId", "trackingCode", "returnedAt", "items"]
     },
     "InventoryLog": {
       "title": "InventoryLog",
       "description": "A record of stock changes.",
       "type": "object",
       "properties": {
+        "userId": { "type": "string", "description": "The ID of the user who owns this log." },
         "timestamp": { "type": "string", "format": "date-time", "description": "When the change occurred." },
-        "trackingCode": { "type": "string", "description": "Optional tracking code for deductions." },
         "sku": { "type": "string", "description": "SKU of the product." },
         "productName": { "type": "string", "description": "Name of the product." },
         "variant": { "type": "string", "description": "Variant of the product." },
-        "change": { "type": "integer", "description": "Quantity changed (positive or negative)." },
-        "type": { "type": "string", "enum": ["deduction", "addition", "manual_edit", "bulk_import"], "description": "Type of change." }
+        "change": { "type": "integer", "description": "Quantity changed." },
+        "type": { "type": "string", "description": "Type of change (e.g., deduction, addition)." }
       },
-      "required": ["timestamp", "sku", "productName", "change", "type"]
+      "required": ["userId", "timestamp", "sku", "productName", "change", "type"]
+    },
+    "ProfitConfig": {
+      "title": "ProfitConfig",
+      "description": "Configuration for profit calculation.",
+      "type": "object",
+      "properties": {
+        "packagingCostBottle": { "type": "number", "description": "Cost of packaging for bottles." },
+        "packagingCostCup": { "type": "number", "description": "Cost of packaging for cups." },
+        "pricingTiers": { "type": "object", "description": "Pricing tiers for different product categories." }
+      }
     }
   },
   "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles."
+    },
     "/inventory/{productId}": {
       "schema": "Product",
-      "description": "Collection of warehouse products."
+      "description": "Warehouse inventory."
     },
     "/orders/{orderId}": {
       "schema": "Order",
-      "description": "Collection of processed shipping labels."
+      "description": "Processed orders."
+    },
+    "/returns/{returnId}": {
+      "schema": "Return",
+      "description": "Returned orders."
     },
     "/inventory_logs/{logId}": {
       "schema": "InventoryLog",
-      "description": "Collection of inventory change logs."
+      "description": "Stock change logs."
+    },
+    "/profit_configs/{userId}": {
+      "schema": "ProfitConfig",
+      "description": "Profit calculation settings per user."
+    },
+    "/shipping_labels/{labelId}": {
+      "schema": "object",
+      "description": "Uploaded shipping labels metadata."
+    },
+    "/processed_orders/{orderId}": {
+      "schema": "object",
+      "description": "Tracking of processed orders to avoid duplicates."
     }
   }
 }
