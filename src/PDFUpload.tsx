@@ -167,7 +167,7 @@ export default function PDFUpload() {
           <LogIn size={40} />
         </div>
         <div className="max-w-md">
-          <h2 className="text-2xl font-bold text-on-surface mb-2">Vui lòng đăng nhập</h2>
+          <h2 className="text-2xl font-black text-on-surface mb-2 uppercase tracking-tight font-headline">Hệ thống kho TMĐT - Vui lòng đăng nhập</h2>
           <p className="text-secondary mb-8">Bạn cần đăng nhập để thực hiện bóc tách vận đơn và cập nhật kho hàng.</p>
           <button 
             onClick={login}
@@ -294,7 +294,7 @@ export default function PDFUpload() {
       console.error('Processing Error:', err);
       let errMsg = 'Đã xảy ra lỗi khi xử lý file.';
       if (err.message?.includes('Quota limit exceeded') || JSON.stringify(err).includes('Quota limit exceeded')) {
-        errMsg = 'Hệ thống đã đạt giới hạn truy cập miễn phí trong ngày (Quota). Vui lòng quay lại sau 24h hoặc nâng cấp gói dịch vụ.';
+        errMsg = 'Hệ thống kho TMĐT đã đạt giới hạn truy cập miễn phí trong ngày (Quota). Vui lòng quay lại sau 24h hoặc nâng cấp gói dịch vụ.';
       } else {
         try {
           const parsed = JSON.parse(err.message);
@@ -526,7 +526,7 @@ export default function PDFUpload() {
     >
       {/* Header Section */}
       <div className="mb-8">
-        <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-on-surface mb-2">Tải lên PDF</h1>
+        <h1 className="text-2xl md:text-3xl font-black tracking-tight text-on-surface mb-2 font-headline uppercase">Tải lên PDF</h1>
         <p className="text-secondary text-sm">Hệ thống tự động bóc tách dữ liệu từ vận đơn Shopee để cập nhật tồn kho tức thì.</p>
       </div>
 
@@ -697,6 +697,7 @@ export default function PDFUpload() {
                         <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary">MÃ SKU</th>
                         <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary">MÀU SẮC</th>
                         <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-center">SL</th>
+                        <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-center">Giá Vốn/Bán</th>
                         <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-center">Phí ĐG</th>
                         <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-center">TRẠNG THÁI KHO</th>
                         <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-right">Sửa</th>
@@ -743,6 +744,24 @@ export default function PDFUpload() {
                                   className="bg-surface-container-lowest border border-surface-container focus:border-primary focus:ring-1 focus:ring-primary rounded-lg px-1 py-1 outline-none font-black text-primary text-xs w-14 text-center transition-all"
                                   min="1"
                                 />
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <div className="flex flex-col gap-1">
+                                  <input 
+                                    type="number"
+                                    value={item.costPrice || 0}
+                                    onChange={(e) => handleUpdateReviewItem(oIdx, iIdx, 'costPrice', e.target.value)}
+                                    className="bg-surface-container-lowest border border-surface-container focus:border-primary focus:ring-1 focus:ring-primary rounded-lg px-1 py-1 outline-none font-bold text-error text-[10px] w-20 text-center transition-all"
+                                    placeholder="Giá vốn"
+                                  />
+                                  <input 
+                                    type="number"
+                                    value={item.sellingPrice || 0}
+                                    onChange={(e) => handleUpdateReviewItem(oIdx, iIdx, 'sellingPrice', e.target.value)}
+                                    className="bg-surface-container-lowest border border-surface-container focus:border-primary focus:ring-1 focus:ring-primary rounded-lg px-1 py-1 outline-none font-bold text-green-600 text-[10px] w-20 text-center transition-all"
+                                    placeholder="Giá bán"
+                                  />
+                                </div>
                               </td>
                               <td className="px-4 py-3 text-center">
                                 <span className="text-[10px] font-bold text-primary">

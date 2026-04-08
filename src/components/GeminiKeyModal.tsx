@@ -118,14 +118,22 @@ export default function GeminiKeyModal({ isOpen, onClose }: GeminiKeyModalProps)
                 <p className="text-xs text-on-surface font-medium leading-relaxed">
                   API Key được dùng để bóc tách dữ liệu từ Shopee bằng AI. Bạn có thể lấy mã miễn phí tại:
                 </p>
-                <a 
-                  href="https://aistudio.google.com/app/apikey" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-primary font-black text-[10px] uppercase tracking-wider mt-2 hover:underline"
-                >
-                  Google AI Studio <ExternalLink size={12} />
-                </a>
+                <div className="flex flex-wrap gap-4 mt-2">
+                  <a 
+                    href="https://aistudio.google.com/app/apikey" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-primary font-black text-[10px] uppercase tracking-wider hover:underline"
+                  >
+                    Google AI Studio <ExternalLink size={12} />
+                  </a>
+                  <a 
+                    href={`mailto:chichine153@gmail.com?subject=${encodeURIComponent('[Hệ thống kho TMĐT] - Yêu cầu kích hoạt mới từ ' + (localStorage.getItem('user_email') || 'Người dùng'))}&body=${encodeURIComponent('Chào bạn,\n\nTôi muốn yêu cầu kích hoạt tài khoản cho hệ thống quản lý kho TMĐT.\n\nEmail của tôi: ' + (localStorage.getItem('user_email') || ''))}`}
+                    className="inline-flex items-center gap-1.5 text-secondary font-black text-[10px] uppercase tracking-wider hover:underline"
+                  >
+                    Yêu cầu kích hoạt <ExternalLink size={12} />
+                  </a>
+                </div>
               </div>
 
               <div className="flex gap-3">

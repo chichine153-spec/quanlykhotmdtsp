@@ -16,7 +16,8 @@ import {
   ArrowRight,
   Star,
   BarChart3,
-  PieChart
+  PieChart,
+  ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from './contexts/AuthContext';
@@ -25,7 +26,7 @@ import { InventoryService, OrderRecord } from './services/inventoryService';
 import { Product } from './types';
 
 export default function Dashboard() {
-  const { user, login, error, clearError } = useAuth();
+  const { user, login, error, clearError, role, expiryDate, isSubscriptionValid } = useAuth();
   const { inventory, orders, loading: dataLoading } = useData();
   const [loading, setLoading] = React.useState(false);
   const [selectedDate, setSelectedDate] = React.useState(new Date().toISOString().split('T')[0]);
@@ -78,7 +79,7 @@ export default function Dashboard() {
           <LogIn size={40} />
         </div>
         <div className="max-w-md">
-          <h2 className="text-2xl font-bold text-on-surface mb-2">Vui lòng đăng nhập</h2>
+          <h2 className="text-2xl font-black text-on-surface mb-2 uppercase tracking-tight font-headline">Hệ thống kho TMĐT - Vui lòng đăng nhập</h2>
           <p className="text-secondary mb-8">Bạn cần đăng nhập bằng tài khoản quản trị để xem báo cáo và quản lý kho hàng.</p>
           <button 
             onClick={login}
@@ -133,8 +134,8 @@ export default function Dashboard() {
       {/* Header Section */}
       <header className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
-          <h2 className="text-3xl font-extrabold tracking-tight text-on-surface font-headline leading-none">Chào mừng trở lại, Admin</h2>
-          <p className="text-secondary mt-2 body-md">Hôm nay là một ngày tuyệt vời để tối ưu hóa kho hàng của bạn.</p>
+          <h2 className="text-3xl font-black tracking-tight text-on-surface font-headline leading-none uppercase">CHÀO MỪNG TRỞ LẠI, {role === 'admin' ? 'ADMIN' : user?.displayName?.toUpperCase()}</h2>
+          <p className="text-secondary mt-2 body-md">Hệ thống quản lý kho TMĐT - Tối ưu hóa vận hành của bạn.</p>
         </div>
         <div className="flex gap-2">
           <button className="px-6 py-2 bg-gradient-to-br from-primary to-primary-container text-white rounded-full font-medium text-sm transition-all hover:shadow-lg active:scale-95 flex items-center gap-2">
@@ -244,6 +245,42 @@ export default function Dashboard() {
             <p className="text-[10px] text-secondary mt-1 italic">Tổng đơn đã khấu trừ kho</p>
           </div>
         </motion.div>
+
+        {/* Subscription Status Card */}
+        {role !== 'admin' && (
+          <motion.div 
+            variants={item}
+            className={`glass-morphism rounded-3xl p-8 border flex flex-col justify-between ${
+              isSubscriptionValid() ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+            }`}
+          >
+            <div className="flex justify-between items-start">
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white ${
+                isSubscriptionValid() ? 'bg-green-500' : 'bg-red-500'
+              }`}>
+                <ShieldCheck size={24} />
+              </div>
+              <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
+                isSubscriptionValid() ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+              }`}>
+                {isSubscriptionValid() ? 'Đã kích hoạt' : 'Hết hạn'}
+              </span>
+            </div>
+            <div>
+              <h3 className={`text-lg font-black font-headline mt-6 ${
+                isSubscriptionValid() ? 'text-green-900' : 'text-red-900'
+              }`}>
+                Gói Foot
+              </h3>
+              <p className="text-xs font-bold text-secondary opacity-80">
+                Hết hạn: {expiryDate ? new Date(expiryDate).toLocaleDateString('vi-VN') : 'N/A'}
+              </p>
+              {!isSubscriptionValid() && (
+                <p className="text-[10px] text-red-600 mt-2 font-bold italic">Vui lòng liên hệ Admin để kích hoạt</p>
+              )}
+            </div>
+          </motion.div>
+        )}
 
         {/* Best Seller Analysis */}
         <motion.div 

@@ -19,7 +19,8 @@ import {
   Filter,
   ArrowDownCircle,
   ArrowUpCircle,
-  Clock
+  Clock,
+  RotateCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, onSnapshot, query, addDoc, getDocs, writeBatch, doc, updateDoc, deleteDoc, orderBy, limit, serverTimestamp, where } from 'firebase/firestore';
@@ -32,8 +33,9 @@ import * as XLSX from 'xlsx';
 import { handleFirestoreError, OperationType } from './lib/firestore-errors';
 
 export default function Inventory() {
-  const { user, login } = useAuth();
-  const { inventory: products, loading } = useData();
+  const { user, role, login } = useAuth();
+  const { inventory: products, loading, refreshData } = useData();
+  const isAdmin = role === 'admin';
   const [isSeeding, setIsSeeding] = React.useState(false);
   const [isClearing, setIsClearing] = React.useState(false);
   const [showClearConfirm, setShowClearConfirm] = React.useState(false);
@@ -45,7 +47,9 @@ export default function Inventory() {
   const [showHistory, setShowHistory] = React.useState(false);
   const [inventoryLogs, setInventoryLogs] = React.useState<InventoryLog[]>([]);
   const [editingStockId, setEditingStockId] = React.useState<string | null>(null);
+  const [editingPriceId, setEditingPriceId] = React.useState<{id: string, type: 'cost' | 'selling'} | null>(null);
   const [quickStockValue, setQuickStockValue] = React.useState<number>(0);
+  const [quickPriceValue, setQuickPriceValue] = React.useState<number>(0);
   const [isUpdating, setIsUpdating] = React.useState(false);
   const [isImporting, setIsImporting] = React.useState(false);
   const [isAddingNew, setIsAddingNew] = React.useState(false);
@@ -116,7 +120,7 @@ export default function Inventory() {
   */
 
   React.useEffect(() => {
-    if (!user) return;
+    if (!user || !showHistory) return;
 
     const q = query(
       collection(db, 'inventory_logs'),
@@ -131,11 +135,13 @@ export default function Inventory() {
       })) as InventoryLog[];
       setInventoryLogs(logs);
     }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'inventory_logs');
+      console.error('Inventory logs error:', error);
+      // Don't throw here to avoid crashing the app, just log it
+      // The global quotaExceeded in DataContext will handle the UI banner
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user, showHistory]);
 
   if (!user) {
     return (
@@ -230,6 +236,8 @@ export default function Inventory() {
         variant: editingProduct.variant || '',
         category: editingProduct.category || 'General',
         image: editingProduct.image,
+        costPrice: Number(editingProduct.costPrice || 0),
+        sellingPrice: Number(editingProduct.sellingPrice || 0),
         status: status
       });
 
@@ -270,6 +278,44 @@ export default function Inventory() {
       setIsUpdating(false);
     }
   };
+  const handleQuickPriceUpdate = async (product: Product, type: 'cost' | 'selling', newValue: number) => {
+    const currentValue = type === 'cost' ? (product.costPrice || 0) : (product.sellingPrice || 0);
+    if (newValue === currentValue) {
+      setEditingPriceId(null);
+      return;
+    }
+
+    setIsUpdating(true);
+    try {
+      const productRef = doc(db, 'inventory', product.id);
+      const updateData: any = {};
+      if (type === 'cost') updateData.costPrice = newValue;
+      else updateData.sellingPrice = newValue;
+      
+      await updateDoc(productRef, updateData);
+
+      // Log the change
+      await addDoc(collection(db, 'inventory_logs'), {
+        timestamp: serverTimestamp(),
+        sku: product.sku,
+        productName: product.name,
+        variant: product.variant || '',
+        change: 0,
+        type: 'manual_edit',
+        userId: user?.uid,
+        details: `Cập nhật ${type === 'cost' ? 'giá vốn' : 'giá bán'} từ ${currentValue.toLocaleString()}đ lên ${newValue.toLocaleString()}đ`
+      });
+
+      setEditingPriceId(null);
+      addToast(`Đã cập nhật ${type === 'cost' ? 'giá vốn' : 'giá bán'}.`, 'success');
+    } catch (error) {
+      console.error("Quick Price Update Error:", error);
+      addToast('Lỗi khi cập nhật giá.', 'error');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const handleQuickStockUpdate = async (product: Product, newValue: number) => {
     if (newValue === product.stock) {
       setEditingStockId(null);
@@ -309,7 +355,7 @@ export default function Inventory() {
 
   const handleBulkImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !user) return;
 
     setIsImporting(true);
     const reader = new FileReader();
@@ -327,91 +373,150 @@ export default function Inventory() {
           throw new Error('File không có dữ liệu.');
         }
 
-        // Identify if first row is header
-        const firstRow = jsonData[0];
-        const hasHeader = firstRow.some(cell => 
-          typeof cell === 'string' && 
-          (cell.toLowerCase().includes('tên') || cell.toLowerCase().includes('sku'))
-        );
+        // Find the first row that actually has content (potential header or first data row)
+        let firstContentRowIdx = -1;
+        for (let i = 0; i < jsonData.length; i++) {
+          if (jsonData[i] && jsonData[i].some(cell => cell !== null && cell !== undefined && String(cell).trim() !== '')) {
+            firstContentRowIdx = i;
+            break;
+          }
+        }
+
+        if (firstContentRowIdx === -1) {
+          throw new Error('Không tìm thấy dữ liệu trong file.');
+        }
+
+        const firstContentRow = jsonData[firstContentRowIdx];
         
-        // Find column indices if header exists
+        // Better header detection
+        const hasHeader = firstContentRow.some(cell => {
+          if (typeof cell !== 'string') return false;
+          const c = cell.toLowerCase();
+          return c.includes('tên') || c.includes('sku') || c.includes('name') || c.includes('mã') || c.includes('sản phẩm') || c.includes('hàng');
+        });
+        
+        // Default indices
         let nameIdx = 0, skuIdx = 1, variantIdx = 2, stockIdx = 3, catIdx = 4, costIdx = 5, sellIdx = 6, destIdx = -1;
         
         if (hasHeader) {
-          firstRow.forEach((cell, idx) => {
-            const c = String(cell || '').toLowerCase();
-            if (c.includes('tên')) nameIdx = idx;
-            else if (c.includes('sku')) skuIdx = idx;
-            else if (c.includes('biến thể') || c.includes('màu')) variantIdx = idx;
-            else if (c.includes('tồn') || c.includes('số lượng')) stockIdx = idx;
-            else if (c.includes('danh mục')) catIdx = idx;
-            else if (c.includes('giá vốn')) costIdx = idx;
-            else if (c.includes('giá bán')) sellIdx = idx;
-            else if (c.includes('noi den')) destIdx = idx;
+          firstContentRow.forEach((cell, idx) => {
+            const c = String(cell || '').toLowerCase().trim();
+            // Vietnamese & English keywords - even more robust
+            if (c.includes('tên') || c === 'name' || c.includes('product') || c === 'sp') nameIdx = idx;
+            else if (c.includes('sku') || c.includes('mã') || c === 'code' || c.includes('id')) skuIdx = idx;
+            else if (c.includes('biến thể') || c.includes('màu') || c.includes('phân loại') || c.includes('variant') || c.includes('loại')) variantIdx = idx;
+            else if (c.includes('tồn') || c.includes('số lượng') || c.includes('stock') || c === 'qty' || c.includes('sl')) stockIdx = idx;
+            else if (c.includes('danh mục') || c.includes('category') || c === 'nhóm') catIdx = idx;
+            else if (c.includes('giá nhập') || c.includes('giá vốn') || c.includes('cost') || c.includes('mua')) costIdx = idx;
+            else if (c.includes('giá bán') || c.includes('price') || c.includes('niêm yết') || c.includes('bán')) sellIdx = idx;
+            else if (c.includes('nơi đến') || c.includes('destination') || c.includes('kho')) destIdx = idx;
           });
         }
 
-        const rows = hasHeader ? jsonData.slice(1) : jsonData;
+        console.log('Import Mapping Result:', { 
+          hasHeader, 
+          firstContentRow,
+          mapping: { nameIdx, skuIdx, variantIdx, stockIdx, catIdx, costIdx, sellIdx } 
+        });
+        
+        const rows = hasHeader ? jsonData.slice(firstContentRowIdx + 1) : jsonData.slice(firstContentRowIdx);
+        
+        if (rows.length > 0) {
+          console.log('First data row example:', rows[0]);
+        }
         
         const batch = writeBatch(db);
         let count = 0;
+        let updatedCount = 0;
+
+        // Pre-map inventory by SKU+Variant for fast lookup
+        const inventoryMap = new Map();
+        products.forEach(p => {
+          const key = `${p.sku.toLowerCase()}_${(p.variant || '').toLowerCase()}`;
+          inventoryMap.set(key, p);
+        });
 
         for (const row of rows) {
           if (!row || row.length === 0) continue;
 
+          // Skip rows where all important cells are empty
           const name = String(row[nameIdx] || '').trim();
           const sku = String(row[skuIdx] || '').trim();
+          
+          if (!name && !sku) continue;
+
           const variant = String(row[variantIdx] || '').trim();
-          const stock = parseInt(String(row[stockIdx])) || 0;
+          const rawStock = String(row[stockIdx] || '0').replace(/[^0-9]/g, '');
+          const stock = parseInt(rawStock) || 0;
           const category = String(row[catIdx] || 'General').trim();
-          const costPrice = parseInt(String(row[costIdx])) || 0;
-          const sellingPrice = parseInt(String(row[sellIdx])) || 0;
+          const costPrice = parseInt(String(row[costIdx] || '0').replace(/[^0-9]/g, '')) || 0;
+          const sellingPrice = parseInt(String(row[sellIdx] || '0').replace(/[^0-9]/g, '')) || 0;
           
           let destination = '';
-          if (destIdx !== -1) {
+          if (destIdx !== -1 && row[destIdx]) {
             const rawDest = String(row[destIdx] || '').trim().toUpperCase();
             if (rawDest === 'HN') destination = 'Hà Nội';
             else if (rawDest === 'SG') destination = 'Hồ Chí Minh';
             else destination = rawDest;
           }
 
-          if (!name || !sku) continue;
-
           const status = stock > 10 ? 'in_stock' : (stock > 0 ? 'low_stock' : 'out_of_stock');
 
-          const newDocRef = doc(collection(db, 'inventory'));
-          batch.set(newDocRef, {
-            userId: user.uid,
-            name,
-            sku,
-            variant,
-            stock,
-            category,
-            status,
-            costPrice,
-            sellingPrice,
-            destination,
-            image: 'https://picsum.photos/seed/import/200/200',
-            createdAt: new Date().toISOString()
-          });
+          // Check if SKU+Variant already exists
+          const key = `${sku.toLowerCase()}_${variant.toLowerCase()}`;
+          const existingProduct = inventoryMap.get(key);
 
-          // Log the import
+          if (existingProduct) {
+            // Update existing product
+            const productRef = doc(db, 'inventory', existingProduct.id);
+            batch.update(productRef, {
+              costPrice,
+              sellingPrice,
+              updatedAt: new Date().toISOString()
+            });
+            updatedCount++;
+          } else {
+            // Create new product
+            const newDocRef = doc(collection(db, 'inventory'));
+            const productData = {
+              userId: user.uid,
+              name: name || 'Sản phẩm không tên',
+              sku: sku || `SKU-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
+              variant,
+              stock,
+              category,
+              status,
+              costPrice,
+              sellingPrice,
+              destination,
+              image: 'https://picsum.photos/seed/import/200/200',
+              createdAt: new Date().toISOString()
+            };
+            batch.set(newDocRef, productData);
+            count++;
+          }
+
+          // Log the import (only for new ones or significant changes if needed)
           const logRef = doc(collection(db, 'inventory_logs'));
           batch.set(logRef, {
             timestamp: serverTimestamp(),
-            sku,
-            productName: name,
+            sku: sku || 'N/A',
+            productName: name || 'Sản phẩm không tên',
             variant,
-            change: stock,
+            change: existingProduct ? 0 : stock,
             type: 'bulk_import',
-            userId: user?.uid
+            userId: user.uid,
+            details: existingProduct ? 'Cập nhật giá từ Excel' : 'Nhập mới từ Excel'
           });
-
-          count++;
         }
 
-        await batch.commit();
-        addToast(`Đã nhập thành công ${count} sản phẩm!`, 'success');
+        if (count > 0 || updatedCount > 0) {
+          await batch.commit();
+          await refreshData();
+          addToast(`Đã nhập thành công: ${count} mới, ${updatedCount} cập nhật giá!`, 'success');
+        } else {
+          addToast('Không tìm thấy sản phẩm hợp lệ trong file.', 'info');
+        }
       } catch (error) {
         console.error("Bulk Import Error:", error);
         addToast('Lỗi khi nhập dữ liệu từ file. Vui lòng kiểm tra định dạng file Excel/CSV.', 'error');
@@ -500,6 +605,20 @@ export default function Inventory() {
     return matchesSearch && matchesCategory && matchesStatus;
   });
 
+  React.useEffect(() => {
+    if (user) {
+      console.log('Inventory Component State:', {
+        totalProducts: products.length,
+        filteredCount: filteredProducts.length,
+        loading,
+        userUid: user.uid,
+        searchTerm,
+        categoryFilter,
+        statusFilter
+      });
+    }
+  }, [products, filteredProducts, loading, user, searchTerm, categoryFilter, statusFilter]);
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
@@ -513,6 +632,14 @@ export default function Inventory() {
           <p className="text-secondary font-medium">Quản lý mã SKU nội bộ và số lượng tồn kho.</p>
         </div>
         <div className="flex items-center gap-3">
+          <button 
+            onClick={refreshData}
+            disabled={loading}
+            className="p-3 rounded-xl border border-surface-container text-secondary hover:bg-surface-container transition-all disabled:opacity-50"
+            title="Tải lại dữ liệu"
+          >
+            <RotateCw size={18} className={loading ? 'animate-spin' : ''} />
+          </button>
           <button 
             onClick={() => setShowHistory(true)}
             className="px-4 py-3 rounded-xl border border-surface-container text-secondary font-bold flex items-center gap-2 hover:bg-surface-container transition-all"
@@ -672,7 +799,13 @@ export default function Inventory() {
                 <tr className="bg-surface-container-low/50">
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary">Thông tin sản phẩm</th>
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary">Mã SKU</th>
-                  <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Giá (Vốn/Bán)</th>
+                  {isAdmin && (
+                    <>
+                      <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Giá vốn</th>
+                      <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Giá bán</th>
+                      <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Lợi nhuận</th>
+                    </>
+                  )}
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Tồn kho</th>
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Trạng thái</th>
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-right">Thao tác</th>
@@ -738,12 +871,69 @@ export default function Inventory() {
                           </div>
                         </td>
                         <td className="px-6 py-4 font-mono text-xs font-bold text-on-surface-variant/70">{variant.sku}</td>
-                        <td className="px-6 py-4 text-center">
-                          <div className="flex flex-col items-center">
-                            <span className="text-xs font-bold text-error">{(variant.costPrice || 0).toLocaleString()}đ</span>
-                            <span className="text-xs font-bold text-green-600">{(variant.sellingPrice || 0).toLocaleString()}đ</span>
-                          </div>
-                        </td>
+                        {isAdmin && (
+                          <>
+                            <td className="px-6 py-4 text-center">
+                              {editingPriceId?.id === variant.id && editingPriceId?.type === 'cost' ? (
+                                <input 
+                                  type="number"
+                                  autoFocus
+                                  value={quickPriceValue}
+                                  onChange={(e) => setQuickPriceValue(parseInt(e.target.value) || 0)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleQuickPriceUpdate(variant, 'cost', quickPriceValue);
+                                    if (e.key === 'Escape') setEditingPriceId(null);
+                                  }}
+                                  onBlur={() => handleQuickPriceUpdate(variant, 'cost', quickPriceValue)}
+                                  className="w-24 px-2 py-1 bg-white border border-primary rounded-lg text-center font-bold text-sm outline-none"
+                                />
+                              ) : (
+                                <button 
+                                  onClick={() => {
+                                    setEditingPriceId({ id: variant.id, type: 'cost' });
+                                    setQuickPriceValue(variant.costPrice || 0);
+                                  }}
+                                  className="text-sm font-bold text-error hover:bg-error/5 px-2 py-1 rounded transition-all"
+                                  title="Sửa giá vốn"
+                                >
+                                  {(variant.costPrice || 0).toLocaleString()}đ
+                                </button>
+                              )}
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                              {editingPriceId?.id === variant.id && editingPriceId?.type === 'selling' ? (
+                                <input 
+                                  type="number"
+                                  autoFocus
+                                  value={quickPriceValue}
+                                  onChange={(e) => setQuickPriceValue(parseInt(e.target.value) || 0)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleQuickPriceUpdate(variant, 'selling', quickPriceValue);
+                                    if (e.key === 'Escape') setEditingPriceId(null);
+                                  }}
+                                  onBlur={() => handleQuickPriceUpdate(variant, 'selling', quickPriceValue)}
+                                  className="w-24 px-2 py-1 bg-white border border-primary rounded-lg text-center font-bold text-sm outline-none"
+                                />
+                              ) : (
+                                <button 
+                                  onClick={() => {
+                                    setEditingPriceId({ id: variant.id, type: 'selling' });
+                                    setQuickPriceValue(variant.sellingPrice || 0);
+                                  }}
+                                  className="text-sm font-bold text-green-600 hover:bg-green-50 px-2 py-1 rounded transition-all"
+                                  title="Sửa giá bán"
+                                >
+                                  {(variant.sellingPrice || 0).toLocaleString()}đ
+                                </button>
+                              )}
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                              <span className={`text-sm font-black ${(variant.sellingPrice || 0) - (variant.costPrice || 0) > 0 ? 'text-primary' : 'text-secondary'}`}>
+                                {((variant.sellingPrice || 0) - (variant.costPrice || 0)).toLocaleString()}đ
+                              </span>
+                            </td>
+                          </>
+                        )}
                         <td className="px-6 py-4 text-center">
                           {editingStockId === variant.id ? (
                             <div className="flex items-center justify-center gap-2">

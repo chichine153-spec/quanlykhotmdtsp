@@ -131,7 +131,7 @@ export default function Returns() {
           <LogIn size={40} />
         </div>
         <div className="max-w-md">
-          <h2 className="text-2xl font-bold text-on-surface mb-2">Vui lòng đăng nhập</h2>
+          <h2 className="text-2xl font-black text-on-surface mb-2 uppercase tracking-tight font-headline">Hệ thống kho TMĐT - Vui lòng đăng nhập</h2>
           <p className="text-secondary mb-8">Bạn cần đăng nhập để thực hiện xử lý hàng hoàn và cập nhật kho hàng.</p>
           <button 
             onClick={login}
@@ -152,7 +152,7 @@ export default function Returns() {
     >
       {/* Header Section */}
       <header>
-        <h1 className="text-3xl font-black tracking-tight text-on-surface mb-2">Hàng Hoàn</h1>
+        <h1 className="text-3xl font-black tracking-tight text-on-surface mb-2 font-headline uppercase">Hàng Hoàn</h1>
         <p className="text-secondary text-sm font-medium">Xử lý hàng hoàn từ khách hàng Shopee</p>
       </header>
 

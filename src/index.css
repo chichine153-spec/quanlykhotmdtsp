@@ -1,11 +1,12 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-headline: "Inter", sans-serif;
+  --font-headline: "Be Vietnam Pro", sans-serif;
   
-  --color-primary: #EE4D2D;
-  --color-primary-container: #FF5733;
+  --color-primary: #FF4D00;
+  --color-primary-container: #FF8C00;
   --color-on-primary: #ffffff;
   --color-secondary: #53606c;
   --color-tertiary: #445c89;

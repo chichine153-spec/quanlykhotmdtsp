@@ -1,15 +1,33 @@
 {
   "entities": {
     "User": {
-      "title": "User",
-      "description": "User profile and role information.",
+      "title": "User Profile",
+      "description": "Stores user profile information, roles, and subscription status.",
       "type": "object",
       "properties": {
-        "role": { "type": "string", "enum": ["admin", "user"], "description": "The user's role." },
-        "email": { "type": "string", "format": "email", "description": "The user's email address." },
-        "name": { "type": "string", "description": "The user's display name." }
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "user"] },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "paymentStatus": { "type": "string", "enum": ["none", "pending", "completed"] },
+        "expiryDate": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["role", "email"]
+      "required": ["uid", "email", "role", "status", "paymentStatus", "createdAt"]
+    },
+    "PaymentHistory": {
+      "title": "Payment History",
+      "description": "Stores logs of subscription activations and payments.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "amount": { "type": "number" },
+        "package": { "type": "string" },
+        "activatedAt": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" }
+      },
+      "required": ["email", "amount", "package", "activatedAt", "userId"]
     },
     "Product": {
       "title": "Product",
@@ -81,14 +99,22 @@
       "properties": {
         "packagingCostBottle": { "type": "number", "description": "Cost of packaging for bottles." },
         "packagingCostCup": { "type": "number", "description": "Cost of packaging for cups." },
-        "pricingTiers": { "type": "object", "description": "Pricing tiers for different product categories." }
-      }
+        "platformFeePercent": { "type": "number", "description": "Shopee platform fee percentage." },
+        "marketingCost": { "type": "number", "description": "Marketing costs." },
+        "otherCosts": { "type": "number", "description": "Other miscellaneous costs." },
+        "lastUpdated": { "type": "string", "format": "date-time", "description": "The timestamp of the last update." }
+      },
+      "required": ["packagingCostBottle", "packagingCostCup", "platformFeePercent", "marketingCost", "otherCosts", "lastUpdated"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "User",
-      "description": "User profiles."
+      "description": "User profile data."
+    },
+    "/payment_history/{paymentId}": {
+      "schema": "PaymentHistory",
+      "description": "Payment and activation logs."
     },
     "/inventory/{productId}": {
       "schema": "Product",

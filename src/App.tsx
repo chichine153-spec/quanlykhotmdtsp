@@ -1,4 +1,5 @@
 import React from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import Layout from './Layout';
 import Dashboard from './Dashboard';
 import RePrintModule from './components/RePrintModule';
@@ -8,6 +9,8 @@ import StockIn from './StockIn';
 import ProfitDashboard from './ProfitDashboard';
 import ScanSuccess from './ScanSuccess';
 import Returns from './Returns';
+import AccountManagement from './AccountManagement';
+import UpgradeAccount from './UpgradeAccount';
 import GeminiKeyModal from './components/GeminiKeyModal';
 import { Screen } from './types';
 import { PDFService } from './services/pdfService';
@@ -15,9 +18,18 @@ import { useAuth } from './contexts/AuthContext';
 import { GeminiService } from './services/gemini';
 
 export default function App() {
-  const { user } = useAuth();
+  const { user, role, isSubscriptionValid } = useAuth();
   const [activeScreen, setActiveScreen] = React.useState<Screen>('dashboard');
   const [showKeyModal, setShowKeyModal] = React.useState(false);
+
+  const isValid = isSubscriptionValid();
+  
+  // Force upgrade screen if not valid and not admin
+  React.useEffect(() => {
+    if (user && !isValid && role !== 'admin') {
+      setActiveScreen('upgrade');
+    }
+  }, [user, isValid, role]);
 
   // Check for API key on load
   React.useEffect(() => {
@@ -72,6 +84,10 @@ export default function App() {
         return <Returns />;
       case 'reprint':
         return <RePrintModule />;
+      case 'accounts':
+        return <AccountManagement />;
+      case 'upgrade':
+        return <UpgradeAccount />;
       default:
         return <Dashboard />;
     }
@@ -83,7 +99,9 @@ export default function App() {
       onScreenChange={setActiveScreen}
       onOpenKeyModal={() => setShowKeyModal(true)}
     >
-      {renderScreen()}
+      <div className="relative">
+        {renderScreen()}
+      </div>
       <GeminiKeyModal isOpen={showKeyModal} onClose={() => setShowKeyModal(false)} />
     </Layout>
   );

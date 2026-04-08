@@ -1,5 +1,5 @@
 {
-  "name": "Lucid Inventory",
-  "description": "A polished inventory management system for Shopee vendors, featuring order tracking, PDF extraction, and real-time stock monitoring.",
+  "name": "HỆ THỐNG KHO TMĐT",
+  "description": "Hệ thống quản lý kho thương mại điện tử chuyên nghiệp, hỗ trợ bóc tách vận đơn Shopee, theo dõi đơn hàng và quản lý tồn kho thời gian thực.",
   "requestFramePermissions": []
 }

@@ -94,7 +94,8 @@ export default function StockIn() {
       })) as InventoryLog[];
       setHistoryLogs(logs);
     }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'inventory_logs');
+      console.error('StockIn logs error:', error);
+      // Don't throw here to avoid crashing the app
     });
 
     return () => {
@@ -110,7 +111,7 @@ export default function StockIn() {
           <LogIn size={40} />
         </div>
         <div className="max-w-md">
-          <h2 className="text-2xl font-bold text-on-surface mb-2">Vui lòng đăng nhập</h2>
+          <h2 className="text-2xl font-black text-on-surface mb-2 uppercase tracking-tight font-headline">Hệ thống kho TMĐT - Vui lòng đăng nhập</h2>
           <p className="text-secondary mb-8">Bạn cần đăng nhập để thực hiện nhập kho hàng về.</p>
           <button 
             onClick={login}
@@ -206,7 +207,7 @@ export default function StockIn() {
     >
       {/* Header Section */}
       <section>
-        <h1 className="text-3xl font-extrabold tracking-tight text-on-surface mb-2 font-headline">Nhập kho hàng về (Stock In)</h1>
+        <h1 className="text-3xl font-black tracking-tight text-on-surface mb-2 font-headline uppercase">Nhập kho hàng về (Stock In)</h1>
         <p className="text-secondary body-md">Cập nhật số lượng hàng mới về và theo dõi lịch sử biến động kho.</p>
       </section>
 

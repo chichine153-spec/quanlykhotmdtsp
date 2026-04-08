@@ -14,9 +14,18 @@ import {
   AlertTriangle,
   Key,
   RefreshCw,
-  Clock
+  Clock,
+  Users,
+  ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { 
+  collection, 
+  query, 
+  where, 
+  onSnapshot 
+} from 'firebase/firestore';
+import { auth, db } from './firebase';
 import { Screen } from './types';
 import { useAuth } from './contexts/AuthContext';
 import { useData } from './contexts/DataContext';
@@ -30,18 +39,29 @@ interface LayoutProps {
 
 export default function Layout({ children, activeScreen, onScreenChange, onOpenKeyModal }: LayoutProps) {
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
-  const { user, login, logout, error, clearError } = useAuth();
-  const { refreshData, lastUpdated, loading } = useData();
+  const { user, login, logout, error, clearError, role, status, expiryDate, isSubscriptionValid } = useAuth();
+  const { refreshData, lastUpdated, loading, quotaExceeded: dataQuotaExceeded } = useData();
   const [hasApiKey, setHasApiKey] = React.useState(!!localStorage.getItem('gemini_api_key'));
   const [isRefreshing, setIsRefreshing] = React.useState(false);
   const [quotaExceeded, setQuotaExceeded] = React.useState(false);
+  const [pendingPayments, setPendingPayments] = React.useState(0);
 
-  // Check for quota error in global error state
+  // Check for pending payments if admin
   React.useEffect(() => {
-    if (error?.includes('Quota limit exceeded') || error?.includes('Hệ thống đã đạt giới hạn')) {
+    if (role !== 'admin') return;
+    const q = query(collection(db, 'users'), where('paymentStatus', '==', 'pending'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setPendingPayments(snapshot.size);
+    });
+    return unsubscribe;
+  }, [role]);
+
+  // Check for quota error in global error state or data context
+  React.useEffect(() => {
+    if (dataQuotaExceeded || error?.includes('Quota limit exceeded') || error?.includes('Hệ thống đã đạt giới hạn')) {
       setQuotaExceeded(true);
     }
-  }, [error]);
+  }, [error, dataQuotaExceeded]);
 
   React.useEffect(() => {
     const checkKey = () => setHasApiKey(!!localStorage.getItem('gemini_api_key'));
@@ -76,6 +96,18 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
     { id: 'profit', label: 'Báo cáo lợi nhuận', icon: TrendingUp },
   ];
 
+  if (role === 'admin') {
+    navItems.push({ id: 'accounts', label: 'Quản lý tài khoản', icon: Users });
+  }
+
+  const isExpired = expiryDate ? new Date(expiryDate) < new Date() : true;
+  const isValid = isSubscriptionValid();
+
+  // Filter nav items for non-admin invalid users
+  const filteredNavItems = (user && !isValid && role !== 'admin') 
+    ? [{ id: 'upgrade', label: 'Nâng cấp tài khoản', icon: ShieldCheck }]
+    : navItems;
+
   return (
     <div className="min-h-screen bg-surface">
       {/* Quota Exceeded Banner */}
@@ -91,7 +123,7 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
               <AlertTriangle size={20} className="animate-pulse" />
               <div className="flex flex-col">
                 <span className="text-sm font-black uppercase tracking-widest">Hết hạn mức truy cập (Quota Exceeded)</span>
-                <span className="text-[10px] opacity-80 font-medium">Hệ thống đã đạt giới hạn truy cập miễn phí trong ngày. Vui lòng quay lại sau 24h hoặc nâng cấp gói dịch vụ.</span>
+                <span className="text-[10px] opacity-80 font-medium">HỆ THỐNG KHO TMĐT đã đạt giới hạn truy cập miễn phí trong ngày. Vui lòng quay lại sau 24h hoặc nâng cấp gói dịch vụ.</span>
               </div>
             </div>
             <button 
@@ -117,7 +149,7 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
             <div className="w-8 h-8 rounded-lg bg-primary-container flex items-center justify-center text-white">
               <Package size={18} />
             </div>
-            <span className="text-lg font-black tracking-tighter text-primary font-headline">LUCID INVENTORY</span>
+            <span className="text-lg font-black tracking-tighter text-primary font-headline">KHO TMĐT</span>
           </div>
         </div>
         
@@ -172,8 +204,21 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
               </button>
               <div className="flex items-center gap-3">
                 <div className="hidden md:block text-right">
-                  <p className="text-xs font-bold text-secondary">{user.displayName}</p>
-                  <p className="text-[10px] text-secondary opacity-60">Manager</p>
+                  <p className="text-xs font-bold text-on-surface">{user.displayName}</p>
+                  <div className="flex items-center justify-end gap-1">
+                    <span className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${
+                      role === 'admin' ? 'bg-primary text-white' : 'bg-secondary/10 text-secondary'
+                    }`}>
+                      {role === 'admin' ? 'Admin' : 'User'}
+                    </span>
+                    {role !== 'admin' && (
+                      <span className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${
+                        isValid ? 'bg-green-100 text-green-700' : 'bg-error/10 text-error'
+                      }`}>
+                        {isValid ? 'Active' : 'Expired'}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="w-10 h-10 rounded-full overflow-hidden border border-surface-container">
                   <img 
@@ -205,25 +250,32 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
               <Package size={24} />
             </div>
             <div>
-              <p className="text-xl font-bold text-primary font-headline">Quản lý kho</p>
-              <p className="text-[10px] uppercase tracking-widest text-secondary font-bold">Shopee Premium Vendor</p>
+              <p className="text-xl font-black text-primary font-headline uppercase tracking-tight">Hệ thống kho TMĐT</p>
+              <p className="text-[10px] uppercase tracking-widest text-secondary font-black">Hệ thống quản lý kho thương mại điện tử</p>
             </div>
           </div>
         </div>
 
         <nav className="flex flex-col gap-2 flex-grow">
-          {navItems.map((item) => (
+          {filteredNavItems.map((item) => (
             <button
               key={item.id}
               onClick={() => onScreenChange(item.id as Screen)}
-              className={`flex items-center gap-4 px-4 py-3 rounded-xl transition-all font-medium text-sm tracking-tight ${
+              className={`flex items-center justify-between px-4 py-3 rounded-xl transition-all font-medium text-sm tracking-tight ${
                 activeScreen === item.id 
                   ? 'bg-primary text-white shadow-lg shadow-primary/20' 
                   : 'text-secondary hover:bg-surface-container hover:translate-x-1'
               }`}
             >
-              <item.icon size={20} />
-              <span>{item.label}</span>
+              <div className="flex items-center gap-4">
+                <item.icon size={20} />
+                <span>{item.label}</span>
+              </div>
+              {item.id === 'accounts' && pendingPayments > 0 && (
+                <span className="flex h-5 w-5 rounded-full bg-error text-[10px] text-white items-center justify-center animate-pulse">
+                  {pendingPayments}
+                </span>
+              )}
             </button>
           ))}
         </nav>
@@ -268,13 +320,13 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
               className="fixed left-0 top-0 bottom-0 w-72 bg-white z-[80] lg:hidden p-4 flex flex-col gap-6"
             >
               <div className="flex justify-between items-center px-2">
-                <span className="text-lg font-black text-primary">LUCID INVENTORY</span>
+                <span className="text-lg font-black text-primary">KHO TMĐT</span>
                 <button onClick={() => setIsSidebarOpen(false)} className="p-2">
                   <X size={20} />
                 </button>
               </div>
               <nav className="flex flex-col gap-2">
-                {navItems.map((item) => (
+                {filteredNavItems.map((item) => (
                   <button
                     key={item.id}
                     onClick={() => {
@@ -306,7 +358,7 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
 
       {/* Mobile Bottom Nav */}
       <nav className="lg:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center h-20 px-6 pb-2 bg-white/60 backdrop-blur-xl rounded-t-3xl shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
-        {navItems.slice(0, 5).map((item) => (
+        {filteredNavItems.slice(0, 5).map((item) => (
           <button
             key={item.id}
             onClick={() => onScreenChange(item.id as Screen)}
@@ -316,7 +368,7 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
           >
             <item.icon size={20} />
             <span className="text-[10px] font-bold uppercase tracking-widest mt-1">
-              {item.id === 'returns' ? 'Trả hàng' : item.id === 'stockin' ? 'Nhập kho' : item.id === 'upload' ? 'Upload' : item.id === 'inventory' ? 'Kho' : item.id === 'profit' ? 'Lợi nhuận' : 'Home'}
+              {item.id === 'returns' ? 'Trả hàng' : item.id === 'stockin' ? 'Nhập kho' : item.id === 'upload' ? 'Upload' : item.id === 'inventory' ? 'Kho' : item.id === 'profit' ? 'Lợi nhuận' : item.id === 'upgrade' ? 'Nâng cấp' : 'Home'}
             </span>
           </button>
         ))}
@@ -324,7 +376,7 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
 
       {/* Footer */}
       <footer className="hidden lg:flex flex-col items-center gap-2 mt-auto w-full py-8 lg:ml-40">
-        <p className="text-xs tracking-tighter opacity-50 text-secondary">© 2024 Lucid Inventory Management</p>
+        <p className="text-xs tracking-tighter opacity-50 text-secondary">© 2024 Hệ thống quản lý kho TMĐT</p>
         <div className="flex gap-6">
           <a href="#" className="text-xs text-secondary hover:opacity-100 transition-opacity">Support</a>
           <a href="#" className="text-xs text-secondary hover:opacity-100 transition-opacity">Privacy</a>

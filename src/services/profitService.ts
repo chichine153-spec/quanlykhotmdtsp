@@ -82,33 +82,6 @@ export class ProfitService {
   }
 
   /**
-   * Calculate shipping fee based on category, destination, weight/volume and config
-   */
-  static calculateShippingFee(category: string, destination: string, weight: number, volume: number, config: ProfitConfig | null): number {
-    if (!config?.pricingTiers) return 0;
-
-    let tierKey: keyof NonNullable<ProfitConfig['pricingTiers']> = 'standard';
-    const cat = category.toLowerCase();
-    if (cat.includes('mỹ phẩm')) tierKey = 'cosmetics';
-    else if (cat.includes('linh kiện') || cat.includes('điện tử')) tierKey = 'electronics';
-    else if (cat.includes('nặng')) tierKey = 'heavy';
-
-    const tier = config.pricingTiers[tierKey];
-    if (!tier) return 0;
-
-    const isHN = destination.toUpperCase().includes('HN') || destination.toLowerCase().includes('hà nội');
-    
-    const kgPrice = isHN ? tier.kgHN : tier.kgSG;
-    const m3Price = isHN ? tier.m3HN : tier.m3SG;
-
-    const feeByWeight = weight * kgPrice;
-    const feeByVolume = volume * m3Price;
-
-    // Usually shipping is the max of weight vs volume based price
-    return Math.max(feeByWeight, feeByVolume);
-  }
-
-  /**
    * Listen to return records
    */
   static listenToReturns(userId: string, callback: (returns: ReturnRecord[]) => void) {

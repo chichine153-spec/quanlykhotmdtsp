@@ -36,6 +36,8 @@ export interface ExtractedItem {
   productName?: string;
   currentStock?: number;
   packagingFee?: number;
+  costPrice?: number;
+  sellingPrice?: number;
   stockStatus?: 'in_stock' | 'out_of_stock' | 'low_stock' | 'checking';
 }
 
@@ -179,22 +181,24 @@ export class PDFService {
     const ai = GeminiService.getInstance();
     if (!ai) throw new Error('MISSING_API_KEY');
 
-    const prompt = `DƯỚI ĐÂY LÀ NỘI DUNG VĂN BẢN TRÍCH XUẤT TỪ FILE VẬN ĐƠN SHOPEE (PDF):
+    const prompt = `DƯỚI ĐÂY LÀ NỘI DUNG VĂN BẢN TRÍCH XUẤT TỪ FILE VẬN ĐƠN HOẶC HÓA ĐƠN (PDF):
     ---
     ${text}
     ---
-    NHIỆM VỤ: Trích xuất danh sách các đơn hàng và sản phẩm tương ứng.
+    NHIỆM VỤ: Trích xuất danh sách các đơn hàng hoặc sản phẩm nhập kho.
     
     YÊU CẦU:
-    1. Trích xuất Mã vận đơn (Tracking Code): Thường bắt đầu bằng SPX, GY, VN...
-    2. Trích xuất Mã SKU, Màu sắc/Phân loại và Số lượng cho từng sản phẩm trong mỗi đơn hàng.
-    3. Trích xuất Mã vùng (Region) nếu có (ví dụ: HN-3, HCM-7).
-    4. Trích xuất Thông tin người nhận: Tên (recipientName), Số điện thoại (recipientPhone), Địa chỉ (recipientAddress).
-    5. Loại bỏ các sản phẩm quà tặng, sticker, túi đựng không có trong kho.
+    1. Trích xuất Mã vận đơn (Tracking Code) hoặc Mã hóa đơn.
+    2. Trích xuất Mã SKU, Màu sắc/Phân loại và Số lượng cho từng sản phẩm.
+    3. Trích xuất Giá nhập (Cost Price) và Giá bán (Selling Price) nếu có trong văn bản.
+       - Giá nhập thường đi kèm từ khóa: 'Giá nhập', 'Chi phí', 'Cost', 'Unit Price'.
+       - Giá bán thường đi kèm từ khóa: 'Giá bán niêm yết', 'Price', 'Selling Price'.
+    4. Trích xuất Mã vùng (Region) nếu có.
+    5. Trích xuất Thông tin người nhận nếu là vận đơn.
     6. Trả về kết quả dưới dạng mảng JSON các đối tượng ExtractedOrder.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-1.5-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -215,7 +219,9 @@ export class PDFService {
                   properties: {
                     sku: { type: Type.STRING },
                     color: { type: Type.STRING },
-                    quantity: { type: Type.NUMBER }
+                    quantity: { type: Type.NUMBER },
+                    costPrice: { type: Type.NUMBER },
+                    sellingPrice: { type: Type.NUMBER }
                   },
                   required: ["sku", "quantity"]
                 }
@@ -483,13 +489,60 @@ export class PDFService {
         const processedItems: any[] = [];
 
         for (const item of items) {
-          const { sku, color, quantity } = item;
+          const { sku, color, quantity, costPrice: extCost, sellingPrice: extSell } = item;
           console.log(`[PDFService] Matching item: SKU=${sku}, Color=${color}, Qty=${quantity}`);
           
           const matchedProduct = await PDFService.findMatchedProduct(sku, color, allProducts);
 
           if (!matchedProduct) {
-            console.warn(`[PDFService] SKIPPING: Item [${sku}] - [${color || 'Mặc định'}] not found in inventory.`);
+            console.log(`[PDFService] NEW SKU FOUND: ${sku} (${color}). Creating new inventory entry...`);
+            
+            const newProductRef = doc(collection(db, 'inventory'));
+            const initialStock = Number(quantity);
+            const status = initialStock > 10 ? 'in_stock' : (initialStock > 0 ? 'low_stock' : 'out_of_stock');
+            
+            const newProductData = {
+              userId: auth.currentUser?.uid,
+              sku: sku,
+              variant: color || 'Mặc định',
+              name: `Sản phẩm mới (${sku})`,
+              stock: initialStock,
+              status: status,
+              costPrice: Number(extCost || 0),
+              sellingPrice: Number(extSell || 0),
+              category: 'General',
+              image: 'https://picsum.photos/seed/new/200/200',
+              createdAt: new Date().toISOString()
+            };
+
+            transaction.set(newProductRef, newProductData);
+            
+            // Log the new product creation
+            const newLogRef = doc(inventoryLogsRef);
+            transaction.set(newLogRef, {
+              userId: auth.currentUser?.uid,
+              sku: sku,
+              productName: newProductData.name,
+              variant: newProductData.variant,
+              change: initialStock,
+              type: 'addition',
+              trackingCode: trackingCode,
+              timestamp: Timestamp.now(),
+              details: 'Tạo mới từ PDF'
+            });
+
+            productNames.push(newProductData.name);
+            processedItems.push({
+              sku: sku,
+              variant: color || 'Mặc định',
+              quantity,
+              productName: newProductData.name,
+              productId: newProductRef.id,
+              category: 'General',
+              costPrice: Number(extCost || 0),
+              sellingPrice: Number(extSell || 0)
+            });
+
             continue;
           }
 
@@ -512,21 +565,32 @@ export class PDFService {
 
           console.log(`[PDFService] Transaction Update: ${matchedProduct.sku} | Stock: ${currentStock} -> ${newStock}`);
 
-          inventoryUpdates.push({ 
-            ref: productRef, 
-            newStock, 
-            status,
-            log: {
-              userId: auth.currentUser?.uid,
-              sku: matchedProduct.sku,
-              productName: matchedProduct.name,
-              variant: matchedProduct.variant || '',
-              change: -deductQty,
-              type: 'deduction',
-              trackingCode: trackingCode,
-              timestamp: Timestamp.now()
-            }
+          const updateData: any = {
+            stock: newStock,
+            status: status,
+            updatedAt: new Date().toISOString()
+          };
+
+          // Update prices if provided in PDF
+          if (extCost) updateData.costPrice = Number(extCost);
+          if (extSell) updateData.sellingPrice = Number(extSell);
+
+          transaction.update(productRef, updateData);
+          
+          // Create log
+          const newLogRef = doc(inventoryLogsRef);
+          transaction.set(newLogRef, {
+            userId: auth.currentUser?.uid,
+            sku: matchedProduct.sku,
+            productName: matchedProduct.name,
+            variant: matchedProduct.variant || '',
+            change: -deductQty,
+            type: 'deduction',
+            trackingCode: trackingCode,
+            timestamp: Timestamp.now(),
+            details: (extCost || extSell) ? 'Cập nhật giá từ PDF' : ''
           });
+
           productNames.push(matchedProduct.name);
           
           processedItems.push({
@@ -536,27 +600,9 @@ export class PDFService {
             productName: matchedProduct.name,
             productId: productRef.id,
             category: matchedProduct.category || '',
-            costPrice: Number(matchedProduct.costPrice || 0),
-            sellingPrice: Number(matchedProduct.sellingPrice || 0)
+            costPrice: Number(extCost || matchedProduct.costPrice || 0),
+            sellingPrice: Number(extSell || matchedProduct.sellingPrice || 0)
           });
-        }
-
-        if (processedItems.length === 0) {
-          console.error(`[PDFService] No items matched for order ${trackingCode}`);
-          throw new Error(`Không tìm thấy bất kỳ sản phẩm nào trong kho khớp với đơn hàng ${trackingCode}. Vui lòng kiểm tra lại mã SKU.`);
-        }
-
-        // Apply all updates
-        for (const update of inventoryUpdates) {
-          transaction.update(update.ref, { 
-            stock: update.newStock,
-            status: update.status,
-            updatedAt: new Date().toISOString()
-          });
-          
-          // Create log
-          const newLogRef = doc(inventoryLogsRef);
-          transaction.set(newLogRef, update.log);
         }
 
         // Save order record

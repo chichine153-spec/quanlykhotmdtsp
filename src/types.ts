@@ -1,4 +1,24 @@
-export type Screen = 'dashboard' | 'upload' | 'inventory' | 'returns' | 'stockin' | 'profit' | 'success' | 'reprint';
+export type Screen = 'dashboard' | 'upload' | 'inventory' | 'returns' | 'stockin' | 'profit' | 'success' | 'reprint' | 'accounts' | 'upgrade';
+
+export interface UserProfile {
+  uid: string;
+  email: string;
+  phone?: string;
+  role: 'admin' | 'user';
+  status: 'active' | 'inactive';
+  paymentStatus: 'none' | 'pending' | 'completed';
+  expiryDate: string | null;
+  createdAt: string;
+}
+
+export interface PaymentHistory {
+  id: string;
+  email: string;
+  amount: number;
+  package: string;
+  activatedAt: string;
+  userId: string;
+}
 
 export interface Product {
   id: string;
@@ -43,13 +63,6 @@ export interface Order {
   totalCost?: number;
 }
 
-export interface PricingTier {
-  kgHN: number;
-  m3HN: number;
-  kgSG: number;
-  m3SG: number;
-}
-
 export interface ProfitConfig {
   platformFeePercent: number;
   packagingCostBottle: number;
@@ -57,12 +70,6 @@ export interface ProfitConfig {
   marketingCost: number;
   otherCosts: number;
   lastUpdated: string;
-  pricingTiers?: {
-    standard: PricingTier;
-    cosmetics: PricingTier;
-    electronics: PricingTier;
-    heavy: PricingTier;
-  };
 }
 
 export interface ReturnRecord {

@@ -7,9 +7,22 @@ service cloud.firestore {
     //
     // Collection: users
     // Fields:
+    //   - uid: string
     //   - role: string ('admin', 'user')
     //   - email: string
-    //   - name: string
+    //   - status: string ('active', 'inactive')
+    //   - paymentStatus: string ('none', 'pending', 'completed')
+    //   - phone: string
+    //   - expiryDate: string (ISO date)
+    //   - createdAt: string
+    //
+    // Collection: payment_history
+    // Fields:
+    //   - email: string
+    //   - amount: number
+    //   - package: string
+    //   - activatedAt: string
+    //   - userId: string
     //
     // Collection: inventory
     // Fields:
@@ -59,7 +72,10 @@ service cloud.firestore {
     // Fields:
     //   - packagingCostBottle: number
     //   - packagingCostCup: number
-    //   - pricingTiers: map
+    //   - platformFeePercent: number
+    //   - marketingCost: number
+    //   - otherCosts: number
+    //   - lastUpdated: string
     //
     // Collection: shipping_labels
     // Fields:
@@ -115,9 +131,18 @@ service cloud.firestore {
     // ===============================================================
 
     function isValidUser(data) {
-      return hasOnlyAllowedFields(['role', 'email', 'name']) &&
+      return hasOnlyAllowedFields(['role', 'email', 'status', 'expiryDate', 'uid', 'createdAt', 'phone', 'paymentStatus']) &&
              data.role in ['admin', 'user'] &&
+             data.status in ['active', 'inactive'] &&
+             (!('paymentStatus' in data) || data.paymentStatus in ['none', 'pending', 'completed']) &&
              data.email is string;
+    }
+
+    function isValidPayment(data) {
+      return hasRequiredFields(['email', 'amount', 'package', 'activatedAt', 'userId']) &&
+             data.email is string &&
+             data.amount is number &&
+             data.userId is string;
     }
 
     function isValidProduct(data) {
@@ -157,8 +182,18 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      // Allow users to create their own document with 'user' role
-      allow create: if isAuthenticated() && request.auth.uid == userId && request.resource.data.role == 'user';
+      allow create: if isAuthenticated() && request.auth.uid == userId && 
+                    (
+                      (request.resource.data.role == 'user' && request.resource.data.status == 'inactive') ||
+                      (request.auth.token.email == "chichine153@gmail.com" && request.resource.data.role == 'admin' && request.resource.data.status == 'active')
+                    );
+      allow update: if isAdmin() || (isOwner(userId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['phone', 'paymentStatus']));
+      allow delete: if isAdmin();
+    }
+
+    match /payment_history/{paymentId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create: if isAdmin();
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
