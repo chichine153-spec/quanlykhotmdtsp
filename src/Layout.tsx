@@ -16,7 +16,8 @@ import {
   RefreshCw,
   Clock,
   Users,
-  ShieldCheck
+  ShieldCheck,
+  Settings
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -41,7 +42,7 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
   const { user, login, logout, error, clearError, role, status, expiryDate, isSubscriptionValid } = useAuth();
   const { refreshData, lastUpdated, loading, quotaExceeded: dataQuotaExceeded } = useData();
-  const [hasApiKey, setHasApiKey] = React.useState(!!localStorage.getItem('gemini_api_key'));
+  const [hasApiKey, setHasApiKey] = React.useState(!!localStorage.getItem('gemini_api_key') && !!localStorage.getItem('supabase_anon_key'));
   const [isRefreshing, setIsRefreshing] = React.useState(false);
   const [quotaExceeded, setQuotaExceeded] = React.useState(false);
   const [pendingPayments, setPendingPayments] = React.useState(0);
@@ -64,7 +65,7 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
   }, [error, dataQuotaExceeded]);
 
   React.useEffect(() => {
-    const checkKey = () => setHasApiKey(!!localStorage.getItem('gemini_api_key'));
+    const checkKey = () => setHasApiKey(!!localStorage.getItem('gemini_api_key') && !!localStorage.getItem('supabase_anon_key'));
     window.addEventListener('storage', checkKey);
     const interval = setInterval(checkKey, 1000);
     return () => {
@@ -94,6 +95,7 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
     { id: 'stockin', label: 'Nhập kho hàng về', icon: Search },
     { id: 'reprint', label: 'In lại đơn hàng', icon: RotateCcw },
     { id: 'profit', label: 'Báo cáo lợi nhuận', icon: TrendingUp },
+    { id: 'settings', label: 'Cấu hình kết nối', icon: Settings },
   ];
 
   if (role === 'admin') {
@@ -184,7 +186,7 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
           >
             <Key size={18} />
             <span className="text-xs font-bold uppercase tracking-tight">
-              {hasApiKey ? 'API Key: Đã kích hoạt' : 'VUI LÒNG NHẬP API KEY'}
+              {hasApiKey ? 'Hệ thống: Đã kết nối' : 'Cấu hình API'}
             </span>
           </button>
           {error && !user && (

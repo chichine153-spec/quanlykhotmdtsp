@@ -54,10 +54,15 @@ export default function ProfitDashboard() {
   const [activeTab, setActiveTab] = React.useState<'today' | 'week' | 'month'>('today');
   const [config, setConfig] = React.useState<ProfitConfig>({
     platformFeePercent: 12,
+    platformFeeCup: 25,
+    platformFeeBottle: 20,
+    taxPercent: 1.5,
     packagingCostBottle: 6000,
     packagingCostCup: 8000,
     marketingCost: 0,
     otherCosts: 0,
+    cutoffHour: 15,
+    dailyMarketingCosts: {},
     lastUpdated: new Date().toISOString()
   });
   const [loading, setLoading] = React.useState(true);
@@ -107,6 +112,7 @@ export default function ProfitDashboard() {
   const pieData = [
     { name: 'Giá vốn', value: stats.costOfGoods },
     { name: 'Phí sàn', value: stats.platformFees },
+    { name: 'Thuế (1.5%)', value: stats.taxFees },
     { name: 'Đóng gói', value: stats.packagingFees },
     { name: 'Marketing', value: stats.marketingFees },
     { name: 'Khác', value: stats.otherFees }
@@ -205,6 +211,40 @@ export default function ProfitDashboard() {
         </div>
       </div>
 
+      {/* Pending Orders Alert */}
+      {activeTab === 'today' && stats.pendingStats && stats.pendingStats.orderCount > 0 && (
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="bg-amber-50 border border-amber-200 p-6 rounded-3xl flex flex-col md:flex-row md:items-center justify-between gap-4"
+        >
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-amber-100 flex items-center justify-center text-amber-600">
+              <Clock size={24} />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-amber-900">Đơn chờ phiên sau (Sau {config.cutoffHour ?? 15}:00)</h3>
+              <p className="text-sm text-amber-700">
+                Các đơn hàng này sẽ được tính vào báo cáo của phiên đóng gói tiếp theo.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-6">
+            <div className="text-right">
+              <p className="text-[10px] uppercase tracking-widest text-amber-600 font-bold mb-1">Số lượng đơn</p>
+              <p className="text-xl font-black text-amber-900">{stats.pendingStats.orderCount}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] uppercase tracking-widest text-amber-600 font-bold mb-1">Doanh thu dự kiến</p>
+              <p className="text-xl font-black text-amber-900">{stats.pendingStats.revenue.toLocaleString()}đ</p>
+            </div>
+            <div className="bg-amber-200 text-amber-900 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest">
+              Đang chờ
+            </div>
+          </div>
+        </motion.div>
+      )}
+
       {/* Charts Section */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-surface-container">
@@ -289,7 +329,11 @@ export default function ProfitDashboard() {
                   </div>
                   <div>
                     <h4 className="font-bold text-on-surface group-hover:text-primary transition-colors">{product.name}</h4>
-                    <p className="text-xs text-secondary">Phân loại: {product.variant || 'Mặc định'} | Đã bán: <span className="font-bold text-on-surface">{product.count}</span></p>
+                    <p className="text-xs text-secondary">
+                      Phân loại: {product.variant || 'Mặc định'} | 
+                      Đã bán: <span className="font-bold text-on-surface">{product.count}</span> | 
+                      Phí sàn: <span className="font-bold text-primary">{product.feePercent}%</span>
+                    </p>
                   </div>
                 </div>
                 <div className="text-right">
@@ -298,6 +342,89 @@ export default function ProfitDashboard() {
                 </div>
               </div>
             ))
+          )}
+        </div>
+      </div>
+
+      {/* Recent Orders Section */}
+      <div className="bg-white rounded-[2.5rem] shadow-sm border border-surface-container overflow-hidden">
+        <div className="p-8 border-b border-surface-container flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Clock className="text-primary" size={20} />
+            <h3 className="text-xl font-bold text-on-surface tracking-tight">Đơn hàng gần đây</h3>
+          </div>
+          <span className="text-xs font-bold text-secondary uppercase tracking-widest">Hiển thị phí sàn & thuế</span>
+        </div>
+        <div className="divide-y divide-surface-container">
+          {orders.length === 0 ? (
+            <div className="p-20 text-center text-secondary">
+              <Package size={48} className="mx-auto mb-4 opacity-20" />
+              <p className="font-bold">Chưa có đơn hàng nào được xử lý.</p>
+            </div>
+          ) : (
+            orders
+              .filter(o => {
+                const cutoffHour = config.cutoffHour ?? 15;
+                const now = new Date();
+                
+                if (activeTab === 'today') {
+                  const d = new Date(now);
+                  d.setHours(cutoffHour, 0, 0, 0);
+                  const end = new Date(d);
+                  const start = new Date(d.getTime() - 24 * 60 * 60 * 1000);
+                  const orderDate = new Date(o.processedAt);
+                  return orderDate >= start && orderDate < end;
+                } else if (activeTab === 'week') {
+                  const startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+                  return new Date(o.processedAt) >= startDate;
+                } else {
+                  const startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+                  return new Date(o.processedAt) >= startDate;
+                }
+              })
+              .sort((a, b) => new Date(b.processedAt).getTime() - new Date(a.processedAt).getTime())
+              .slice(0, 10)
+              .map((order, index) => (
+                <div key={index} className="p-6 flex flex-col md:flex-row md:items-center justify-between hover:bg-slate-50 transition-colors gap-4">
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-xl bg-surface-container-low flex items-center justify-center text-secondary">
+                      <ShoppingCart size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-on-surface">{order.trackingCode}</h4>
+                      <p className="text-xs text-secondary">
+                        {new Date(order.processedAt).toLocaleString('vi-VN')} | 
+                        {order.items.length} sản phẩm
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex flex-wrap items-center gap-6 text-right">
+                    <div>
+                      <p className="text-xs font-bold text-secondary uppercase tracking-widest mb-1">Doanh thu</p>
+                      <p className="font-black text-on-surface">{(order.totalRevenue || 0).toLocaleString()}đ</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-secondary uppercase tracking-widest mb-1">Phí sàn</p>
+                      <p className="font-black text-primary">
+                        {(order.platformFee || 0).toLocaleString()}đ
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-secondary uppercase tracking-widest mb-1">Thuế</p>
+                      <p className="font-black text-amber-600">
+                        {(order.taxFee || 0).toLocaleString()}đ
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-secondary uppercase tracking-widest mb-1">Lợi nhuận</p>
+                      <p className="font-black text-green-600">
+                        {((order.totalRevenue || 0) - (order.totalCost || 0) - (order.platformFee || 0) - (order.taxFee || 0) - (order.packagingFee || 0)).toLocaleString()}đ
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))
           )}
         </div>
       </div>

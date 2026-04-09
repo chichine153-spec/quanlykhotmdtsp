@@ -1,4 +1,4 @@
-export type Screen = 'dashboard' | 'upload' | 'inventory' | 'returns' | 'stockin' | 'profit' | 'success' | 'reprint' | 'accounts' | 'upgrade';
+export type Screen = 'dashboard' | 'upload' | 'inventory' | 'returns' | 'stockin' | 'profit' | 'success' | 'reprint' | 'accounts' | 'upgrade' | 'settings';
 
 export interface UserProfile {
   uid: string;
@@ -61,15 +61,23 @@ export interface Order {
   }[];
   totalRevenue?: number;
   totalCost?: number;
+  platformFee?: number;
+  taxFee?: number;
+  packagingFee?: number;
 }
 
 export interface ProfitConfig {
-  platformFeePercent: number;
+  platformFeePercent: number; // Default for others
+  platformFeeCup: number;
+  platformFeeBottle: number;
+  taxPercent: number;
   packagingCostBottle: number;
   packagingCostCup: number;
   marketingCost: number;
   otherCosts: number;
   lastUpdated: string;
+  cutoffHour?: number;
+  dailyMarketingCosts?: Record<string, number>;
 }
 
 export interface ReturnRecord {

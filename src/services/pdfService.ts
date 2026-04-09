@@ -49,6 +49,7 @@ export interface ExtractedOrder {
   recipientPhone?: string;
   recipientAddress?: string;
   rawText?: string;
+  isCup?: boolean; // Note for "Cốc giữ nhiệt"
 }
 
 enum OperationType {
@@ -151,7 +152,8 @@ export class PDFService {
           const isSameLine = Math.abs(item.transform[5] - nextItem.transform[5]) < 5;
           if (isSameLine) {
             const gap = nextItem.transform[4] - (item.transform[4] + (item.width || 0));
-            if (gap > 2.5) pageText += ' ';
+            if (gap > 50) pageText += '    [GAP]    '; // Dấu hiệu phân tách cột/nhãn dán
+            else if (gap > 2.5) pageText += ' ';
           } else {
             pageText += '\n';
           }
@@ -163,11 +165,25 @@ export class PDFService {
     // Gửi dữ liệu thô sang Gemini bóc tách
     try {
       const extractedOrders = await this.parseWithGemini(fullText);
-      // Attach raw text to each order for Supabase storage
-      return extractedOrders.map(order => ({
-        ...order,
-        rawText: fullText
-      }));
+      
+      // Check for "Cốc giữ nhiệt" category
+      const cupKeywords = ['cốc', 'ly', 'giữ nhiệt', 'costa', 'tumbler', 'cup', 'bình'];
+      const processedOrders = extractedOrders.map(order => {
+        const isCup = order.items.some(item => 
+          cupKeywords.some(kw => 
+            (item.sku?.toLowerCase().includes(kw) || 
+             item.productName?.toLowerCase().includes(kw) ||
+             item.color?.toLowerCase().includes(kw))
+          )
+        );
+        return {
+          ...order,
+          rawText: fullText,
+          isCup
+        };
+      });
+
+      return processedOrders;
     } catch (error: any) {
       console.error('[PDFService] Gemini Parsing Error:', error);
       if (error.message === 'MISSING_API_KEY') {
@@ -181,24 +197,39 @@ export class PDFService {
     const ai = GeminiService.getInstance();
     if (!ai) throw new Error('MISSING_API_KEY');
 
-    const prompt = `DƯỚI ĐÂY LÀ NỘI DUNG VĂN BẢN TRÍCH XUẤT TỪ FILE VẬN ĐƠN HOẶC HÓA ĐƠN (PDF):
+    const prompt = `DƯỚI ĐÂY LÀ NỘI DUNG VĂN BẢN TRÍCH XUẤT TỪ FILE VẬN ĐƠN (SHIPPING LABEL) HOẶC HÓA ĐƠN:
     ---
     ${text}
     ---
-    NHIỆM VỤ: Trích xuất danh sách các đơn hàng hoặc sản phẩm nhập kho.
+    NHIỆM VỤ: Trích xuất danh sách các đơn hàng chính xác.
     
-    YÊU CẦU:
-    1. Trích xuất Mã vận đơn (Tracking Code) hoặc Mã hóa đơn.
-    2. Trích xuất Mã SKU, Màu sắc/Phân loại và Số lượng cho từng sản phẩm.
-    3. Trích xuất Giá nhập (Cost Price) và Giá bán (Selling Price) nếu có trong văn bản.
-       - Giá nhập thường đi kèm từ khóa: 'Giá nhập', 'Chi phí', 'Cost', 'Unit Price'.
-       - Giá bán thường đi kèm từ khóa: 'Giá bán niêm yết', 'Price', 'Selling Price'.
-    4. Trích xuất Mã vùng (Region) nếu có.
-    5. Trích xuất Thông tin người nhận nếu là vận đơn.
-    6. Trả về kết quả dưới dạng mảng JSON các đối tượng ExtractedOrder.`;
+    LƯU Ý QUAN TRỌNG VỀ CẤU TRÚC DỮ LIỆU:
+    - Dữ liệu có thể bị XEN KẼ (interleaved) giữa các nhãn dán nếu chúng nằm cạnh nhau trên cùng một trang PDF.
+    - Ký hiệu [GAP] cho thấy có một khoảng cách lớn theo chiều ngang, thường là ranh giới giữa 2 nhãn dán nằm cạnh nhau.
+    - Hãy sử dụng Mã vận đơn (Tracking Code) làm "neo" để nhóm các sản phẩm thuộc cùng một đơn hàng.
+    
+    HƯỚNG DẪN CHI TIẾT ĐỂ TRÁNH NHẦM LẪN:
+    1. Mã vận đơn (Tracking Code): Thường là chuỗi dài bắt đầu bằng SPXVN..., VN..., hoặc các mã vạch lớn.
+    2. Mã SKU: 
+       - Đây là mã định danh sản phẩm quan trọng nhất. 
+       - ƯU TIÊN các mã số ngắn hoặc mã ký tự đặc thù (ví dụ: 330, 315, 338, BGN-01).
+       - NẾU có mã dạng "MBA-18-09-I" xuất hiện lặp lại ở nhiều đơn khác nhau, đó có thể là mã lô hàng hoặc mã shop, KHÔNG PHẢI SKU sản phẩm. Hãy tìm mã cụ thể hơn đi kèm.
+       - Nếu mã SKU nằm chung với tên màu (ví dụ: "330 Màu Xanh"), hãy tách "330" làm SKU và "Màu Xanh" làm Color.
+    3. Màu sắc/Phân loại (Color/Variant): 
+       - Trích xuất các mô tả như: Màu sắc, Kích thước, Chất liệu.
+       - KHÔNG bao gồm số lượng (SL: 1) vào trường này.
+    4. Số lượng (Quantity): Chỉ lấy con số (ví dụ: 1, 2).
+       - QUAN TRỌNG: Nếu một đơn hàng có nhiều sản phẩm khác nhau (ví dụ: 1 Cốc và 1 Túi), hãy đảm bảo trích xuất đầy đủ cả 2 sản phẩm vào mảng "items".
+    5. Thông tin người nhận: Trích xuất Tên, SĐT, Địa chỉ nếu có.
+    
+    YÊU CẦU ĐỊA PHƯƠNG HÓA:
+    - Đây là vận đơn Shopee/TikTok/Lazada tại Việt Nam.
+    - Hãy cực kỳ cẩn thận với việc phân tách SKU và Tên phân loại. SKU thường là phần mã code ngắn, Variant là phần chữ mô tả.
+    
+    Trả về kết quả dưới dạng mảng JSON các đối tượng ExtractedOrder.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-2.0-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -233,8 +264,146 @@ export class PDFService {
       }
     });
 
-    const result = JSON.parse(response.text || "[]");
-    return result as ExtractedOrder[];
+    const result = JSON.parse(response.text || "[]") as ExtractedOrder[];
+    
+    // Split items with quantity > 1 into multiple items with quantity 1
+    // as requested: "khi đơn sl 2 thì chia ra mỗi sku màu sl 1 rồi trừ kho"
+    const splitResult = result.map(order => ({
+      ...order,
+      items: order.items.flatMap(item => {
+        if (item.quantity > 1) {
+          return Array(item.quantity).fill(null).map(() => ({ ...item, quantity: 1 }));
+        }
+        return [item];
+      })
+    }));
+
+    return splitResult;
+  }
+
+  /**
+   * Generates images for each page of the PDF and uploads them to Supabase Storage.
+   * Also saves order metadata to print_history table.
+   */
+  static async generateAndUploadImages(file: File, orders: ExtractedOrder[], userId: string) {
+    const supabase = getSupabase();
+    if (!supabase) {
+      console.warn('[PDFService] Supabase client not available for image storage.');
+      return;
+    }
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+      
+      console.log(`[PDFService] Generating images for ${pdf.numPages} pages...`);
+
+      for (let i = 1; i <= pdf.numPages; i++) {
+        console.log(`[PDFService] Processing page ${i}...`);
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: 2.0 });
+        
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        if (!context) {
+          console.error(`[PDFService] Could not get canvas context for page ${i}`);
+          continue;
+        }
+
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+
+        await page.render({ 
+          canvasContext: context, 
+          viewport,
+          // @ts-ignore
+          canvas: canvas 
+        }).promise;
+        
+        const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
+        if (!blob) {
+          console.error(`[PDFService] Could not generate blob for page ${i}`);
+          continue;
+        }
+
+        const timestamp = Date.now();
+        const fileName = `${userId}/${timestamp}_page_${i}.jpg`;
+        
+        console.log(`[PDFService] Uploading page ${i} to Supabase Storage: ${fileName}...`);
+        // 1. Upload to Storage
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('shipping-labels')
+          .upload(fileName, blob, {
+            contentType: 'image/jpeg',
+            upsert: true
+          });
+
+        if (uploadError) {
+          console.error(`[PDFService] Storage upload error (page ${i}):`, uploadError);
+          // If bucket doesn't exist, this will fail. 
+          // We should inform the user if possible, but for now just log.
+          continue;
+        }
+
+        const { data: { publicUrl } } = supabase.storage
+          .from('shipping-labels')
+          .getPublicUrl(fileName);
+
+        console.log(`[PDFService] Page ${i} uploaded. Public URL: ${publicUrl}`);
+
+        // 2. Identify which order this page belongs to
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map((it: any) => it.str).join('').replace(/\s+/g, '');
+        
+        console.log(`[PDFService] Page ${i} text length: ${pageText.length}`);
+
+        const matchingOrder = orders.find(o => {
+          const normalizedTracking = o.trackingCode.replace(/\s+/g, '');
+          const isMatch = pageText.includes(normalizedTracking);
+          if (isMatch) console.log(`[PDFService] Found match for page ${i}: ${o.trackingCode}`);
+          return isMatch;
+        });
+        
+        if (matchingOrder) {
+          const productNames = matchingOrder.items.map(item => 
+            `${item.sku}${item.color ? ` (${item.color})` : ''}`
+          ).join(', ');
+
+          // Manually detect if it's a cup for the tag
+          const isCup = productNames.toLowerCase().includes('cốc') || 
+                        productNames.toLowerCase().includes('cup') ||
+                        productNames.toLowerCase().includes('bình') ||
+                        matchingOrder.items.some(item => item.sku?.startsWith('338') || item.sku?.startsWith('330'));
+
+          const totalQuantity = matchingOrder.items.reduce((sum, item) => sum + item.quantity, 0);
+
+          console.log(`[PDFService] Saving metadata to print_history for ${matchingOrder.trackingCode}...`);
+          // 3. Save to print_history table
+          const { error: dbError } = await supabase
+            .from('print_history')
+            .insert({
+              user_id: userId,
+              tracking_number: matchingOrder.trackingCode,
+              product_name: productNames,
+              quantity: totalQuantity,
+              image_url: publicUrl,
+              is_cup: isCup,
+              created_at: new Date().toISOString()
+            });
+
+          if (dbError) {
+            console.error(`[PDFService] DB insert error (page ${i}):`, dbError);
+          } else {
+            console.log(`[PDFService] Successfully saved ${matchingOrder.trackingCode} to print_history.`);
+          }
+        } else {
+          console.warn(`[PDFService] No matching order found for page ${i} text.`);
+        }
+      }
+      console.log('[PDFService] Image generation and upload completed.');
+    } catch (err) {
+      console.error('[PDFService] Fatal error in generateAndUploadImages:', err);
+    }
   }
 
   private static parseSkuAndColor(rawInfo: string, quantity: number): ExtractedItem | null {
@@ -477,7 +646,17 @@ export class PDFService {
 
       // 2. Perform atomic transaction for the entire order
       console.log(`[PDFService] Starting transaction for order ${trackingCode}...`);
+      
+      // PRE-MATCH PRODUCTS: Find all matched products BEFORE the transaction
+      // to avoid "Firestore transactions require all reads to be performed before any writes"
+      const itemsWithMatchedProducts = await Promise.all(items.map(async (item) => {
+        const matchedProduct = await PDFService.findMatchedProduct(item.sku, item.color, allProducts);
+        return { ...item, matchedProduct };
+      }));
+
       await runTransaction(db, async (transaction) => {
+        // A. ALL READS FIRST
+        
         // Check for duplicate order in processed_orders collection
         const tProcessedSnap = await transaction.get(processedOrderRef);
         if (tProcessedSnap.exists()) {
@@ -485,15 +664,27 @@ export class PDFService {
           throw new Error(`Đơn hàng [${trackingCode}] đã được xử lý trước đó, không thể trừ kho thêm lần nữa`);
         }
 
-        const inventoryUpdates: { ref: any, newStock: number, status: string, log: any }[] = [];
+        // Get current stock for all matched products
+        const productSnaps = new Map<string, any>();
+        for (const item of itemsWithMatchedProducts) {
+          if (item.matchedProduct) {
+            const productRef = item.matchedProduct.ref || doc(db, 'inventory', item.matchedProduct.id);
+            if (!productSnaps.has(productRef.id)) {
+              const snap = await transaction.get(productRef);
+              if (snap.exists()) {
+                productSnaps.set(productRef.id, snap.data());
+              }
+            }
+          }
+        }
+
+        // B. ALL WRITES SECOND
         const processedItems: any[] = [];
+        const currentStockMap = new Map<string, number>(); // Track stock changes within the transaction for multiple items of same product
 
-        for (const item of items) {
-          const { sku, color, quantity, costPrice: extCost, sellingPrice: extSell } = item;
-          console.log(`[PDFService] Matching item: SKU=${sku}, Color=${color}, Qty=${quantity}`);
+        for (const item of itemsWithMatchedProducts) {
+          const { sku, color, quantity, costPrice: extCost, sellingPrice: extSell, matchedProduct } = item;
           
-          const matchedProduct = await PDFService.findMatchedProduct(sku, color, allProducts);
-
           if (!matchedProduct) {
             console.log(`[PDFService] NEW SKU FOUND: ${sku} (${color}). Creating new inventory entry...`);
             
@@ -546,21 +737,21 @@ export class PDFService {
             continue;
           }
 
-          console.log(`[PDFService] MATCH FOUND: ${matchedProduct.sku} (${matchedProduct.variant}) - ID: ${matchedProduct.id}`);
-
           const productRef = matchedProduct.ref || doc(db, 'inventory', matchedProduct.id);
+          const productDataInTransaction = productSnaps.get(productRef.id);
           
-          // Get latest stock in transaction
-          const tProductSnap = await transaction.get(productRef);
-          if (!tProductSnap.exists()) {
-            console.error(`[PDFService] Product document ${productRef.id} not found in transaction!`);
+          if (!productDataInTransaction) {
+            console.error(`[PDFService] Product document ${productRef.id} not found in pre-fetched snaps!`);
             continue;
           }
           
-          const productDataInTransaction = tProductSnap.data() as any;
-          const currentStock = Number(productDataInTransaction?.stock || 0);
+          const initialStock = Number(productDataInTransaction.stock || 0);
+          const currentStock = currentStockMap.has(productRef.id) ? currentStockMap.get(productRef.id)! : initialStock;
+          
           const deductQty = Number(quantity);
           const newStock = currentStock - deductQty;
+          currentStockMap.set(productRef.id, newStock); // Update local map for next item
+          
           const status = newStock > 10 ? 'in_stock' : (newStock > 0 ? 'low_stock' : 'out_of_stock');
 
           console.log(`[PDFService] Transaction Update: ${matchedProduct.sku} | Stock: ${currentStock} -> ${newStock}`);
@@ -571,13 +762,11 @@ export class PDFService {
             updatedAt: new Date().toISOString()
           };
 
-          // Update prices if provided in PDF
           if (extCost) updateData.costPrice = Number(extCost);
           if (extSell) updateData.sellingPrice = Number(extSell);
 
           transaction.update(productRef, updateData);
           
-          // Create log
           const newLogRef = doc(inventoryLogsRef);
           transaction.set(newLogRef, {
             userId: auth.currentUser?.uid,
@@ -612,6 +801,17 @@ export class PDFService {
         const totalRevenue = processedItems.reduce((sum, item) => sum + (item.sellingPrice * item.quantity), 0);
         const totalCost = processedItems.reduce((sum, item) => sum + (item.costPrice * item.quantity), 0);
         
+        // Calculate platform fee and tax fee based on item category
+        let platformFee = 0;
+        let taxFee = 0;
+        const taxPercent = config?.taxPercent || 1.5;
+
+        processedItems.forEach(item => {
+          const feePercent = ProfitService.getPlatformFeePercent(item.sku, item.productName || '', config);
+          platformFee += (item.sellingPrice * (feePercent / 100)) * item.quantity;
+          taxFee += (item.sellingPrice * (taxPercent / 100)) * item.quantity;
+        });
+
         // Calculate packaging fee based on item category
         const packagingFee = processedItems.reduce((sum, item) => {
           const fee = ProfitService.calculatePackagingFee(item.sku, item.productName || '', config);
@@ -635,6 +835,8 @@ export class PDFService {
           pdfUrl: downloadURL || '',
           totalRevenue,
           totalCost,
+          platformFee,
+          taxFee,
           packagingFee,
           recipientName: order.recipientName || '',
           recipientPhone: order.recipientPhone || '',
@@ -661,27 +863,27 @@ export class PDFService {
         });
       });
 
-      // 3. Save to Supabase as requested by user
+      // 3. Save to Supabase print_history as requested by user
+      // Note: Full image-based reprint history is handled by generateAndUploadImages
+      // which is triggered in PDFUpload.tsx. This block is for raw data backup if needed.
       try {
         const supabase = getSupabase();
         if (supabase) {
           const supabaseData = order.items.map(item => ({
             tracking_number: trackingCode,
-            product_name: `${item.sku} ${item.color || ''}`.trim(),
+            product_name: `${item.sku}${item.color ? ` (${item.color})` : ''}`.trim(),
             quantity: item.quantity,
-            raw_pdf_content: order.rawText || '',
             user_id: auth.currentUser?.uid,
-            created_at: new Date().toISOString()
+            created_at: new Date().toISOString(),
+            is_cup: order.isCup || false
           }));
 
           const { error: supabaseError } = await supabase
-            .from('orders')
-            .insert(supabaseData);
+            .from('print_history')
+            .upsert(supabaseData, { onConflict: 'tracking_number,product_name' });
 
           if (supabaseError) {
-            console.error('[PDFService] Supabase insertion error:', supabaseError);
-          } else {
-            console.log('[PDFService] Order successfully saved to Supabase.');
+            console.error('[PDFService] Supabase print_history insertion error:', supabaseError);
           }
         }
       } catch (err) {

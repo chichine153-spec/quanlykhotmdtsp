@@ -25,12 +25,12 @@ import { getDoc, doc, getDocs } from 'firebase/firestore';
 
 import { getSupabase } from '../lib/supabase';
 
-interface ShippingLabelRecord {
+interface PrintHistoryRecord {
   id: string;
   tracking_number: string;
   product_name: string;
-  quantity: number;
-  raw_pdf_content: string;
+  image_url: string;
+  is_cup: boolean;
   created_at: string;
   user_id: string;
 }
@@ -38,21 +38,27 @@ interface ShippingLabelRecord {
 export default function RePrintModule() {
   const { user } = useAuth();
   const [searchQuery, setSearchQuery] = React.useState('');
-  const [labels, setLabels] = React.useState<ShippingLabelRecord[]>([]);
+  const [labels, setLabels] = React.useState<PrintHistoryRecord[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [refreshKey, setRefreshKey] = React.useState(0);
   const [showApiKeyModal, setShowApiKeyModal] = React.useState(false);
   const [orderToPrint, setOrderToPrint] = React.useState<any>(null);
+  const [imageToPrint, setImageToPrint] = React.useState<string | null>(null);
   const printRef = React.useRef<HTMLDivElement>(null);
+  const imagePrintRef = React.useRef<HTMLDivElement>(null);
 
   const handlePrint = useReactToPrint({
     contentRef: printRef,
     documentTitle: `Vận đơn ${orderToPrint?.trackingCode || ''}`,
   });
 
+  const handleImagePrint = useReactToPrint({
+    contentRef: imagePrintRef,
+    documentTitle: `Vận đơn Hình ảnh`,
+  });
+
   React.useEffect(() => {
     if (orderToPrint) {
-      // Small delay to ensure the component is rendered in the hidden container
       const timer = setTimeout(() => {
         handlePrint();
         setOrderToPrint(null);
@@ -62,9 +68,19 @@ export default function RePrintModule() {
   }, [orderToPrint, handlePrint]);
 
   React.useEffect(() => {
+    if (imageToPrint) {
+      const timer = setTimeout(() => {
+        handleImagePrint();
+        setImageToPrint(null);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [imageToPrint, handleImagePrint]);
+
+  React.useEffect(() => {
     if (!user) return;
 
-    const fetchSupabaseLabels = async () => {
+    const fetchHistory = async () => {
       const supabase = getSupabase();
       if (!supabase) {
         setLoading(false);
@@ -74,7 +90,7 @@ export default function RePrintModule() {
       setLoading(true);
       try {
         const { data, error } = await supabase
-          .from('orders')
+          .from('print_history')
           .select('*')
           .eq('user_id', user.uid)
           .order('created_at', { ascending: false })
@@ -89,7 +105,7 @@ export default function RePrintModule() {
       }
     };
 
-    fetchSupabaseLabels();
+    fetchHistory();
 
     // Real-time subscription
     const supabase = getSupabase();
@@ -97,15 +113,15 @@ export default function RePrintModule() {
     
     if (supabase) {
       channel = supabase
-        .channel('orders_changes')
+        .channel('print_history_changes')
         .on('postgres_changes', { 
           event: '*', 
           schema: 'public', 
-          table: 'orders',
+          table: 'print_history',
           filter: `user_id=eq.${user.uid}`
         }, (payload) => {
           console.log('[RePrintModule] Real-time update:', payload);
-          fetchSupabaseLabels();
+          fetchHistory();
         })
         .subscribe();
     }
@@ -129,14 +145,14 @@ export default function RePrintModule() {
     const queryStr = searchQuery.trim();
     const supabase = getSupabase();
     if (!supabase) {
-      alert('Supabase chưa được cấu hình. Vui lòng kiểm tra API Key.');
+      alert('Supabase chưa được cấu hình.');
       return;
     }
 
     setLoading(true);
     try {
       const { data, error } = await supabase
-        .from('orders')
+        .from('print_history')
         .select('*')
         .eq('user_id', user.uid)
         .eq('tracking_number', queryStr)
@@ -146,21 +162,24 @@ export default function RePrintModule() {
       if (data && data.length > 0) {
         handleQuickPrint(data[0]);
       } else {
-        alert('Không tìm thấy đơn hàng. Vui lòng kiểm tra lại mã vận đơn.');
+        alert('Không tìm thấy đơn hàng trong lịch sử in.');
       }
     } catch (error) {
       console.error('Search error:', error);
-      alert('Lỗi khi tìm kiếm đơn hàng. Vui lòng thử lại.');
+      alert('Lỗi khi tìm kiếm đơn hàng.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleQuickPrint = async (label: ShippingLabelRecord) => {
+  const handleQuickPrint = async (label: PrintHistoryRecord) => {
+    if (label.image_url) {
+      setImageToPrint(label.image_url);
+      return;
+    }
+
     setLoading(true);
     try {
-      // For Supabase-based reprint, we use the data already in the record
-      // or we can try to fetch the full order from Firestore if it exists
       const orderSnap = await getDoc(doc(db, 'orders', label.tracking_number));
       
       if (orderSnap.exists()) {
@@ -170,20 +189,39 @@ export default function RePrintModule() {
           trackingCode: label.tracking_number
         });
       } else {
-        // Fallback: Use data from Supabase record
         setOrderToPrint({
           trackingCode: label.tracking_number,
           region: 'N/A',
-          items: label.product_name, // This will be the combined SKU/Variant string
+          items: label.product_name,
           destination: 'Chưa xác định',
           uploadDate: label.created_at
         });
       }
     } catch (error) {
       console.error('Print error:', error);
-      alert('Lỗi khi tải dữ liệu in. Vui lòng thử lại.');
+      alert('Lỗi khi tải dữ liệu in.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('Bạn có chắc chắn muốn xóa đơn hàng này khỏi lịch sử in?')) return;
+
+    const supabase = getSupabase();
+    if (!supabase) return;
+
+    try {
+      const { error } = await supabase
+        .from('print_history')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      setLabels(prev => prev.filter(l => l.id !== id));
+    } catch (error) {
+      console.error('Delete error:', error);
+      alert('Lỗi khi xóa đơn hàng.');
     }
   };
 
@@ -280,11 +318,18 @@ export default function RePrintModule() {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className="font-mono font-bold text-[#FF4500]">{label.tracking_number}</span>
+                      <div className="flex flex-col">
+                        <span className="font-mono font-bold text-[#FF4500]">{label.tracking_number}</span>
+                        {label.is_cup && (
+                          <span className="text-[10px] font-black text-primary uppercase tracking-tighter flex items-center gap-1 mt-1">
+                            <Package size={10} /> Cốc/Bình giữ nhiệt
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4">
                       <div className="text-xs font-medium text-secondary line-clamp-1 max-w-xs">
-                        {label.product_name} (x{label.quantity})
+                        {label.product_name}
                       </div>
                     </td>
                     <td className="px-6 py-4 text-right">
@@ -294,7 +339,14 @@ export default function RePrintModule() {
                           className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl font-bold text-xs shadow-lg hover:scale-105 active:scale-95 transition-all"
                         >
                           <Printer size={14} />
-                          In nhanh
+                          In lại
+                        </button>
+                        <button 
+                          onClick={() => handleDelete(label.id)}
+                          className="p-2 text-error hover:bg-error/10 rounded-xl transition-all"
+                          title="Xóa khỏi lịch sử"
+                        >
+                          <X size={16} />
                         </button>
                       </div>
                     </td>
@@ -318,6 +370,19 @@ export default function RePrintModule() {
       <div style={{ display: 'none' }}>
         <div ref={printRef}>
           {orderToPrint && <ThermalLabel order={orderToPrint} />}
+        </div>
+        <div ref={imagePrintRef}>
+          {imageToPrint && (
+            <div className="w-full h-full flex items-center justify-center bg-white">
+              <img 
+                src={imageToPrint} 
+                alt="Shipping Label" 
+                className="max-w-full max-h-full object-contain"
+                style={{ width: '100mm', height: '150mm' }}
+                referrerPolicy="no-referrer"
+              />
+            </div>
+          )}
         </div>
       </div>
 

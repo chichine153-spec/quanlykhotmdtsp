@@ -18,29 +18,26 @@ export interface ScannedProduct {
 export class ShopeeService {
   static async validateApiKey(key: string): Promise<boolean> {
     try {
-      const ai = GeminiService.getInstance() || GeminiService.getInstance(); // Ensure initialization
-      if (!ai) {
-        // If getInstance returns null, it means no key is set yet, but we are validating a NEW key
-        // So we can't use getInstance here. We need a temporary one.
-        const { GoogleGenAI } = await import("@google/genai");
-        const tempAi = new GoogleGenAI({ apiKey: key });
-        await tempAi.models.generateContent({
-          model: "gemini-3-flash-preview",
-          contents: "test",
-          config: { maxOutputTokens: 1 }
-        });
-        return true;
-      }
+      const { GoogleGenAI } = await import("@google/genai");
+      const tempAi = new GoogleGenAI({ apiKey: key });
       
-      await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+      await tempAi.models.generateContent({
+        model: "gemini-2.0-flash",
         contents: "test",
         config: { maxOutputTokens: 1 }
       });
       return true;
-    } catch (error) {
+    } catch (error: any) {
       console.error("API Key Validation Error:", error);
-      return false;
+      // The error structure might be different in this SDK
+      const errorStr = JSON.stringify(error);
+      if (errorStr.includes('API_KEY_INVALID') || error.message?.includes('API_KEY_INVALID')) {
+        throw new Error('Sai API Key');
+      }
+      if (errorStr.includes('model') && errorStr.includes('not found')) {
+        throw new Error('Model AI không được hỗ trợ');
+      }
+      throw new Error(error.message || 'Lỗi kết nối AI');
     }
   }
 
@@ -78,7 +75,7 @@ export class ShopeeService {
         Trả về kết quả dưới dạng mảng JSON các đối tượng.`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-2.0-flash",
         contents: prompt,
         config: {
           tools: rawText ? [] : [{ urlContext: {} }],

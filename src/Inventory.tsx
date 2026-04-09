@@ -25,7 +25,8 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, onSnapshot, query, addDoc, getDocs, writeBatch, doc, updateDoc, deleteDoc, orderBy, limit, serverTimestamp, where } from 'firebase/firestore';
 import { db } from './firebase';
-import { MOCK_PRODUCTS, Product, InventoryLog } from './types';
+import { MOCK_PRODUCTS, Product, InventoryLog, ProfitConfig } from './types';
+import { ProfitService } from './services/profitService';
 import { useAuth } from './contexts/AuthContext';
 import { useData } from './contexts/DataContext';
 import { X, Save, Trash2, Camera, Upload } from 'lucide-react';
@@ -34,7 +35,7 @@ import { handleFirestoreError, OperationType } from './lib/firestore-errors';
 
 export default function Inventory() {
   const { user, role, login } = useAuth();
-  const { inventory: products, loading, refreshData } = useData();
+  const { inventory: products, config: globalConfig, loading, refreshData } = useData();
   const isAdmin = role === 'admin';
   const [isSeeding, setIsSeeding] = React.useState(false);
   const [isClearing, setIsClearing] = React.useState(false);
@@ -807,6 +808,7 @@ export default function Inventory() {
                     </>
                   )}
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Tồn kho</th>
+                  <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Phí sàn</th>
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Trạng thái</th>
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-right">Thao tác</th>
                 </tr>
@@ -962,6 +964,11 @@ export default function Inventory() {
                               {variant.stock}
                             </button>
                           )}
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          <span className="text-xs font-bold text-primary bg-primary/5 px-2 py-1 rounded-lg">
+                            {ProfitService.getPlatformFeePercent(variant.sku, variant.name, globalConfig)}%
+                          </span>
                         </td>
                         <td className="px-6 py-4 text-center">
                           <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
@@ -1194,7 +1201,7 @@ export default function Inventory() {
                     >
                       <div className="w-32 h-32 rounded-2xl overflow-hidden shadow-lg border-4 border-white">
                         <img 
-                          src={isAddingNew ? newProduct.image : editingProduct?.image} 
+                          src={isAddingNew ? newProduct.image : (editingProduct?.image || '')} 
                           alt="Preview" 
                           className="w-full h-full object-cover"
                           referrerPolicy="no-referrer"
@@ -1217,7 +1224,7 @@ export default function Inventory() {
                       </div>
                       <input 
                         type="text"
-                        value={isAddingNew ? newProduct.image : editingProduct?.image}
+                        value={isAddingNew ? newProduct.image : (editingProduct?.image || '')}
                         onChange={(e) => {
                           if (isAddingNew) setNewProduct({...newProduct, image: e.target.value});
                           else if (editingProduct) setEditingProduct({...editingProduct, image: e.target.value});
@@ -1232,7 +1239,7 @@ export default function Inventory() {
                     <label className="block text-xs font-bold uppercase tracking-widest text-secondary">Tên sản phẩm</label>
                     <input 
                       type="text"
-                      value={isAddingNew ? newProduct.name : editingProduct?.name}
+                      value={isAddingNew ? newProduct.name : (editingProduct?.name || '')}
                       onChange={(e) => {
                         if (isAddingNew) setNewProduct({...newProduct, name: e.target.value});
                         else if (editingProduct) setEditingProduct({...editingProduct, name: e.target.value});
@@ -1246,7 +1253,7 @@ export default function Inventory() {
                     <label className="block text-xs font-bold uppercase tracking-widest text-secondary">Mã SKU</label>
                     <input 
                       type="text"
-                      value={isAddingNew ? newProduct.sku : editingProduct?.sku}
+                      value={isAddingNew ? newProduct.sku : (editingProduct?.sku || '')}
                       onChange={(e) => {
                         if (isAddingNew) setNewProduct({...newProduct, sku: e.target.value});
                         else if (editingProduct) setEditingProduct({...editingProduct, sku: e.target.value});
@@ -1275,7 +1282,7 @@ export default function Inventory() {
                     <label className="block text-xs font-bold uppercase tracking-widest text-secondary">Tồn kho</label>
                     <input 
                       type="number"
-                      value={isAddingNew ? newProduct.stock : editingProduct?.stock}
+                      value={isAddingNew ? newProduct.stock : (editingProduct?.stock ?? 0)}
                       onChange={(e) => {
                         const val = parseInt(e.target.value) || 0;
                         if (isAddingNew) setNewProduct({...newProduct, stock: val});
@@ -1290,7 +1297,7 @@ export default function Inventory() {
                     <label className="block text-xs font-bold uppercase tracking-widest text-secondary">Danh mục</label>
                     <input 
                       type="text"
-                      value={isAddingNew ? newProduct.category : editingProduct?.category}
+                      value={isAddingNew ? newProduct.category : (editingProduct?.category || '')}
                       onChange={(e) => {
                         if (isAddingNew) setNewProduct({...newProduct, category: e.target.value});
                         else if (editingProduct) setEditingProduct({...editingProduct, category: e.target.value});

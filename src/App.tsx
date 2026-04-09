@@ -11,6 +11,7 @@ import ScanSuccess from './ScanSuccess';
 import Returns from './Returns';
 import AccountManagement from './AccountManagement';
 import UpgradeAccount from './UpgradeAccount';
+import ConnectionSettings from './components/ConnectionSettings';
 import GeminiKeyModal from './components/GeminiKeyModal';
 import { Screen } from './types';
 import { PDFService } from './services/pdfService';
@@ -88,6 +89,8 @@ export default function App() {
         return <AccountManagement />;
       case 'upgrade':
         return <UpgradeAccount />;
+      case 'settings':
+        return <ConnectionSettings />;
       default:
         return <Dashboard />;
     }

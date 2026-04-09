@@ -82,6 +82,61 @@ export class ProfitService {
   }
 
   /**
+   * Calculate platform fee based on SKU and Product Name
+   */
+  static getPlatformFeePercent(sku: string, productName: string, config: ProfitConfig | null): number {
+    const s = String(sku || '').toUpperCase();
+    const n = String(productName || '').toLowerCase();
+    
+    const cupFee = config?.platformFeeCup || 25;
+    const bottleFee = config?.platformFeeBottle || 20;
+    const defaultFee = config?.platformFeePercent || 12;
+
+    // 1. Check SKU for Cup
+    const cupSkus = ['315', '330', '336', '338'];
+    if (cupSkus.some(code => s.includes(code))) {
+      return cupFee;
+    }
+    
+    // 2. Check SKU for Bottle
+    if (s.startsWith('BGN')) {
+      return bottleFee;
+    }
+
+    // 3. Fallback checks for name
+    if (n.includes('cốc') || n.includes('ly') || n.includes('lót sứ') || n.includes('costa')) {
+      return cupFee;
+    }
+    
+    if (n.includes('bình')) {
+      return bottleFee;
+    }
+    
+    return defaultFee;
+  }
+
+  /**
+   * Calculate profit for a single item
+   */
+  static calculateItemProfit(item: any, config: ProfitConfig | null): number {
+    const sellingPrice = item.sellingPrice || 0;
+    const costPrice = item.costPrice || 0;
+    const quantity = item.quantity || 0;
+    const shippingFee = item.shippingFee || 0; // Per item shipping if available
+    
+    const platformFeePercent = this.getPlatformFeePercent(item.sku, item.productName || '', config);
+    const taxPercent = config?.taxPercent || 1.5;
+    
+    const platformFee = sellingPrice * (platformFeePercent / 100);
+    const tax = sellingPrice * (taxPercent / 100);
+    
+    // Formula: Profit = Selling Price - Cost Price - Shipping Fee - Platform Fee - Tax
+    const unitProfit = sellingPrice - costPrice - shippingFee - platformFee - tax;
+    
+    return unitProfit * quantity;
+  }
+
+  /**
    * Listen to return records
    */
   static listenToReturns(userId: string, callback: (returns: ReturnRecord[]) => void) {
@@ -121,62 +176,152 @@ export class ProfitService {
     orders: any[], 
     returns: ReturnRecord[], 
     config: ProfitConfig | null,
-    timeframe: 'today' | 'week' | 'month'
+    timeframe: 'today' | 'week' | 'month',
+    targetDate: Date = new Date()
   ) {
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const cutoffHour = config?.cutoffHour ?? 15;
     
+    // Helper to get session bounds for a given date
+    const getSessionBounds = (date: Date) => {
+      const d = new Date(date);
+      d.setHours(cutoffHour, 0, 0, 0);
+      const end = new Date(d);
+      const start = new Date(d.getTime() - 24 * 60 * 60 * 1000);
+      return { start, end };
+    };
+
     let startDate: Date;
+    let endDate: Date = new Date(); // Default to now for filtering
+
     if (timeframe === 'today') {
-      startDate = startOfToday;
+      const { start, end } = getSessionBounds(targetDate);
+      startDate = start;
+      endDate = end;
     } else if (timeframe === 'week') {
-      startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      startDate = new Date(targetDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+      endDate = targetDate;
     } else {
-      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      startDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
+      endDate = targetDate;
     }
 
-    const filteredOrders = orders.filter(o => new Date(o.processedAt) >= startDate);
-    const filteredReturns = returns.filter(r => new Date(r.returnedAt) >= startDate);
+    // Filter orders for the main session/timeframe
+    const filteredOrders = orders.filter(o => {
+      const d = new Date(o.processedAt);
+      return d >= startDate && d < endDate;
+    });
+
+    // For 'today', also calculate pending orders (after cutoff)
+    let pendingOrders: any[] = [];
+    if (timeframe === 'today') {
+      pendingOrders = orders.filter(o => {
+        const d = new Date(o.processedAt);
+        return d >= endDate;
+      });
+    }
+
+    const filteredReturns = returns.filter(r => {
+      const d = new Date(r.returnedAt);
+      return d >= startDate && d < endDate;
+    });
 
     let revenue = filteredOrders.reduce((sum, o) => sum + (o.totalRevenue || 0), 0);
     let costOfGoods = filteredOrders.reduce((sum, o) => sum + (o.totalCost || 0), 0);
+    let platformFees = 0;
+    let taxFees = 0;
+
+    filteredOrders.forEach(o => {
+      if (o.platformFee !== undefined && o.taxFee !== undefined) {
+        platformFees += o.platformFee;
+        taxFees += o.taxFee;
+      } else {
+        o.items.forEach((item: any) => {
+          const feePercent = this.getPlatformFeePercent(item.sku, item.productName || '', config);
+          const taxPercent = config?.taxPercent || 1.5;
+          const itemPlatformFee = (item.sellingPrice * (feePercent / 100)) * item.quantity;
+          const itemTax = (item.sellingPrice * (taxPercent / 100)) * item.quantity;
+          platformFees += itemPlatformFee;
+          taxFees += itemTax;
+        });
+      }
+    });
     
-    // Subtract returns from revenue and cost
     filteredReturns.forEach(ret => {
       const returnRevenue = ret.items.reduce((sum, item) => sum + (item.sellingPrice * item.quantity), 0);
       revenue -= returnRevenue;
-      // Note: We don't necessarily subtract cost if the item is returned to stock, 
-      // but the user says "đảm bảo không tính tiền lãi cho đơn lỗi".
-      // If profit = revenue - cost, and we subtract revenue, profit decreases.
-      // If we also subtract cost, profit stays the same (revenue - cost).
-      // Usually, profit = (Revenue - ReturnRevenue) - (Cost - ReturnCost) ...
-      // Let's assume we subtract the revenue from the total.
     });
 
-    const platformFees = revenue * ((config?.platformFeePercent || 0) / 100);
-    
-    // Sum up packaging fees from orders if they have it, otherwise use a default or 0
     const packagingFees = filteredOrders.reduce((sum, o) => {
       if (o.packagingFee !== undefined) return sum + o.packagingFee;
-      // Fallback for older orders: use a default if we don't have per-order fee
       return sum + (o.items.length * (config?.packagingCostBottle || 0)); 
     }, 0);
 
-    const marketingFees = config?.marketingCost || 0;
+    // Marketing Cost Allocation Logic
+    const calculateMarketingForPeriod = (start: Date, end: Date) => {
+      // If timeframe is week or month, we might just sum up the daily costs
+      // But for the session-based "today", we need the proportional split
+      
+      const getDayMarketing = (date: Date) => {
+        const dateStr = date.toISOString().split('T')[0];
+        return config?.dailyMarketingCosts?.[dateStr] ?? 0;
+      };
+
+      // Simple implementation: find all calendar days in range and sum their proportional costs
+      let totalMarketing = 0;
+      const current = new Date(start);
+      while (current <= end) {
+        const dateStr = current.toISOString().split('T')[0];
+        const dayCost = config?.dailyMarketingCosts?.[dateStr] ?? 0;
+        
+        if (dayCost > 0) {
+          // Find orders for this calendar day to calculate ratio
+          const dayOrders = orders.filter(o => o.processedAt.startsWith(dateStr));
+          if (dayOrders.length > 0) {
+            const ordersInRange = dayOrders.filter(o => {
+              const d = new Date(o.processedAt);
+              return d >= start && d < end;
+            });
+            const ratio = ordersInRange.length / dayOrders.length;
+            totalMarketing += dayCost * ratio;
+          } else {
+            // If no orders, fallback to time-based ratio if the day is partially in range
+            const dayStart = new Date(current.getFullYear(), current.getMonth(), current.getDate(), 0, 0, 0);
+            const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+            
+            const overlapStart = Math.max(dayStart.getTime(), start.getTime());
+            const overlapEnd = Math.min(dayEnd.getTime(), end.getTime());
+            
+            if (overlapEnd > overlapStart) {
+              const ratio = (overlapEnd - overlapStart) / (24 * 60 * 60 * 1000);
+              totalMarketing += dayCost * ratio;
+            }
+          }
+        }
+        current.setDate(current.getDate() + 1);
+      }
+      return totalMarketing;
+    };
+
+    const marketingFees = calculateMarketingForPeriod(startDate, endDate);
     const otherFees = config?.otherCosts || 0;
 
-    const totalCosts = costOfGoods + platformFees + packagingFees + marketingFees + otherFees;
+    const totalCosts = costOfGoods + platformFees + taxFees + packagingFees + marketingFees + otherFees;
     const netProfit = revenue - totalCosts;
 
-    // Calculate top products
-    const productStats: Record<string, { name: string, variant: string, profit: number, count: number }> = {};
+    const productStats: Record<string, { name: string, variant: string, profit: number, count: number, feePercent: number }> = {};
     filteredOrders.forEach(o => {
       o.items.forEach((item: any) => {
         const key = `${item.sku}_${item.variant}`;
         if (!productStats[key]) {
-          productStats[key] = { name: item.productName, variant: item.variant, profit: 0, count: 0 };
+          productStats[key] = { 
+            name: item.productName, 
+            variant: item.variant, 
+            profit: 0, 
+            count: 0,
+            feePercent: this.getPlatformFeePercent(item.sku, item.productName || '', config)
+          };
         }
-        const itemProfit = (item.sellingPrice - item.costPrice) * item.quantity;
+        const itemProfit = this.calculateItemProfit(item, config);
         productStats[key].profit += itemProfit;
         productStats[key].count += item.quantity;
       });
@@ -190,6 +335,7 @@ export class ProfitService {
       revenue,
       costOfGoods,
       platformFees,
+      taxFees,
       packagingFees,
       marketingFees,
       otherFees,
@@ -197,7 +343,11 @@ export class ProfitService {
       netProfit,
       topProducts,
       orderCount: filteredOrders.length,
-      returnCount: filteredReturns.length
+      returnCount: filteredReturns.length,
+      pendingStats: timeframe === 'today' ? {
+        revenue: pendingOrders.reduce((sum, o) => sum + (o.totalRevenue || 0), 0),
+        orderCount: pendingOrders.length
+      } : undefined
     };
   }
 }

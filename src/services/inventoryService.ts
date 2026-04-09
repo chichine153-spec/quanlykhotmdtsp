@@ -29,6 +29,8 @@ export interface OrderRecord {
   userId: string;
   totalRevenue?: number;
   totalCost?: number;
+  platformFee?: number;
+  taxFee?: number;
   packagingFee?: number;
   pdfUrl?: string;
   productName?: string;

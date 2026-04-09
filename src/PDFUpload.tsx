@@ -427,6 +427,14 @@ export default function PDFUpload() {
       preUploadedUrl = '';
       setUploadFailed(false);
 
+      // Trigger automated image generation and storage for reprint IMMEDIATELY
+      // This allows the "Reprint" section to update in real-time as pages are processed
+      if (currentFile && user) {
+        console.log('[PDFUpload] Triggering automated image generation for reprint (Real-time mode)...');
+        PDFService.generateAndUploadImages(currentFile, ordersToProcess, user.uid)
+          .catch(err => console.error('[PDFUpload] Image generation failed:', err));
+      }
+
       for (let i = 0; i < ordersToProcess.length; i++) {
         // Check if aborted
         if (abortControllerRef.current) {
