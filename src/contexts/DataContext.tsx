@@ -12,7 +12,9 @@ import {
   doc, 
   orderBy, 
   limit,
-  onSnapshot
+  onSnapshot,
+  disableNetwork,
+  enableNetwork
 } from 'firebase/firestore';
 import { db } from '../firebase';
 
@@ -95,15 +97,25 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
       setQuotaExceeded(false);
     } catch (error: any) {
-      console.error('Error fetching initial data:', error);
-      if (error.message?.includes('Quota exceeded') || error.message?.includes('quota')) {
+      const isQuotaError = error.message?.includes('Quota') || JSON.stringify(error).includes('Quota');
+      if (isQuotaError) {
         setQuotaExceeded(true);
-        // Fallback to cache if available
-        if (cachedInventory) setInventory(JSON.parse(cachedInventory));
-        if (cachedOrders) setOrders(JSON.parse(cachedOrders));
-        if (cachedReturns) setReturns(JSON.parse(cachedReturns));
-        if (cachedConfig) setConfig(JSON.parse(cachedConfig));
+        console.warn('Quota exceeded during initial fetch, disabling network to prevent SDK errors.');
+        try {
+          await disableNetwork(db);
+        } catch (e) {
+          console.error('Failed to disable network:', e);
+        }
+      } else {
+        console.error('Error fetching initial data:', error);
       }
+      
+      // Fallback to cache if available
+      if (cachedInventory) setInventory(JSON.parse(cachedInventory));
+      if (cachedOrders) setOrders(JSON.parse(cachedOrders));
+      if (cachedReturns) setReturns(JSON.parse(cachedReturns));
+      if (cachedConfig) setConfig(JSON.parse(cachedConfig));
+      
       setLoading(false);
     }
   };
@@ -127,15 +139,17 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
     const unsubscribeInventory = onSnapshot(inventoryQuery, (snapshot) => {
       const newInventory = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as Product[];
-      console.log(`Inventory listener update for user ${user.uid}: ${newInventory.length} products.`);
       setInventory(newInventory);
       localStorage.setItem(`cache_inventory_${user.uid}`, JSON.stringify(newInventory));
       localStorage.setItem(`cache_time_${user.uid}`, new Date().getTime().toString());
       setLastUpdated(new Date());
     }, (error) => {
-      console.error('Inventory listener error:', error);
-      if (error.message?.includes('Quota exceeded') || error.message?.includes('quota')) {
+      const isQuotaError = error.message?.includes('Quota') || JSON.stringify(error).includes('Quota');
+      if (isQuotaError) {
         setQuotaExceeded(true);
+        disableNetwork(db).catch(console.error);
+      } else {
+        console.error('Inventory listener error:', error);
       }
     });
 
@@ -144,9 +158,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       setOrders(newOrders);
       localStorage.setItem(`cache_orders_${user.uid}`, JSON.stringify(newOrders));
     }, (error) => {
-      console.error('Orders listener error:', error);
-      if (error.message?.includes('Quota exceeded') || error.message?.includes('quota')) {
+      const isQuotaError = error.message?.includes('Quota') || JSON.stringify(error).includes('Quota');
+      if (isQuotaError) {
         setQuotaExceeded(true);
+        disableNetwork(db).catch(console.error);
+      } else {
+        console.error('Orders listener error:', error);
       }
     });
 
@@ -162,20 +179,35 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       setReturns(newReturns);
       localStorage.setItem(`cache_returns_${user.uid}`, JSON.stringify(newReturns));
     }, (error) => {
-      console.error('Returns listener error:', error);
-      if (error.message?.includes('Quota exceeded') || error.message?.includes('quota')) {
+      const isQuotaError = error.message?.includes('Quota') || JSON.stringify(error).includes('Quota');
+      if (isQuotaError) {
         setQuotaExceeded(true);
+        disableNetwork(db).catch(console.error);
+      } else {
+        console.error('Returns listener error:', error);
       }
     });
 
     return () => {
-      unsubscribeInventory();
-      unsubscribeOrders();
-      unsubscribeReturns();
+      try {
+        unsubscribeInventory();
+        unsubscribeOrders();
+        unsubscribeReturns();
+      } catch (err) {
+        console.warn('Error during listener cleanup:', err);
+      }
     };
   }, [user]);
 
   const refreshData = async () => {
+    if (quotaExceeded) {
+      try {
+        await enableNetwork(db);
+        setQuotaExceeded(false);
+      } catch (e) {
+        console.error('Failed to enable network:', e);
+      }
+    }
     await fetchData(true);
   };
 

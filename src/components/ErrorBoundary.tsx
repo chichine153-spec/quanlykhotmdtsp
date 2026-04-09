@@ -57,7 +57,7 @@ export class ErrorBoundary extends Component<Props, State> {
             </div>
             
             <h2 className="text-2xl font-black text-on-surface mb-4">
-              {isQuotaError ? 'Hệ thống kho TMĐT - Hết lượt truy cập' : 'Ối! Có lỗi xảy ra'}
+              {isQuotaError ? 'Zenith OMS - Hết lượt truy cập' : 'Ối! Có lỗi xảy ra'}
             </h2>
             
             <p className="text-secondary mb-8 font-medium leading-relaxed">

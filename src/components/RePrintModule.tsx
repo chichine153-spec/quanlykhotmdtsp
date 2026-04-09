@@ -40,29 +40,38 @@ export default function RePrintModule() {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [labels, setLabels] = React.useState<PrintHistoryRecord[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
   const [refreshKey, setRefreshKey] = React.useState(0);
   const [showApiKeyModal, setShowApiKeyModal] = React.useState(false);
   const [orderToPrint, setOrderToPrint] = React.useState<any>(null);
   const [imageToPrint, setImageToPrint] = React.useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = React.useState<string | null>(null);
+  const [isIframe, setIsIframe] = React.useState(false);
   const printRef = React.useRef<HTMLDivElement>(null);
   const imagePrintRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    setIsIframe(window.self !== window.top);
+  }, []);
 
   const handlePrint = useReactToPrint({
     contentRef: printRef,
     documentTitle: `Vận đơn ${orderToPrint?.trackingCode || ''}`,
+    onAfterPrint: () => setOrderToPrint(null),
   });
 
   const handleImagePrint = useReactToPrint({
     contentRef: imagePrintRef,
     documentTitle: `Vận đơn Hình ảnh`,
+    onAfterPrint: () => setImageToPrint(null),
   });
 
   React.useEffect(() => {
     if (orderToPrint) {
       const timer = setTimeout(() => {
+        console.log('[RePrintModule] Triggering thermal print...');
         handlePrint();
-        setOrderToPrint(null);
-      }, 500);
+      }, 800);
       return () => clearTimeout(timer);
     }
   }, [orderToPrint, handlePrint]);
@@ -70,9 +79,9 @@ export default function RePrintModule() {
   React.useEffect(() => {
     if (imageToPrint) {
       const timer = setTimeout(() => {
+        console.log('[RePrintModule] Triggering image print...');
         handleImagePrint();
-        setImageToPrint(null);
-      }, 500);
+      }, 1000); // Increased delay for image loading
       return () => clearTimeout(timer);
     }
   }, [imageToPrint, handleImagePrint]);
@@ -88,18 +97,24 @@ export default function RePrintModule() {
       }
 
       setLoading(true);
+      setError(null);
       try {
-        const { data, error } = await supabase
+        const { data, error: sbError } = await supabase
           .from('print_history')
           .select('*')
           .eq('user_id', user.uid)
           .order('created_at', { ascending: false })
           .limit(100);
 
-        if (error) throw error;
+        if (sbError) throw sbError;
         setLabels(data || []);
-      } catch (err) {
+      } catch (err: any) {
         console.error('[RePrintModule] Supabase fetch error:', err);
+        if (err.message?.includes('Forbidden use of secret API key') || err.status === 401) {
+          setError('Lỗi kết nối: Sai mã Anon Key hoặc Supabase URL không khớp với dự án. Vui lòng kiểm tra lại cả 2 thông tin trong phần Cấu hình.');
+        } else {
+          setError('Không thể tải lịch sử in. Vui lòng kiểm tra kết nối Supabase.');
+        }
       } finally {
         setLoading(false);
       }
@@ -173,8 +188,27 @@ export default function RePrintModule() {
   };
 
   const handleQuickPrint = async (label: PrintHistoryRecord) => {
+    console.log('[RePrintModule] Quick print for:', label);
+    
     if (label.image_url) {
-      setImageToPrint(label.image_url);
+      // Clean up URL in case it's corrupted with JSON fragments
+      let cleanUrl = label.image_url;
+      if (typeof cleanUrl === 'string') {
+        // Remove any trailing JSON-like fragments (e.g., ?is_cup":1)
+        cleanUrl = cleanUrl.split('?')[0].split('"')[0].split('}')[0].trim();
+        
+        // Ensure it's an absolute URL
+        if (cleanUrl.startsWith('/') && !cleanUrl.startsWith('//')) {
+          const supabaseUrl = localStorage.getItem('supabase_url');
+          if (supabaseUrl) {
+            const baseUrl = supabaseUrl.endsWith('/') ? supabaseUrl.slice(0, -1) : supabaseUrl;
+            cleanUrl = `${baseUrl}/storage/v1/object/public/shipping-labels/${cleanUrl.startsWith('/') ? cleanUrl.slice(1) : cleanUrl}`;
+          }
+        }
+      }
+      
+      console.log('[RePrintModule] Final Image URL:', cleanUrl);
+      setImageToPrint(cleanUrl);
       return;
     }
 
@@ -206,7 +240,13 @@ export default function RePrintModule() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Bạn có chắc chắn muốn xóa đơn hàng này khỏi lịch sử in?')) return;
+    setDeleteConfirm(id);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirm) return;
+    const id = deleteConfirm;
+    setDeleteConfirm(null);
 
     const supabase = getSupabase();
     if (!supabase) return;
@@ -237,12 +277,40 @@ export default function RePrintModule() {
 
   return (
     <div className="space-y-8 pb-20">
+      {/* Print Guide for Iframe */}
+      {isIframe && (
+        <motion.div 
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-primary/10 border border-primary/20 rounded-2xl p-4 flex items-start gap-3"
+        >
+          <AlertCircle className="text-primary shrink-0" size={20} />
+          <div className="space-y-1">
+            <p className="text-sm font-bold text-primary">Lưu ý quan trọng cho việc in ấn</p>
+            <p className="text-xs text-secondary leading-relaxed">
+              Trình duyệt đang chặn cửa sổ in trong chế độ xem thử. Để in được vận đơn, vui lòng nhấn vào biểu tượng 
+              <strong className="mx-1 inline-flex items-center gap-1 bg-white px-2 py-0.5 rounded border border-surface-container"><ExternalLink size={10} /> Mở trong tab mới</strong> 
+              ở góc trên bên phải màn hình trước khi nhấn nút "In lại".
+            </p>
+          </div>
+        </motion.div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h2 className="text-3xl font-extrabold tracking-tight text-on-surface font-headline leading-none">Tra Cứu & In Lại</h2>
           <p className="text-secondary mt-2 body-md">Quản lý và in lại vận đơn trong vòng 15 ngày qua.</p>
         </div>
+        {isIframe && (
+          <button 
+            onClick={() => window.open(window.location.href, '_blank')}
+            className="flex items-center gap-2 px-6 py-3 bg-surface-container text-primary rounded-2xl font-bold text-sm hover:bg-surface-container-high transition-all shadow-sm"
+          >
+            <ExternalLink size={18} />
+            Mở trong tab mới để in
+          </button>
+        )}
       </div>
 
       {/* Search Bar */}
@@ -289,17 +357,31 @@ export default function RePrintModule() {
               <tr className="bg-surface-container-low/20">
                 <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-secondary">Ngày tải</th>
                 <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-secondary">Mã vận đơn</th>
-                <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-secondary">Sản phẩm</th>
                 <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-secondary text-right">Thao tác</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-surface-container">
               {loading ? (
                 <tr>
-                  <td colSpan={4} className="px-6 py-20 text-center">
+                  <td colSpan={3} className="px-6 py-20 text-center">
                     <div className="flex flex-col items-center gap-3 text-secondary">
                       <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
                       <p className="font-bold">Đang tải dữ liệu...</p>
+                    </div>
+                  </td>
+                </tr>
+              ) : error ? (
+                <tr>
+                  <td colSpan={3} className="px-6 py-20 text-center">
+                    <div className="flex flex-col items-center gap-4 text-error max-w-md mx-auto">
+                      <AlertCircle size={48} />
+                      <p className="text-lg font-bold">{error}</p>
+                      <button 
+                        onClick={handleRefresh}
+                        className="px-6 py-2 bg-primary text-white rounded-xl font-bold text-sm"
+                      >
+                        Thử lại
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -320,20 +402,19 @@ export default function RePrintModule() {
                     <td className="px-6 py-4">
                       <div className="flex flex-col">
                         <span className="font-mono font-bold text-[#FF4500]">{label.tracking_number}</span>
-                        {label.is_cup && (
-                          <span className="text-[10px] font-black text-primary uppercase tracking-tighter flex items-center gap-1 mt-1">
-                            <Package size={10} /> Cốc/Bình giữ nhiệt
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="text-xs font-medium text-secondary line-clamp-1 max-w-xs">
-                        {label.product_name}
                       </div>
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex justify-end gap-2">
+                        {label.image_url && (
+                          <button 
+                            onClick={() => window.open(label.image_url, '_blank')}
+                            className="p-2 text-secondary hover:bg-surface-container rounded-xl transition-all"
+                            title="Xem ảnh gốc"
+                          >
+                            <ExternalLink size={16} />
+                          </button>
+                        )}
                         <button 
                           onClick={() => handleQuickPrint(label)}
                           className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl font-bold text-xs shadow-lg hover:scale-105 active:scale-95 transition-all"
@@ -355,9 +436,12 @@ export default function RePrintModule() {
               ) : (
                 <tr>
                   <td colSpan={4} className="px-6 py-20 text-center">
-                    <div className="flex flex-col items-center gap-4 opacity-50">
+                    <div className="flex flex-col items-center gap-4 opacity-50 max-w-md mx-auto">
                       <RotateCcw size={48} className="text-secondary" />
                       <p className="text-lg font-bold text-secondary">Chưa có đơn hàng nào trong 15 ngày qua</p>
+                      <p className="text-xs text-secondary">
+                        Lưu ý: Tính năng này yêu cầu bạn đã tạo bucket <strong className="text-primary">"shipping-labels"</strong> (chế độ Public) trong Supabase Storage và chạy SQL Script trong phần Cấu hình.
+                      </p>
                     </div>
                   </td>
                 </tr>
@@ -367,19 +451,20 @@ export default function RePrintModule() {
         </div>
       </div>
       {/* Hidden Print Container */}
-      <div style={{ display: 'none' }}>
+      <div style={{ position: 'absolute', left: '-9999px', top: '-9999px' }}>
         <div ref={printRef}>
           {orderToPrint && <ThermalLabel order={orderToPrint} />}
         </div>
         <div ref={imagePrintRef}>
           {imageToPrint && (
-            <div className="w-full h-full flex items-center justify-center bg-white">
+            <div className="w-full h-full flex items-center justify-center bg-white p-4">
               <img 
                 src={imageToPrint} 
                 alt="Shipping Label" 
                 className="max-w-full max-h-full object-contain"
                 style={{ width: '100mm', height: '150mm' }}
                 referrerPolicy="no-referrer"
+                crossOrigin="anonymous"
               />
             </div>
           )}
@@ -390,6 +475,44 @@ export default function RePrintModule() {
         isOpen={showApiKeyModal} 
         onClose={() => setShowApiKeyModal(false)} 
       />
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {deleteConfirm && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-surface-container-lowest rounded-[2rem] p-8 max-w-md w-full shadow-2xl border border-white/10"
+            >
+              <div className="flex flex-col items-center text-center gap-4">
+                <div className="p-4 bg-error/10 rounded-full text-error">
+                  <AlertCircle size={32} />
+                </div>
+                <h3 className="text-xl font-black text-on-surface">Xác nhận xóa</h3>
+                <p className="text-secondary text-sm">
+                  Bạn có chắc chắn muốn xóa đơn hàng này khỏi lịch sử in? Hành động này không thể hoàn tác.
+                </p>
+                <div className="flex gap-3 w-full mt-4">
+                  <button 
+                    onClick={() => setDeleteConfirm(null)}
+                    className="flex-1 py-3 bg-surface-container rounded-xl font-bold text-sm hover:bg-surface-container-high transition-all"
+                  >
+                    Hủy bỏ
+                  </button>
+                  <button 
+                    onClick={confirmDelete}
+                    className="flex-1 py-3 bg-error text-white rounded-xl font-bold text-sm shadow-lg hover:bg-error/90 transition-all"
+                  >
+                    Xác nhận xóa
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -469,31 +592,9 @@ export function ThermalLabel({ order }: { order: any }) {
         </div>
       </div>
 
-      {/* Items Section */}
-      <div className="py-4 flex-grow overflow-hidden">
-        <div className="text-[11px] font-black uppercase mb-2 border-b border-black pb-1">
-          Nội dung hàng (Tổng SL: {totalQty})
-        </div>
-        <div className="space-y-2">
-          {items.length > 0 ? items.map((item: any, idx: number) => (
-            <div key={idx} className="flex justify-between items-start border-b border-dotted border-black/30 pb-1">
-              <div className="flex-grow pr-2">
-                <div className="text-[12px] font-black leading-tight">{item.productName}</div>
-                <div className="text-[10px] font-bold text-gray-700">SKU: {item.sku} | Phân loại: {item.variant}</div>
-              </div>
-              <div className="text-sm font-black">x{item.quantity}</div>
-            </div>
-          )) : (
-            <div className="text-[12px] font-black leading-tight">
-              {order.items || 'Không có dữ liệu sản phẩm'}
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* Footer */}
       <div className="mt-auto pt-4 border-t-2 border-black flex justify-between items-end">
-        <div className="text-[9px] italic">In bởi Lucid Inventory lúc {timeStr} {dateStr}</div>
+        <div className="text-[9px] italic">In bởi Zenith OMS lúc {timeStr} {dateStr}</div>
         <div className="text-sm font-black border-2 border-black px-3 py-1">SPX</div>
       </div>
     </div>

@@ -51,7 +51,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   
   // If it's a quota error, add a user-friendly hint
   if (errInfo.error.includes('Quota exceeded')) {
-    const quotaMsg = "Hệ thống kho TMĐT đã đạt giới hạn truy cập miễn phí trong ngày. Vui lòng quay lại sau 24h hoặc nâng cấp gói dịch vụ.";
+    const quotaMsg = "Zenith OMS đã đạt giới hạn truy cập miễn phí trong ngày. Vui lòng quay lại sau 24h hoặc nâng cấp gói dịch vụ.";
     throw new Error(JSON.stringify({ ...errInfo, userFriendlyMessage: quotaMsg }));
   }
 

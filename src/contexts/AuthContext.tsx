@@ -6,7 +6,7 @@ import {
   GoogleAuthProvider, 
   signOut 
 } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, disableNetwork } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 
 interface AuthContextType {
@@ -41,6 +41,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(user);
       if (user) {
         localStorage.setItem('user_email', user.email || '');
+        
+        // Try to load from cache first for immediate UI update
+        const cachedRole = localStorage.getItem(`auth_role_${user.uid}`);
+        const cachedStatus = localStorage.getItem(`auth_status_${user.uid}`);
+        const cachedPayment = localStorage.getItem(`auth_payment_${user.uid}`);
+        const cachedExpiry = localStorage.getItem(`auth_expiry_${user.uid}`);
+        const cachedPhone = localStorage.getItem(`auth_phone_${user.uid}`);
+
+        if (cachedRole) setRole(cachedRole as any);
+        if (cachedStatus) setStatus(cachedStatus as any);
+        if (cachedPayment) setPaymentStatus(cachedPayment as any);
+        if (cachedExpiry) setExpiryDate(cachedExpiry);
+        if (cachedPhone) setPhone(cachedPhone);
+
         // Fetch/Create profile from Firestore
         try {
           const userDocRef = doc(db, 'users', user.uid);
@@ -53,6 +67,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setPaymentStatus(data.paymentStatus || 'none');
             setExpiryDate(data.expiryDate);
             setPhone(data.phone || null);
+
+            // Update cache
+            localStorage.setItem(`auth_role_${user.uid}`, data.role);
+            localStorage.setItem(`auth_status_${user.uid}`, data.status);
+            localStorage.setItem(`auth_payment_${user.uid}`, data.paymentStatus || 'none');
+            if (data.expiryDate) localStorage.setItem(`auth_expiry_${user.uid}`, data.expiryDate);
+            if (data.phone) localStorage.setItem(`auth_phone_${user.uid}`, data.phone);
           } else {
             // Create new profile for first-time login
             const isDefaultAdmin = user.email === 'chichine153@gmail.com';
@@ -71,15 +92,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setPaymentStatus(newProfile.paymentStatus as any);
             setExpiryDate(newProfile.expiryDate);
           }
-        } catch (err) {
+        } catch (err: any) {
           console.error('Error fetching user role:', err);
-          // Fallback for default admin email
-          if (user.email === 'chichine153@gmail.com') {
-            setRole('admin');
-            setStatus('active');
-          } else {
-            setRole('user');
-            setStatus('inactive');
+          
+          // If quota exceeded, we already have cached values or we use defaults
+          const isQuotaError = err.message?.includes('Quota') || JSON.stringify(err).includes('Quota');
+          
+          if (isQuotaError) {
+            setError('Hệ thống đã đạt giới hạn truy cập miễn phí (Quota Exceeded). Đang sử dụng dữ liệu tạm thời.');
+            disableNetwork(db).catch(console.error);
+          }
+
+          if (!cachedRole) {
+            // Fallback for default admin email if no cache
+            if (user.email === 'chichine153@gmail.com') {
+              setRole('admin');
+              setStatus('active');
+              setPaymentStatus('completed');
+            } else {
+              setRole('user');
+              setStatus('inactive');
+            }
           }
         }
       } else {

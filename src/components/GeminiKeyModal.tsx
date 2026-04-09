@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Key, X, CheckCircle2, AlertTriangle, ExternalLink, Loader2, Settings } from 'lucide-react';
 import { ShopeeService } from '../services/shopeeService';
 import { GeminiService } from '../services/gemini';
+import { resetSupabaseInstance } from '../lib/supabase';
 
 interface GeminiKeyModalProps {
   isOpen: boolean;
@@ -24,6 +25,12 @@ export default function GeminiKeyModal({ isOpen, onClose }: GeminiKeyModalProps)
       return;
     }
 
+    if (!supabaseUrl.trim()) {
+      setErrorMessage('Vui lòng nhập Supabase URL');
+      setStatus('error');
+      return;
+    }
+
     if (!supabaseKey.trim()) {
       setErrorMessage('Vui lòng nhập Supabase Anon Key');
       setStatus('error');
@@ -38,9 +45,10 @@ export default function GeminiKeyModal({ isOpen, onClose }: GeminiKeyModalProps)
       const isValid = await ShopeeService.validateApiKey(apiKey.trim());
       if (isValid) {
         localStorage.setItem('gemini_api_key', apiKey.trim());
-        localStorage.setItem('supabase_url', supabaseUrl.trim() || 'https://pdqhkeewyvimykvyexgo.supabase.co');
+        localStorage.setItem('supabase_url', supabaseUrl.trim());
         localStorage.setItem('supabase_anon_key', supabaseKey.trim());
         
+        resetSupabaseInstance();
         GeminiService.resetInstance();
         setStatus('success');
         setTimeout(() => {
@@ -64,6 +72,7 @@ export default function GeminiKeyModal({ isOpen, onClose }: GeminiKeyModalProps)
     localStorage.removeItem('gemini_api_key');
     localStorage.removeItem('supabase_url');
     localStorage.removeItem('supabase_anon_key');
+    resetSupabaseInstance();
     GeminiService.resetInstance();
     setApiKey('');
     setSupabaseUrl('');
@@ -137,6 +146,21 @@ export default function GeminiKeyModal({ isOpen, onClose }: GeminiKeyModalProps)
                     placeholder="Dán mã Supabase Anon Key..."
                     className="w-full px-6 py-4 bg-surface-container-low border border-surface-container rounded-2xl focus:ring-2 focus:ring-primary/20 outline-none transition-all font-mono text-sm"
                   />
+                  {(() => {
+                    try {
+                      if (supabaseKey.startsWith('eyJ') && supabaseKey.includes('.')) {
+                        const payload = JSON.parse(atob(supabaseKey.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+                        if (payload.role === 'service_role') {
+                          return (
+                            <p className="text-[10px] text-error font-bold flex items-center gap-1">
+                              <AlertTriangle size={10} /> Cảnh báo: Bạn đang dùng Service Role Key. Vui lòng dùng Anon Key.
+                            </p>
+                          );
+                        }
+                      }
+                    } catch (e) {}
+                    return null;
+                  })()}
                 </div>
               </div>
 
@@ -179,7 +203,7 @@ export default function GeminiKeyModal({ isOpen, onClose }: GeminiKeyModalProps)
                 </button>
                 <button 
                   onClick={handleSave}
-                  disabled={isValidating || !apiKey || !supabaseKey}
+                  disabled={isValidating || !apiKey || !supabaseKey || !supabaseUrl}
                   className="flex-[2] py-4 bg-primary text-white rounded-2xl font-bold text-xs shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   {isValidating ? <Loader2 className="animate-spin" size={18} /> : <CheckCircle2 size={18} />}

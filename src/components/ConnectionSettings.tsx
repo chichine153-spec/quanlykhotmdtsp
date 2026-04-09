@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { ShopeeService } from '../services/shopeeService';
-import { getSupabase } from '../lib/supabase';
+import { getSupabase, resetSupabaseInstance } from '../lib/supabase';
 import { GeminiService } from '../services/gemini';
 import { db, auth } from '../firebase';
 import { collection, addDoc, getDocs, query, where, limit } from 'firebase/firestore';
@@ -23,7 +23,7 @@ import { collection, addDoc, getDocs, query, where, limit } from 'firebase/fires
 export default function ConnectionSettings() {
   const [config, setConfig] = React.useState({
     geminiKey: localStorage.getItem('gemini_api_key') || '',
-    supabaseUrl: localStorage.getItem('supabase_url') || 'https://pdqhkeewyvimykvyexgo.supabase.co',
+    supabaseUrl: localStorage.getItem('supabase_url') || '',
     supabaseKey: localStorage.getItem('supabase_anon_key') || ''
   });
 
@@ -51,6 +51,7 @@ export default function ConnectionSettings() {
     localStorage.setItem('gemini_api_key', config.geminiKey);
     localStorage.setItem('supabase_url', config.supabaseUrl);
     localStorage.setItem('supabase_anon_key', config.supabaseKey);
+    resetSupabaseInstance();
     alert('Đã lưu cấu hình! Hệ thống sẽ tải lại để áp dụng.');
     window.location.reload();
   };
@@ -68,7 +69,19 @@ export default function ConnectionSettings() {
       }
     } catch (err: any) {
       setStatus(prev => ({ ...prev, gemini: 'error' }));
-      setErrors(prev => ({ ...prev, gemini: err.message || 'Lỗi kết nối AI' }));
+      
+      let message = err.message || 'Lỗi kết nối AI';
+      
+      // Handle raw JSON errors from Google API
+      if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED')) {
+        message = 'Hết hạn mức sử dụng (Quota). Vui lòng thử lại sau hoặc dùng API Key khác.';
+      } else if (message.includes('403') || message.includes('PERMISSION_DENIED')) {
+        message = 'API Key không có quyền truy cập hoặc đã bị vô hiệu hóa.';
+      } else if (message.includes('400') || message.includes('INVALID_ARGUMENT')) {
+        message = 'API Key không hợp lệ. Vui lòng kiểm tra lại.';
+      }
+      
+      setErrors(prev => ({ ...prev, gemini: message }));
     }
   };
 
@@ -77,14 +90,19 @@ export default function ConnectionSettings() {
     setErrors(prev => ({ ...prev, supabase: '' }));
     
     try {
-      const supabase = getSupabase();
-      if (!supabase) throw new Error('Chưa cấu hình Supabase URL/Key');
+      // Use current input values for testing, not just what's in localStorage
+      const supabase = getSupabase(config.supabaseUrl, config.supabaseKey);
+      if (!supabase) throw new Error('Vui lòng nhập đầy đủ URL và Key');
       
-      const { data, error } = await supabase.from('print_history').select('id').limit(1);
+      // Check if table exists and has the required user_id column
+      const { error } = await supabase.from('print_history').select('id, user_id').limit(1);
       
       if (error) {
         if (error.message.includes('relation "print_history" does not exist')) {
           throw new Error('Kết nối thành công nhưng chưa có bảng print_history');
+        }
+        if (error.message.includes('column "user_id" does not exist')) {
+          throw new Error('Bảng print_history bị thiếu cột user_id. Vui lòng chạy lại SQL Script.');
         }
         throw new Error(error.message);
       }
@@ -101,8 +119,9 @@ export default function ConnectionSettings() {
     setStatus(prev => ({ ...prev, tables: 'checking' }));
     
     try {
-      const supabase = getSupabase();
-      if (!supabase) throw new Error('Chưa kết nối Supabase');
+      // Use current input values
+      const supabase = getSupabase(config.supabaseUrl, config.supabaseKey);
+      if (!supabase) throw new Error('Chưa cấu hình Supabase');
 
       // Check if tables exist
       const { error: checkError } = await supabase.from('print_history').select('id').limit(1);
@@ -124,8 +143,9 @@ export default function ConnectionSettings() {
   const loadSampleData = async () => {
     setIsLoadingSample(true);
     try {
-      const supabase = getSupabase();
-      if (!supabase) throw new Error('Chưa kết nối Supabase');
+      // Use current input values
+      const supabase = getSupabase(config.supabaseUrl, config.supabaseKey);
+      if (!supabase) throw new Error('Chưa cấu hình Supabase');
 
       // 1. Add sample to Firestore inventory
       const inventoryRef = collection(db, 'inventory');
@@ -162,7 +182,11 @@ export default function ConnectionSettings() {
   };
 
   const sqlScript = `
--- 1. Tạo bảng print_history
+-- ⚠️ LƯU Ý: Nếu bạn đã có bảng print_history nhưng bị lỗi "column user_id does not exist", 
+-- hãy bỏ dấu gạch chéo ở dòng DROP TABLE bên dưới để xóa và tạo lại bảng mới.
+
+-- DROP TABLE IF EXISTS public.print_history;
+
 CREATE TABLE IF NOT EXISTS public.print_history (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -174,24 +198,20 @@ CREATE TABLE IF NOT EXISTS public.print_history (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 2. Bật Row Level Security (RLS)
+-- Bật Row Level Security (RLS)
 ALTER TABLE public.print_history ENABLE ROW LEVEL SECURITY;
 
--- 3. Tạo chính sách bảo mật (Chỉ người dùng xem được dữ liệu của mình)
-CREATE POLICY "Users can manage their own print history" 
-ON public.print_history 
-FOR ALL 
-USING (auth.uid()::text = user_id)
-WITH CHECK (auth.uid()::text = user_id);
+-- Tạo chính sách bảo mật (Cho phép Anon truy cập vì chúng ta dùng Firebase Auth)
+-- Nếu đã có policy tên này, bạn có thể xóa nó trước khi chạy lại.
+-- DROP POLICY IF EXISTS "Allow anon access for all" ON public.print_history;
 
--- 4. Cho phép truy cập ẩn danh (nếu dùng Anon Key)
-CREATE POLICY "Allow anon access for demo" 
+CREATE POLICY "Allow anon access for all" 
 ON public.print_history 
 FOR ALL 
 TO anon
 USING (true)
 WITH CHECK (true);
-  `.trim();
+`.trim();
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 pb-20">
@@ -280,6 +300,23 @@ WITH CHECK (true);
                 placeholder="Dán Anon Key..."
                 className="w-full px-4 py-3 bg-surface-container-low rounded-xl text-sm outline-none border-2 border-transparent focus:border-primary transition-all"
               />
+              {(() => {
+                try {
+                  if (config.supabaseKey.startsWith('eyJ') && config.supabaseKey.includes('.')) {
+                    const payload = JSON.parse(atob(config.supabaseKey.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+                    if (payload.role === 'service_role') {
+                      return (
+                        <p className="text-[10px] text-error font-bold flex items-center gap-1">
+                          <AlertTriangle size={10} /> Cảnh báo: Bạn đang dùng Service Role Key. Vui lòng dùng Anon Key để bảo mật.
+                        </p>
+                      );
+                    }
+                  }
+                } catch (e) {
+                  // Ignore decoding errors
+                }
+                return null;
+              })()}
             </div>
 
             <div className="flex items-center justify-between pt-2">
@@ -380,9 +417,10 @@ WITH CHECK (true);
           {[
             'Truy cập Google AI Studio để lấy Gemini API Key miễn phí.',
             'Tạo một dự án Supabase mới để lưu trữ ảnh vận đơn và lịch sử in.',
+            'Vào mục Storage > Create New Bucket: Đặt tên là "shipping-labels" và bật chế độ "Public".',
             'Copy URL và Anon Key từ mục Project Settings > API trong Supabase.',
             'Nhấn "Kiểm tra kết nối" để đảm bảo mọi thứ đã sẵn sàng.',
-            'Nếu bảng chưa tồn tại, hãy dùng SQL Script để khởi tạo tự động.'
+            'Dùng SQL Script bên dưới để tạo bảng print_history trong SQL Editor.'
           ].map((step, i) => (
             <li key={i} className="flex gap-3 text-xs text-secondary leading-relaxed">
               <span className="font-black text-primary">0{i+1}.</span>

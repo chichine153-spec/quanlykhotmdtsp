@@ -293,111 +293,140 @@ export class PDFService {
     }
 
     try {
+      // 0. Pre-check: Verify if print_history table is accessible
+      const { error: tableCheckError } = await supabase.from('print_history').select('id').limit(1);
+      if (tableCheckError) {
+        console.error('[PDFService] print_history table is not accessible. Did you run the SQL script?', tableCheckError);
+        // We continue anyway, maybe it's just empty
+      }
+
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
       
       console.log(`[PDFService] Generating images for ${pdf.numPages} pages...`);
 
       for (let i = 1; i <= pdf.numPages; i++) {
-        console.log(`[PDFService] Processing page ${i}...`);
-        const page = await pdf.getPage(i);
-        const viewport = page.getViewport({ scale: 2.0 });
-        
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        if (!context) {
-          console.error(`[PDFService] Could not get canvas context for page ${i}`);
-          continue;
-        }
+        try {
+          console.log(`[PDFService] Processing page ${i}...`);
+          const page = await pdf.getPage(i);
+          const viewport = page.getViewport({ scale: 2.0 });
+          
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          if (!context) {
+            console.error(`[PDFService] Could not get canvas context for page ${i}`);
+            continue;
+          }
 
-        canvas.height = viewport.height;
-        canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          canvas.width = viewport.width;
 
-        await page.render({ 
-          canvasContext: context, 
-          viewport,
-          // @ts-ignore
-          canvas: canvas 
-        }).promise;
-        
-        const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
-        if (!blob) {
-          console.error(`[PDFService] Could not generate blob for page ${i}`);
-          continue;
-        }
+          await page.render({ 
+            canvasContext: context, 
+            viewport,
+            // @ts-ignore
+            canvas: canvas 
+          }).promise;
+          
+          const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
+          if (!blob) {
+            console.error(`[PDFService] Could not generate blob for page ${i}`);
+            continue;
+          }
 
-        const timestamp = Date.now();
-        const fileName = `${userId}/${timestamp}_page_${i}.jpg`;
-        
-        console.log(`[PDFService] Uploading page ${i} to Supabase Storage: ${fileName}...`);
-        // 1. Upload to Storage
-        const { data: uploadData, error: uploadError } = await supabase.storage
-          .from('shipping-labels')
-          .upload(fileName, blob, {
-            contentType: 'image/jpeg',
-            upsert: true
-          });
-
-        if (uploadError) {
-          console.error(`[PDFService] Storage upload error (page ${i}):`, uploadError);
-          // If bucket doesn't exist, this will fail. 
-          // We should inform the user if possible, but for now just log.
-          continue;
-        }
-
-        const { data: { publicUrl } } = supabase.storage
-          .from('shipping-labels')
-          .getPublicUrl(fileName);
-
-        console.log(`[PDFService] Page ${i} uploaded. Public URL: ${publicUrl}`);
-
-        // 2. Identify which order this page belongs to
-        const textContent = await page.getTextContent();
-        const pageText = textContent.items.map((it: any) => it.str).join('').replace(/\s+/g, '');
-        
-        console.log(`[PDFService] Page ${i} text length: ${pageText.length}`);
-
-        const matchingOrder = orders.find(o => {
-          const normalizedTracking = o.trackingCode.replace(/\s+/g, '');
-          const isMatch = pageText.includes(normalizedTracking);
-          if (isMatch) console.log(`[PDFService] Found match for page ${i}: ${o.trackingCode}`);
-          return isMatch;
-        });
-        
-        if (matchingOrder) {
-          const productNames = matchingOrder.items.map(item => 
-            `${item.sku}${item.color ? ` (${item.color})` : ''}`
-          ).join(', ');
-
-          // Manually detect if it's a cup for the tag
-          const isCup = productNames.toLowerCase().includes('cốc') || 
-                        productNames.toLowerCase().includes('cup') ||
-                        productNames.toLowerCase().includes('bình') ||
-                        matchingOrder.items.some(item => item.sku?.startsWith('338') || item.sku?.startsWith('330'));
-
-          const totalQuantity = matchingOrder.items.reduce((sum, item) => sum + item.quantity, 0);
-
-          console.log(`[PDFService] Saving metadata to print_history for ${matchingOrder.trackingCode}...`);
-          // 3. Save to print_history table
-          const { error: dbError } = await supabase
-            .from('print_history')
-            .insert({
-              user_id: userId,
-              tracking_number: matchingOrder.trackingCode,
-              product_name: productNames,
-              quantity: totalQuantity,
-              image_url: publicUrl,
-              is_cup: isCup,
-              created_at: new Date().toISOString()
+          const timestamp = Date.now();
+          const fileName = `${userId}/${timestamp}_page_${i}.jpg`;
+          
+          console.log(`[PDFService] Uploading page ${i} to Supabase Storage: ${fileName}...`);
+          // 1. Upload to Storage
+          const { data: uploadData, error: uploadError } = await supabase.storage
+            .from('shipping-labels')
+            .upload(fileName, blob, {
+              contentType: 'image/jpeg',
+              upsert: true
             });
 
-          if (dbError) {
-            console.error(`[PDFService] DB insert error (page ${i}):`, dbError);
-          } else {
-            console.log(`[PDFService] Successfully saved ${matchingOrder.trackingCode} to print_history.`);
+          if (uploadError) {
+            console.error(`[PDFService] Storage upload error (page ${i}):`, uploadError);
+            if (uploadError.message.includes('Bucket not found')) {
+              console.error('[PDFService] CRITICAL: Bucket "shipping-labels" not found. Please create it in Supabase Storage and set to PUBLIC.');
+            }
+            continue;
           }
-        } else {
-          console.warn(`[PDFService] No matching order found for page ${i} text.`);
+
+          const { data } = supabase.storage
+            .from('shipping-labels')
+            .getPublicUrl(fileName);
+          
+          const publicUrl = data?.publicUrl || '';
+
+          console.log(`[PDFService] Page ${i} uploaded. Public URL: ${publicUrl}`);
+
+          // 2. Identify which order this page belongs to
+          const textContent = await page.getTextContent();
+          const rawPageText = textContent.items.map((it: any) => it.str).join(' ');
+          const normalizedPageText = rawPageText.replace(/\s+/g, '').toUpperCase();
+          
+          console.log(`[PDFService] Page ${i} normalized text length: ${normalizedPageText.length}`);
+
+          const matchingOrder = orders.find(o => {
+            const normalizedTracking = o.trackingCode.replace(/\s+/g, '').toUpperCase();
+            // Try exact match first
+            if (normalizedPageText.includes(normalizedTracking)) {
+              console.log(`[PDFService] Found exact match for page ${i}: ${o.trackingCode}`);
+              return true;
+            }
+            
+            // Try partial match (last 6 digits of tracking code)
+            const partialTracking = normalizedTracking.slice(-6);
+            if (partialTracking.length >= 6 && normalizedPageText.includes(partialTracking)) {
+              console.log(`[PDFService] Found partial match for page ${i}: ${o.trackingCode} (via ${partialTracking})`);
+              return true;
+            }
+            
+            return false;
+          });
+          
+          if (matchingOrder) {
+            const productNames = matchingOrder.items.map(item => 
+              `${item.sku}${item.color ? ` (${item.color})` : ''}`
+            ).join(', ');
+
+            // Manually detect if it's a cup for the tag
+            const isCup = productNames.toLowerCase().includes('cốc') || 
+                          productNames.toLowerCase().includes('cup') ||
+                          productNames.toLowerCase().includes('bình') ||
+                          matchingOrder.items.some(item => item.sku?.startsWith('338') || item.sku?.startsWith('330'));
+
+            const totalQuantity = matchingOrder.items.reduce((sum, item) => sum + item.quantity, 0);
+
+            console.log(`[PDFService] Saving metadata to print_history for ${matchingOrder.trackingCode}...`);
+            // 3. Save to print_history table
+            const { error: dbError } = await supabase
+              .from('print_history')
+              .insert({
+                user_id: userId,
+                tracking_number: matchingOrder.trackingCode,
+                product_name: productNames,
+                quantity: totalQuantity,
+                image_url: publicUrl,
+                is_cup: isCup,
+                created_at: new Date().toISOString()
+              });
+
+            if (dbError) {
+              console.error(`[PDFService] DB insert error (page ${i}):`, dbError);
+              if (dbError.message?.includes('Forbidden use of secret API key')) {
+                console.error('[PDFService] CRITICAL: You are using a Service Role Key in the browser. Please switch to the Anon Key in Settings.');
+              }
+            } else {
+              console.log(`[PDFService] Successfully saved ${matchingOrder.trackingCode} to print_history.`);
+            }
+          } else {
+            console.warn(`[PDFService] No matching order found for page ${i}. Page text snippet: ${normalizedPageText.substring(0, 100)}...`);
+          }
+        } catch (pageErr) {
+          console.error(`[PDFService] Error processing page ${i}:`, pageErr);
         }
       }
       console.log('[PDFService] Image generation and upload completed.');
@@ -884,6 +913,9 @@ export class PDFService {
 
           if (supabaseError) {
             console.error('[PDFService] Supabase print_history insertion error:', supabaseError);
+            if (supabaseError.message?.includes('Forbidden use of secret API key')) {
+              console.error('[PDFService] CRITICAL: You are using a Service Role Key in the browser. Please switch to the Anon Key in Settings.');
+            }
           }
         }
       } catch (err) {

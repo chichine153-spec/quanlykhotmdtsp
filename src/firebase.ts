@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { initializeFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
 
@@ -8,9 +8,14 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
 // Use the database ID from config, but fallback to default if needed
-// Note: In many cases, (default) is the correct database ID
 const initialDbId = firebaseConfig.firestoreDatabaseId || '(default)';
-export const db = getFirestore(app, initialDbId);
+
+// Initialize Firestore with long-polling to prevent "INTERNAL ASSERTION FAILED" errors
+// and improve stability when hitting quota limits or in restricted network environments.
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+}, initialDbId);
+
 export const storage = getStorage(app);
 
 // Test connection to Firestore

@@ -136,8 +136,10 @@ export default function Inventory() {
       })) as InventoryLog[];
       setInventoryLogs(logs);
     }, (error) => {
-      console.error('Inventory logs error:', error);
-      // Don't throw here to avoid crashing the app, just log it
+      const isQuotaError = error.message?.includes('Quota') || JSON.stringify(error).includes('Quota');
+      if (!isQuotaError) {
+        console.error('Inventory logs error:', error);
+      }
       // The global quotaExceeded in DataContext will handle the UI banner
     });
 
@@ -151,7 +153,7 @@ export default function Inventory() {
           <LogIn size={40} />
         </div>
         <div className="max-w-md">
-          <h2 className="text-2xl font-bold text-on-surface mb-2">Vui lòng đăng nhập</h2>
+          <h2 className="text-2xl font-black text-on-surface mb-2 uppercase tracking-tight font-headline">Zenith OMS - Vui lòng đăng nhập</h2>
           <p className="text-secondary mb-8">Bạn cần đăng nhập để xem và quản lý danh sách sản phẩm trong kho.</p>
           <button 
             onClick={login}

@@ -53,6 +53,11 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
     const q = query(collection(db, 'users'), where('paymentStatus', '==', 'pending'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setPendingPayments(snapshot.size);
+    }, (error) => {
+      const isQuotaError = error.message?.includes('Quota') || JSON.stringify(error).includes('Quota');
+      if (!isQuotaError) {
+        console.error('Pending payments listener error:', error);
+      }
     });
     return unsubscribe;
   }, [role]);
@@ -121,12 +126,22 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
             exit={{ height: 0, opacity: 0 }}
             className="fixed top-0 left-0 w-full z-[100] bg-red-600 text-white px-4 py-3 flex items-center justify-between shadow-2xl"
           >
-            <div className="flex items-center gap-3">
-              <AlertTriangle size={20} className="animate-pulse" />
-              <div className="flex flex-col">
-                <span className="text-sm font-black uppercase tracking-widest">Hết hạn mức truy cập (Quota Exceeded)</span>
-                <span className="text-[10px] opacity-80 font-medium">HỆ THỐNG KHO TMĐT đã đạt giới hạn truy cập miễn phí trong ngày. Vui lòng quay lại sau 24h hoặc nâng cấp gói dịch vụ.</span>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3">
+                <AlertTriangle size={20} className="animate-pulse" />
+                <div className="flex flex-col">
+                  <span className="text-sm font-black uppercase tracking-widest">Hết hạn mức truy cập (Quota Exceeded)</span>
+                  <span className="text-[10px] opacity-80 font-medium">Hệ thống đã đạt giới hạn truy cập miễn phí trong ngày. Vui lòng quay lại sau 24h hoặc <b>Cấu hình kết nối</b> với Supabase riêng của bạn để không bị giới hạn.</span>
+                </div>
               </div>
+              <button 
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className="px-3 py-1 bg-white/20 hover:bg-white/30 rounded-lg text-[10px] font-black uppercase transition-all flex items-center gap-1"
+              >
+                {isRefreshing ? <RefreshCw size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                Thử lại
+              </button>
             </div>
             <button 
               onClick={() => setQuotaExceeded(false)}
@@ -151,7 +166,7 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
             <div className="w-8 h-8 rounded-lg bg-primary-container flex items-center justify-center text-white">
               <Package size={18} />
             </div>
-            <span className="text-lg font-black tracking-tighter text-primary font-headline">KHO TMĐT</span>
+            <span className="text-lg font-black tracking-tighter text-primary font-headline">Zenith OMS</span>
           </div>
         </div>
         
@@ -252,8 +267,8 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
               <Package size={24} />
             </div>
             <div>
-              <p className="text-xl font-black text-primary font-headline uppercase tracking-tight">Hệ thống kho TMĐT</p>
-              <p className="text-[10px] uppercase tracking-widest text-secondary font-black">Hệ thống quản lý kho thương mại điện tử</p>
+              <p className="text-xl font-black text-primary font-headline uppercase tracking-tight">Zenith OMS</p>
+              <p className="text-[10px] uppercase tracking-widest text-secondary font-black">Hệ thống quản lý kho chuyên nghiệp</p>
             </div>
           </div>
         </div>
@@ -322,7 +337,7 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
               className="fixed left-0 top-0 bottom-0 w-72 bg-white z-[80] lg:hidden p-4 flex flex-col gap-6"
             >
               <div className="flex justify-between items-center px-2">
-                <span className="text-lg font-black text-primary">KHO TMĐT</span>
+                <span className="text-lg font-black text-primary">Zenith OMS</span>
                 <button onClick={() => setIsSidebarOpen(false)} className="p-2">
                   <X size={20} />
                 </button>
@@ -378,7 +393,7 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
 
       {/* Footer */}
       <footer className="hidden lg:flex flex-col items-center gap-2 mt-auto w-full py-8 lg:ml-40">
-        <p className="text-xs tracking-tighter opacity-50 text-secondary">© 2024 Hệ thống quản lý kho TMĐT</p>
+        <p className="text-xs tracking-tighter opacity-50 text-secondary">© 2024 Zenith OMS - Hệ thống quản lý kho chuyên nghiệp</p>
         <div className="flex gap-6">
           <a href="#" className="text-xs text-secondary hover:opacity-100 transition-opacity">Support</a>
           <a href="#" className="text-xs text-secondary hover:opacity-100 transition-opacity">Privacy</a>

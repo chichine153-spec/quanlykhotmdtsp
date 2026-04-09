@@ -79,7 +79,7 @@ export default function Dashboard() {
           <LogIn size={40} />
         </div>
         <div className="max-w-md">
-          <h2 className="text-2xl font-black text-on-surface mb-2 uppercase tracking-tight font-headline">Hệ thống kho TMĐT - Vui lòng đăng nhập</h2>
+          <h2 className="text-2xl font-black text-on-surface mb-2 uppercase tracking-tight font-headline">Zenith OMS - Vui lòng đăng nhập</h2>
           <p className="text-secondary mb-8">Bạn cần đăng nhập bằng tài khoản quản trị để xem báo cáo và quản lý kho hàng.</p>
           <button 
             onClick={login}
@@ -135,7 +135,7 @@ export default function Dashboard() {
       <header className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h2 className="text-3xl font-black tracking-tight text-on-surface font-headline leading-none uppercase">CHÀO MỪNG TRỞ LẠI, {role === 'admin' ? 'ADMIN' : user?.displayName?.toUpperCase()}</h2>
-          <p className="text-secondary mt-2 body-md">Hệ thống quản lý kho TMĐT - Tối ưu hóa vận hành của bạn.</p>
+          <p className="text-secondary mt-2 body-md">Zenith OMS - Hệ thống quản lý kho chuyên nghiệp.</p>
         </div>
         <div className="flex gap-2">
           <button className="px-6 py-2 bg-gradient-to-br from-primary to-primary-container text-white rounded-full font-medium text-sm transition-all hover:shadow-lg active:scale-95 flex items-center gap-2">

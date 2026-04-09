@@ -167,7 +167,7 @@ export default function PDFUpload() {
           <LogIn size={40} />
         </div>
         <div className="max-w-md">
-          <h2 className="text-2xl font-black text-on-surface mb-2 uppercase tracking-tight font-headline">Hệ thống kho TMĐT - Vui lòng đăng nhập</h2>
+          <h2 className="text-2xl font-black text-on-surface mb-2 uppercase tracking-tight font-headline">Zenith OMS - Vui lòng đăng nhập</h2>
           <p className="text-secondary mb-8">Bạn cần đăng nhập để thực hiện bóc tách vận đơn và cập nhật kho hàng.</p>
           <button 
             onClick={login}
@@ -294,7 +294,7 @@ export default function PDFUpload() {
       console.error('Processing Error:', err);
       let errMsg = 'Đã xảy ra lỗi khi xử lý file.';
       if (err.message?.includes('Quota limit exceeded') || JSON.stringify(err).includes('Quota limit exceeded')) {
-        errMsg = 'Hệ thống kho TMĐT đã đạt giới hạn truy cập miễn phí trong ngày (Quota). Vui lòng quay lại sau 24h hoặc nâng cấp gói dịch vụ.';
+        errMsg = 'Zenith OMS đã đạt giới hạn truy cập miễn phí trong ngày (Quota). Vui lòng quay lại sau 24h hoặc nâng cấp gói dịch vụ.';
       } else {
         try {
           const parsed = JSON.parse(err.message);
@@ -431,7 +431,7 @@ export default function PDFUpload() {
       // This allows the "Reprint" section to update in real-time as pages are processed
       if (currentFile && user) {
         console.log('[PDFUpload] Triggering automated image generation for reprint (Real-time mode)...');
-        PDFService.generateAndUploadImages(currentFile, ordersToProcess, user.uid)
+        PDFService.generateAndUploadImages(currentFile, extractedOrdersForReview, user.uid)
           .catch(err => console.error('[PDFUpload] Image generation failed:', err));
       }
 
