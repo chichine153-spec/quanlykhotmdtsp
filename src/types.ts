@@ -66,6 +66,19 @@ export interface Order {
   packagingFee?: number;
 }
 
+export type TrackingStatus = 'delivered' | 'shipping' | 'returned' | 'problematic' | 'pending';
+
+export interface ProblematicOrder {
+  id: string;
+  trackingCode: string;
+  reason: string;
+  status: string;
+  updatedAt: string;
+  userId: string;
+  recipient?: string;
+  phone?: string;
+}
+
 export interface ProfitConfig {
   platformFeePercent: number; // Default for others
   platformFeeCup: number;

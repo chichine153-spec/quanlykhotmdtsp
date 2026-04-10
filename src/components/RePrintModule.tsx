@@ -305,10 +305,10 @@ export default function RePrintModule() {
         {isIframe && (
           <button 
             onClick={() => window.open(window.location.href, '_blank')}
-            className="flex items-center gap-2 px-6 py-3 bg-surface-container text-primary rounded-2xl font-bold text-sm hover:bg-surface-container-high transition-all shadow-sm"
+            className="flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-2xl font-bold text-sm shadow-lg hover:scale-105 transition-all animate-pulse"
           >
-            <ExternalLink size={18} />
-            Mở trong tab mới để in
+            <Printer size={18} />
+            In lại (Mở trang mới)
           </button>
         )}
       </div>
@@ -406,17 +406,28 @@ export default function RePrintModule() {
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex justify-end gap-2">
-                        {label.image_url && (
-                          <button 
-                            onClick={() => window.open(label.image_url, '_blank')}
-                            className="p-2 text-secondary hover:bg-surface-container rounded-xl transition-all"
-                            title="Xem ảnh gốc"
-                          >
-                            <ExternalLink size={16} />
-                          </button>
-                        )}
                         <button 
-                          onClick={() => handleQuickPrint(label)}
+                          onClick={() => {
+                            if (label.image_url) {
+                              // Clean up URL in case it's corrupted with JSON fragments
+                              let cleanUrl = label.image_url;
+                              if (typeof cleanUrl === 'string') {
+                                cleanUrl = cleanUrl.split('?')[0].split('"')[0].split('}')[0].trim();
+                                
+                                // Ensure it's an absolute URL
+                                if (cleanUrl.startsWith('/') && !cleanUrl.startsWith('//')) {
+                                  const supabaseUrl = localStorage.getItem('supabase_url');
+                                  if (supabaseUrl) {
+                                    const baseUrl = supabaseUrl.endsWith('/') ? supabaseUrl.slice(0, -1) : supabaseUrl;
+                                    cleanUrl = `${baseUrl}/storage/v1/object/public/shipping-labels/${cleanUrl.startsWith('/') ? cleanUrl.slice(1) : cleanUrl}`;
+                                  }
+                                }
+                              }
+                              window.open(cleanUrl, '_blank');
+                            } else {
+                              handleQuickPrint(label);
+                            }
+                          }}
                           className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl font-bold text-xs shadow-lg hover:scale-105 active:scale-95 transition-all"
                         >
                           <Printer size={14} />

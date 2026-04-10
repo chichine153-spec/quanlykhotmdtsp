@@ -33,6 +33,8 @@ import { X, Save, Trash2, Camera, Upload } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { handleFirestoreError, OperationType } from './lib/firestore-errors';
 
+import { getSupabase } from './lib/supabase';
+
 export default function Inventory() {
   const { user, role, login } = useAuth();
   const { inventory: products, config: globalConfig, loading, refreshData } = useData();
@@ -165,6 +167,40 @@ export default function Inventory() {
       </div>
     );
   }
+
+  const [isSyncing, setIsSyncing] = React.useState(false);
+
+  const syncToSupabase = async () => {
+    if (!user || products.length === 0) return;
+    const supabase = getSupabase();
+    if (!supabase) {
+      addToast('Supabase chưa được cấu hình.', 'error');
+      return;
+    }
+
+    setIsSyncing(true);
+    try {
+      const supabaseData = products.map(p => ({
+        user_id: user.uid,
+        product_name: p.variant ? `${p.name} (${p.variant})` : p.name,
+        sku: p.sku,
+        stock_quantity: p.stock,
+        updated_at: new Date().toISOString()
+      }));
+
+      const { error } = await supabase
+        .from('inventory')
+        .upsert(supabaseData, { onConflict: 'user_id,product_name' });
+
+      if (error) throw error;
+      addToast('Đã đồng bộ dữ liệu kho sang Supabase thành công!', 'success');
+    } catch (error: any) {
+      console.error('Sync Error:', error);
+      addToast(`Lỗi đồng bộ: ${error.message}`, 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -665,6 +701,15 @@ export default function Inventory() {
             className="hidden" 
             accept=".csv, .xlsx, .xls"
           />
+          <button 
+            onClick={syncToSupabase}
+            disabled={isSyncing || loading}
+            className="px-4 py-3 rounded-xl border border-primary/20 text-primary font-bold flex items-center gap-2 hover:bg-primary/5 transition-all disabled:opacity-50"
+            title="Đồng bộ dữ liệu sang Supabase để chạy dự báo"
+          >
+            {isSyncing ? <Loader2 className="animate-spin" size={18} /> : <TrendingUp size={18} />}
+            <span>Đồng bộ Dự báo</span>
+          </button>
           <button 
             onClick={seedData}
             disabled={isSeeding}

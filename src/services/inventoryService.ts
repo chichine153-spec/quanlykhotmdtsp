@@ -36,6 +36,13 @@ export interface OrderRecord {
   productName?: string;
   sku?: string;
   quantity?: number;
+  trackingStatus?: string;
+  lastChecked?: string;
+  deliveryHistory?: {
+    status: string;
+    time: string;
+    location?: string;
+  }[];
 }
 
 export class InventoryService {

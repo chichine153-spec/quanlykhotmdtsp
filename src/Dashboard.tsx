@@ -23,14 +23,19 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from './contexts/AuthContext';
 import { useData } from './contexts/DataContext';
 import { InventoryService, OrderRecord } from './services/inventoryService';
-import { Product } from './types';
+import { TrackingService } from './services/trackingService';
+import LowStockPanel from './components/LowStockPanel';
 
 export default function Dashboard() {
   const { user, login, error, clearError, role, expiryDate, isSubscriptionValid } = useAuth();
-  const { inventory, orders, loading: dataLoading } = useData();
+  const { inventory, orders, problematicOrders, loading: dataLoading } = useData();
   const [loading, setLoading] = React.useState(false);
+  const [isTracking, setIsTracking] = React.useState(false);
+  const [selectedOrder, setSelectedOrder] = React.useState<OrderRecord | null>(null);
+  const [showTrackingModal, setShowTrackingModal] = React.useState(false);
   const [selectedDate, setSelectedDate] = React.useState(new Date().toISOString().split('T')[0]);
   const [showOrderDetails, setShowOrderDetails] = React.useState(false);
+  const [showProblematicModal, setShowProblematicModal] = React.useState(false);
   const [showTopSellersModal, setShowTopSellersModal] = React.useState(false);
   const [topSellersTimeframe, setTopSellersTimeframe] = React.useState<'today' | '7days' | '30days'>('today');
 
@@ -49,6 +54,27 @@ export default function Dashboard() {
     setLoading(dataLoading);
   }, [dataLoading]);
 
+  // Auto-track orders periodically
+  React.useEffect(() => {
+    if (!user || isTracking) return;
+
+    const runTracking = async () => {
+      setIsTracking(true);
+      try {
+        await TrackingService.processTrackingBatch(user.uid);
+      } catch (err) {
+        console.error('Auto-tracking error:', err);
+      } finally {
+        setIsTracking(false);
+      }
+    };
+
+    // Run once on mount, then every 30 minutes
+    runTracking();
+    const interval = setInterval(runTracking, 30 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [user]);
+
   // Derived stats
   const dailyOrders = React.useMemo(() => {
     return orders.filter(o => o.processedAt.split('T')[0] === selectedDate);
@@ -65,6 +91,10 @@ export default function Dashboard() {
   const totalItemsToday = React.useMemo(() => {
     return (Object.values(salesByCategory) as number[]).reduce((a, b) => a + b, 0);
   }, [salesByCategory]);
+
+  const deliveredToday = React.useMemo(() => {
+    return dailyOrders.filter(o => o.trackingStatus === 'delivered').length;
+  }, [dailyOrders]);
 
   const topSellers = React.useMemo(() => {
     return InventoryService.getTopSellers(orders, topSellersTimeframe);
@@ -172,17 +202,41 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Problematic Orders Alert */}
+      {problematicOrders.length > 0 && (
+        <motion.div 
+          variants={item}
+          className="p-6 bg-error/10 border border-error/20 rounded-[32px] flex flex-col md:flex-row items-center justify-between gap-4 shadow-sm"
+        >
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-error text-white flex items-center justify-center shadow-lg animate-pulse">
+              <AlertTriangle size={24} />
+            </div>
+            <div>
+              <h4 className="text-lg font-black text-error uppercase tracking-tight">Cảnh báo: Đơn giao vấn đề</h4>
+              <p className="text-error/70 text-sm font-medium">Có {problematicOrders.length} đơn hàng đang gặp sự cố vận chuyển (Sai địa chỉ, Nhận lỗi, Trả hàng...)</p>
+            </div>
+          </div>
+          <button 
+            className="px-6 py-2 bg-error text-white rounded-full font-bold text-xs hover:scale-105 transition-all"
+            onClick={() => setShowProblematicModal(true)}
+          >
+            Xử lý ngay
+          </button>
+        </motion.div>
+      )}
+
       {/* Bento Grid Dashboard */}
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
         {/* Main Summary Stats - Clickable for details */}
         <motion.div 
           variants={item}
           onClick={() => setShowOrderDetails(true)}
-          className="md:col-span-2 lg:col-span-2 glass-morphism rounded-3xl p-8 shadow-sm border border-white/10 flex flex-col justify-between cursor-pointer hover:bg-white/40 transition-all group"
+          className="md:col-span-2 lg:col-span-1 glass-morphism rounded-3xl p-8 shadow-sm border border-white/10 flex flex-col justify-between cursor-pointer hover:bg-white/40 transition-all group"
         >
           <div>
             <div className="flex justify-between items-start mb-4">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-primary">Tổng đơn hàng đã xử lý</span>
+              <span className="text-[10px] font-bold uppercase tracking-widest text-primary">Tổng đơn xử lý</span>
               <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-white transition-all">
                 <ChevronRight size={16} />
               </div>
@@ -192,42 +246,32 @@ export default function Dashboard() {
             ) : (
               <h3 className="text-5xl font-black text-on-surface font-headline">{dailyOrders.length.toLocaleString()}</h3>
             )}
-            <p className="text-secondary mt-2 font-medium">Đơn hàng bóc tách ngày {new Date(selectedDate).toLocaleDateString('vi-VN')}</p>
+            <p className="text-secondary mt-2 font-medium">Ngày {new Date(selectedDate).toLocaleDateString('vi-VN')}</p>
           </div>
           <div className="mt-8 flex items-center gap-2 text-tertiary font-bold text-sm">
             <TrendingUp size={18} />
-            <span>Xem chi tiết danh sách đơn hàng</span>
+            <span>Chi tiết đơn hàng</span>
           </div>
         </motion.div>
 
-        {/* Low Stock Alert - Connected to Inventory */}
+        {/* Delivered Stats */}
         <motion.div 
           variants={item}
-          className="glass-morphism rounded-3xl p-8 bg-primary-fixed/30 border border-primary-fixed flex flex-col justify-between"
+          className="glass-morphism rounded-3xl p-8 shadow-sm border border-white/10 flex flex-col justify-between"
         >
-          <div className="flex justify-between items-start">
-            <div className="w-12 h-12 rounded-2xl bg-primary flex items-center justify-center text-white">
-              <AlertTriangle size={24} />
-            </div>
-            <span className="px-3 py-1 bg-white/80 rounded-full text-[10px] font-bold text-primary">Cảnh báo</span>
-          </div>
           <div>
-            <h3 className="text-3xl font-black text-on-primary-fixed font-headline mt-6">{lowStockItems.length}</h3>
-            <p className="text-on-primary-fixed-variant font-semibold">Sản phẩm sắp hết hàng (&lt;5)</p>
-            
-            {lowStockItems.length > 0 && (
-              <div className="mt-4 space-y-2 max-h-24 overflow-y-auto pr-2 custom-scrollbar">
-                {lowStockItems.slice(0, 3).map(p => (
-                  <div key={p.id} className="flex items-center justify-between text-[10px] font-bold text-primary bg-white/40 px-2 py-1 rounded-lg">
-                    <span className="truncate max-w-[100px]">{p.name}</span>
-                    <span>{p.stock} cái</span>
-                  </div>
-                ))}
-                {lowStockItems.length > 3 && (
-                  <p className="text-[8px] text-center italic opacity-70">Và {lowStockItems.length - 3} sản phẩm khác...</p>
-                )}
+            <div className="flex justify-between items-start mb-4">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-success">Giao thành công</span>
+              <div className="w-8 h-8 rounded-full bg-success/10 flex items-center justify-center text-success">
+                <CheckCircle2 size={16} />
               </div>
-            )}
+            </div>
+            <h3 className="text-5xl font-black text-on-surface font-headline">{deliveredToday}</h3>
+            <p className="text-secondary mt-2 font-medium">Đơn đã giao trong ngày</p>
+          </div>
+          <div className="mt-8 flex items-center gap-2 text-success font-bold text-sm">
+            <ShieldCheck size={18} />
+            <span>Tỉ lệ: {dailyOrders.length > 0 ? Math.round((deliveredToday / dailyOrders.length) * 100) : 0}%</span>
           </div>
         </motion.div>
 
@@ -401,6 +445,11 @@ export default function Dashboard() {
         </motion.div>
       </div>
 
+      {/* Smart Restock Forecast Section */}
+      <motion.div variants={item}>
+        <LowStockPanel />
+      </motion.div>
+
       {/* Order Details Modal */}
       <AnimatePresence>
         {showOrderDetails && (
@@ -483,6 +532,153 @@ export default function Dashboard() {
                   Đóng
                 </button>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Problematic Orders Modal */}
+      <AnimatePresence>
+        {showProblematicModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-8">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowProblematicModal(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-4xl bg-white rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <div className="p-8 border-b border-error/20 flex justify-between items-center bg-gradient-to-r from-error/5 to-transparent">
+                <div>
+                  <h3 className="text-2xl font-black text-error tracking-tight flex items-center gap-3">
+                    <AlertTriangle size={28} />
+                    Danh sách đơn hàng có vấn đề
+                  </h3>
+                  <p className="text-error/70 font-medium mt-1">Cần kiểm tra lại địa chỉ hoặc liên hệ khách hàng ({problematicOrders.length} đơn)</p>
+                </div>
+                <button 
+                  onClick={() => setShowProblematicModal(false)}
+                  className="w-12 h-12 rounded-full bg-error/10 flex items-center justify-center text-error hover:bg-error hover:text-white transition-all"
+                >
+                  <Plus className="rotate-45" size={24} />
+                </button>
+              </div>
+
+              <div className="flex-grow overflow-y-auto p-8 custom-scrollbar">
+                <div className="space-y-4">
+                  {problematicOrders.map((order) => (
+                    <div key={order.id} className="p-6 bg-error/5 rounded-3xl border border-error/10 hover:border-error/30 transition-all group">
+                      <div className="flex flex-col md:flex-row justify-between gap-4">
+                        <div className="flex items-start gap-4">
+                          <div className="w-12 h-12 rounded-2xl bg-white flex items-center justify-center text-error shadow-sm border border-error/10">
+                            <AlertTriangle size={24} />
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-bold text-error uppercase tracking-widest mb-1">Mã vận đơn</p>
+                            <h4 className="text-lg font-black text-on-surface font-mono">{order.trackingCode}</h4>
+                            <div className="mt-2 p-3 bg-white rounded-xl border border-error/10">
+                              <p className="text-xs font-bold text-error">Lý do: {order.reason}</p>
+                              <p className="text-[10px] text-secondary mt-1">Trạng thái gốc: {order.status}</p>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-2 min-w-[250px]">
+                          <div className="bg-white p-4 rounded-2xl border border-surface-container shadow-sm">
+                            <p className="text-[10px] font-bold text-secondary uppercase mb-2">Thông tin nhận hàng</p>
+                            <p className="text-xs font-bold text-on-surface">{order.recipient || 'N/A'}</p>
+                            <p className="text-[10px] text-secondary mt-1">{order.phone || 'N/A'}</p>
+                          </div>
+                          <button 
+                            className="w-full py-2 bg-primary text-white rounded-xl text-xs font-bold hover:bg-primary-dark transition-all"
+                            onClick={() => {
+                              // Logic to open tracking or contact
+                              window.open(`https://tracking.ghn.dev/?order_code=${order.trackingCode}`, '_blank');
+                            }}
+                          >
+                            Kiểm tra hành trình GHN
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-8 bg-surface-container-low border-t border-surface-container flex justify-end">
+                <button 
+                  onClick={() => setShowProblematicModal(false)}
+                  className="px-8 py-3 bg-on-surface text-white rounded-full font-bold shadow-lg hover:scale-105 active:scale-95 transition-all"
+                >
+                  Đóng
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Tracking Details Modal */}
+      <AnimatePresence>
+        {showTrackingModal && selectedOrder && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowTrackingModal(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="relative w-full max-w-md bg-white rounded-[32px] p-8 shadow-2xl"
+            >
+              <div className="flex justify-between items-start mb-6">
+                <div>
+                  <h3 className="text-xl font-black text-on-surface">Hành trình đơn hàng</h3>
+                  <p className="text-xs text-secondary font-mono mt-1">{selectedOrder.trackingCode}</p>
+                </div>
+                <button 
+                  onClick={() => setShowTrackingModal(false)}
+                  className="w-8 h-8 rounded-full bg-surface-container flex items-center justify-center text-secondary"
+                >
+                  <Plus className="rotate-45" size={18} />
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                {selectedOrder.deliveryHistory && selectedOrder.deliveryHistory.length > 0 ? (
+                  <div className="relative pl-6 space-y-6 before:absolute before:left-[7px] before:top-2 before:bottom-2 before:w-0.5 before:bg-surface-container">
+                    {selectedOrder.deliveryHistory.map((step, idx) => (
+                      <div key={idx} className="relative">
+                        <div className={`absolute -left-[23px] top-1 w-3 h-3 rounded-full border-2 border-white shadow-sm ${idx === 0 ? 'bg-primary' : 'bg-secondary'}`}></div>
+                        <p className="text-xs font-black text-on-surface">{step.status}</p>
+                        <p className="text-[10px] text-secondary mt-0.5">{step.time} {step.location && `• ${step.location}`}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="py-12 text-center">
+                    <Truck size={40} className="mx-auto text-secondary opacity-20 mb-4" />
+                    <p className="text-sm font-bold text-secondary">Đang cập nhật hành trình từ nhà vận chuyển...</p>
+                    <p className="text-[10px] text-secondary mt-1">Lần kiểm tra cuối: {selectedOrder.lastChecked ? new Date(selectedOrder.lastChecked).toLocaleString('vi-VN') : 'Chưa kiểm tra'}</p>
+                  </div>
+                )}
+              </div>
+
+              <button 
+                onClick={() => setShowTrackingModal(false)}
+                className="w-full mt-8 py-3 bg-on-surface text-white rounded-2xl font-bold text-sm"
+              >
+                Đóng
+              </button>
             </motion.div>
           </div>
         )}

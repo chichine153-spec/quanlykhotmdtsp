@@ -19,27 +19,37 @@ import { getSupabase, resetSupabaseInstance } from '../lib/supabase';
 import { GeminiService } from '../services/gemini';
 import { db, auth } from '../firebase';
 import { collection, addDoc, getDocs, query, where, limit } from 'firebase/firestore';
+import { classifyError } from '../lib/errorUtils';
+import { getFirebaseFirestore } from '../lib/firebaseClient';
+import { getDoc, doc } from 'firebase/firestore';
 
 export default function ConnectionSettings() {
   const [config, setConfig] = React.useState({
     geminiKey: localStorage.getItem('gemini_api_key') || '',
     supabaseUrl: localStorage.getItem('supabase_url') || '',
-    supabaseKey: localStorage.getItem('supabase_anon_key') || ''
+    supabaseKey: localStorage.getItem('supabase_anon_key') || '',
+    firebaseApiKey: localStorage.getItem('fb_web_api_key') || '',
+    firebaseAuthDomain: localStorage.getItem('fb_web_auth_domain') || '',
+    firebaseProjectId: localStorage.getItem('fb_web_project_id') || '',
+    firebaseStorageBucket: localStorage.getItem('fb_web_storage_bucket') || ''
   });
 
   const [status, setStatus] = React.useState<{
     gemini: 'idle' | 'checking' | 'success' | 'error';
     supabase: 'idle' | 'checking' | 'success' | 'error';
+    firebase: 'idle' | 'checking' | 'success' | 'error';
     tables: 'idle' | 'checking' | 'success' | 'error';
   }>({
     gemini: 'idle',
     supabase: 'idle',
+    firebase: 'idle',
     tables: 'idle'
   });
 
   const [errors, setErrors] = React.useState({
     gemini: '',
     supabase: '',
+    firebase: '',
     tables: ''
   });
 
@@ -51,6 +61,10 @@ export default function ConnectionSettings() {
     localStorage.setItem('gemini_api_key', config.geminiKey);
     localStorage.setItem('supabase_url', config.supabaseUrl);
     localStorage.setItem('supabase_anon_key', config.supabaseKey);
+    localStorage.setItem('fb_web_api_key', config.firebaseApiKey);
+    localStorage.setItem('fb_web_auth_domain', config.firebaseAuthDomain);
+    localStorage.setItem('fb_web_project_id', config.firebaseProjectId);
+    localStorage.setItem('fb_web_storage_bucket', config.firebaseStorageBucket);
     resetSupabaseInstance();
     alert('Đã lưu cấu hình! Hệ thống sẽ tải lại để áp dụng.');
     window.location.reload();
@@ -69,19 +83,8 @@ export default function ConnectionSettings() {
       }
     } catch (err: any) {
       setStatus(prev => ({ ...prev, gemini: 'error' }));
-      
-      let message = err.message || 'Lỗi kết nối AI';
-      
-      // Handle raw JSON errors from Google API
-      if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED')) {
-        message = 'Hết hạn mức sử dụng (Quota). Vui lòng thử lại sau hoặc dùng API Key khác.';
-      } else if (message.includes('403') || message.includes('PERMISSION_DENIED')) {
-        message = 'API Key không có quyền truy cập hoặc đã bị vô hiệu hóa.';
-      } else if (message.includes('400') || message.includes('INVALID_ARGUMENT')) {
-        message = 'API Key không hợp lệ. Vui lòng kiểm tra lại.';
-      }
-      
-      setErrors(prev => ({ ...prev, gemini: message }));
+      const classified = classifyError(err, 'Gemini');
+      setErrors(prev => ({ ...prev, gemini: classified.message }));
     }
   };
 
@@ -104,13 +107,38 @@ export default function ConnectionSettings() {
         if (error.message.includes('column "user_id" does not exist')) {
           throw new Error('Bảng print_history bị thiếu cột user_id. Vui lòng chạy lại SQL Script.');
         }
-        throw new Error(error.message);
+        throw error;
       }
       
       setStatus(prev => ({ ...prev, supabase: 'success' }));
     } catch (err: any) {
       setStatus(prev => ({ ...prev, supabase: 'error' }));
-      setErrors(prev => ({ ...prev, supabase: err.message || 'Sai URL hoặc Anon Key' }));
+      const classified = classifyError(err, 'Supabase');
+      setErrors(prev => ({ ...prev, supabase: classified.message }));
+    }
+  };
+
+  const checkFirebase = async () => {
+    setStatus(prev => ({ ...prev, firebase: 'checking' }));
+    setErrors(prev => ({ ...prev, firebase: '' }));
+
+    try {
+      // Temporarily save to test
+      localStorage.setItem('fb_web_api_key', config.firebaseApiKey);
+      localStorage.setItem('fb_web_project_id', config.firebaseProjectId);
+      
+      const firestore = getFirebaseFirestore();
+      if (!firestore) throw new Error('Cấu hình Firebase không hợp lệ');
+
+      // Attempt a simple read to test connection
+      // We use a dummy doc path
+      await getDoc(doc(firestore, 'test_connection', 'ping'));
+      
+      setStatus(prev => ({ ...prev, firebase: 'success' }));
+    } catch (err: any) {
+      setStatus(prev => ({ ...prev, firebase: 'error' }));
+      const classified = classifyError(err, 'Firebase');
+      setErrors(prev => ({ ...prev, firebase: classified.message }));
     }
   };
 
@@ -182,11 +210,7 @@ export default function ConnectionSettings() {
   };
 
   const sqlScript = `
--- ⚠️ LƯU Ý: Nếu bạn đã có bảng print_history nhưng bị lỗi "column user_id does not exist", 
--- hãy bỏ dấu gạch chéo ở dòng DROP TABLE bên dưới để xóa và tạo lại bảng mới.
-
--- DROP TABLE IF EXISTS public.print_history;
-
+-- 1. Tạo bảng lịch sử in (nếu chưa có)
 CREATE TABLE IF NOT EXISTS public.print_history (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -198,19 +222,57 @@ CREATE TABLE IF NOT EXISTS public.print_history (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Bật Row Level Security (RLS)
+-- 2. Tạo bảng tồn kho (Inventory) trên Supabase
+CREATE TABLE IF NOT EXISTS public.inventory (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    product_name TEXT NOT NULL,
+    sku TEXT,
+    stock_quantity INTEGER DEFAULT 0,
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(user_id, product_name)
+);
+
+-- 3. Tạo View Dự báo nhập hàng thông minh (Restock Forecast)
+CREATE OR REPLACE VIEW public.restock_forecast AS
+WITH sales_velocity AS (
+    SELECT 
+        user_id,
+        product_name,
+        SUM(quantity) as total_sold_10d,
+        SUM(quantity) / 10.0 as daily_velocity
+    FROM public.print_history
+    WHERE created_at >= now() - INTERVAL '10 days'
+    GROUP BY user_id, product_name
+)
+SELECT 
+    i.id,
+    i.user_id,
+    i.product_name,
+    i.sku,
+    i.stock_quantity,
+    COALESCE(v.daily_velocity, 0) as daily_velocity,
+    CASE 
+        WHEN COALESCE(v.daily_velocity, 0) = 0 THEN 999 
+        ELSE i.stock_quantity / v.daily_velocity 
+    END as days_until_empty,
+    CASE 
+        WHEN (CASE WHEN COALESCE(v.daily_velocity, 0) = 0 THEN 999 ELSE i.stock_quantity / v.daily_velocity END) <= 3 
+        THEN CEIL((COALESCE(v.daily_velocity, 0) * 15) - i.stock_quantity)
+        ELSE 0 
+    END as suggested_restock_qty
+FROM public.inventory i
+LEFT JOIN sales_velocity v ON i.product_name = v.product_name AND i.user_id = v.user_id;
+
+-- 4. Bật RLS và tạo Policy
 ALTER TABLE public.print_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inventory ENABLE ROW LEVEL SECURITY;
 
--- Tạo chính sách bảo mật (Cho phép Anon truy cập vì chúng ta dùng Firebase Auth)
--- Nếu đã có policy tên này, bạn có thể xóa nó trước khi chạy lại.
--- DROP POLICY IF EXISTS "Allow anon access for all" ON public.print_history;
+DROP POLICY IF EXISTS "Allow anon access for all" ON public.print_history;
+CREATE POLICY "Allow anon access for all" ON public.print_history FOR ALL TO anon USING (true) WITH CHECK (true);
 
-CREATE POLICY "Allow anon access for all" 
-ON public.print_history 
-FOR ALL 
-TO anon
-USING (true)
-WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow anon access for inventory" ON public.inventory;
+CREATE POLICY "Allow anon access for inventory" ON public.inventory FOR ALL TO anon USING (true) WITH CHECK (true);
 `.trim();
 
   return (
@@ -337,6 +399,86 @@ WITH CHECK (true);
               {status.supabase === 'error' && (
                 <div className="flex items-center gap-1 text-error text-[10px] font-black uppercase">
                   <XCircle size={14} /> {errors.supabase}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Firebase Web Data Configuration */}
+        <div className="glass-morphism rounded-[2rem] p-8 border border-surface-container space-y-6">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-orange-100 rounded-xl text-orange-600">
+              <Database size={20} />
+            </div>
+            <h2 className="font-black text-sm uppercase tracking-widest">KẾT NỐI FIREBASE (WEB DATA)</h2>
+          </div>
+
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-secondary uppercase tracking-widest">API Key</label>
+                <input 
+                  type="password"
+                  value={config.firebaseApiKey}
+                  onChange={(e) => setConfig({ ...config, firebaseApiKey: e.target.value })}
+                  placeholder="Firebase API Key..."
+                  className="w-full px-4 py-3 bg-surface-container-low rounded-xl text-sm outline-none border-2 border-transparent focus:border-primary transition-all"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-secondary uppercase tracking-widest">Auth Domain</label>
+                <input 
+                  type="text"
+                  value={config.firebaseAuthDomain}
+                  onChange={(e) => setConfig({ ...config, firebaseAuthDomain: e.target.value })}
+                  placeholder="project.firebaseapp.com"
+                  className="w-full px-4 py-3 bg-surface-container-low rounded-xl text-sm outline-none border-2 border-transparent focus:border-primary transition-all"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-secondary uppercase tracking-widest">Project ID</label>
+                <input 
+                  type="text"
+                  value={config.firebaseProjectId}
+                  onChange={(e) => setConfig({ ...config, firebaseProjectId: e.target.value })}
+                  placeholder="my-project-id"
+                  className="w-full px-4 py-3 bg-surface-container-low rounded-xl text-sm outline-none border-2 border-transparent focus:border-primary transition-all"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-secondary uppercase tracking-widest">Storage Bucket</label>
+                <input 
+                  type="text"
+                  value={config.firebaseStorageBucket}
+                  onChange={(e) => setConfig({ ...config, firebaseStorageBucket: e.target.value })}
+                  placeholder="project.appspot.com"
+                  className="w-full px-4 py-3 bg-surface-container-low rounded-xl text-sm outline-none border-2 border-transparent focus:border-primary transition-all"
+                />
+              </div>
+            </div>
+            <p className="text-[10px] text-secondary italic">Dùng để kết nối và lưu trữ thông tin cho Trang web bán hàng riêng của bạn.</p>
+            
+            <div className="flex items-center justify-between pt-2">
+              <button 
+                onClick={checkFirebase}
+                disabled={status.firebase === 'checking' || !config.firebaseApiKey}
+                className="flex items-center gap-2 px-4 py-2 bg-surface-container rounded-xl text-xs font-bold hover:bg-surface-container-high transition-all disabled:opacity-50"
+              >
+                {status.firebase === 'checking' ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                Kiểm tra kết nối
+              </button>
+
+              {status.firebase === 'success' && (
+                <div className="flex items-center gap-1 text-green-600 text-[10px] font-black uppercase">
+                  <CheckCircle2 size={14} /> Hoạt động
+                </div>
+              )}
+              {status.firebase === 'error' && (
+                <div className="flex items-center gap-1 text-error text-[10px] font-black uppercase">
+                  <XCircle size={14} /> {errors.firebase}
                 </div>
               )}
             </div>
