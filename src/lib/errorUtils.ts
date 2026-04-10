@@ -11,29 +11,40 @@ export interface ClassifiedError {
 }
 
 export function classifyError(error: any, defaultService: ServiceType): ClassifiedError {
-  const message = error?.message || String(error);
-  const errorStr = JSON.stringify(error).toLowerCase();
+  // Extract message from various possible structures
+  let message = '';
+  if (typeof error === 'string') {
+    message = error;
+  } else if (error?.error?.message) {
+    message = error.error.message; // Handle Gemini nested error
+  } else if (error?.message) {
+    message = error.message;
+  } else {
+    message = JSON.stringify(error);
+  }
+
+  const errorStr = message.toLowerCase() + (error?.status || '').toLowerCase();
   
   let service = defaultService;
   let isQuota = false;
   let isAuth = false;
 
   // Detect Service
-  if (message.includes('Gemini') || message.includes('GoogleGenerativeAI')) {
+  if (errorStr.includes('gemini') || errorStr.includes('google') || errorStr.includes('generative')) {
     service = 'Gemini';
-  } else if (message.includes('supabase') || message.includes('postgrest')) {
+  } else if (errorStr.includes('supabase') || errorStr.includes('postgrest')) {
     service = 'Supabase';
-  } else if (message.includes('firebase') || message.includes('firestore') || message.includes('auth/')) {
+  } else if (errorStr.includes('firebase') || errorStr.includes('firestore') || errorStr.includes('auth/')) {
     service = 'Firebase';
   }
 
-  // Detect Quota
-  if (message.includes('429') || message.includes('Quota') || message.includes('RESOURCE_EXHAUSTED') || message.includes('limit exceeded')) {
+  // Detect Quota (429)
+  if (errorStr.includes('429') || errorStr.includes('quota') || errorStr.includes('resource_exhausted') || errorStr.includes('limit exceeded')) {
     isQuota = true;
   }
 
-  // Detect Auth
-  if (message.includes('401') || message.includes('403') || message.includes('API key not valid') || message.includes('INVALID_ARGUMENT') || message.includes('permission-denied')) {
+  // Detect Auth (401, 403)
+  if (errorStr.includes('401') || errorStr.includes('403') || errorStr.includes('api key not valid') || errorStr.includes('invalid_argument') || errorStr.includes('permission_denied')) {
     isAuth = true;
   }
 

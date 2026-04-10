@@ -1,4 +1,6 @@
 import React from 'react';
+import { getSupabase } from './lib/supabase';
+import LowStockPanel from './components/LowStockPanel';
 import { 
   Search, 
   Plus, 
@@ -20,7 +22,12 @@ import {
   ArrowDownCircle,
   ArrowUpCircle,
   Clock,
-  RotateCw
+  RotateCw,
+  X,
+  Save,
+  Trash2,
+  Camera,
+  Upload
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, onSnapshot, query, addDoc, getDocs, writeBatch, doc, updateDoc, deleteDoc, orderBy, limit, serverTimestamp, where } from 'firebase/firestore';
@@ -29,16 +36,14 @@ import { MOCK_PRODUCTS, Product, InventoryLog, ProfitConfig } from './types';
 import { ProfitService } from './services/profitService';
 import { useAuth } from './contexts/AuthContext';
 import { useData } from './contexts/DataContext';
-import { X, Save, Trash2, Camera, Upload } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { handleFirestoreError, OperationType } from './lib/firestore-errors';
-
-import { getSupabase } from './lib/supabase';
 
 export default function Inventory() {
   const { user, role, login } = useAuth();
   const { inventory: products, config: globalConfig, loading, refreshData } = useData();
   const isAdmin = role === 'admin';
+  const [forecastCount, setForecastCount] = React.useState(0);
   const [isSeeding, setIsSeeding] = React.useState(false);
   const [isClearing, setIsClearing] = React.useState(false);
   const [showClearConfirm, setShowClearConfirm] = React.useState(false);
@@ -59,6 +64,32 @@ export default function Inventory() {
   const [confirmingDeleteId, setConfirmingDeleteId] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const bulkImportRef = React.useRef<HTMLInputElement>(null);
+
+  // Fetch forecast count for the header stat
+  React.useEffect(() => {
+    const fetchForecastCount = async () => {
+      if (!user) return;
+      const supabase = getSupabase();
+      if (!supabase) return;
+      
+      try {
+        // Count items that either have a suggested restock OR are currently very low stock
+        const { data, error } = await supabase
+          .from('restock_forecast')
+          .select('id')
+          .eq('user_id', user.uid)
+          .or('suggested_restock_qty.gt.0,stock_quantity.lte.5');
+        
+        if (!error && data) {
+          setForecastCount(data.length);
+        }
+      } catch (e) {
+        console.error('Error fetching forecast count:', e);
+      }
+    };
+    
+    fetchForecastCount();
+  }, [user, products]);
 
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -170,8 +201,9 @@ export default function Inventory() {
 
   const [isSyncing, setIsSyncing] = React.useState(false);
 
-  const syncToSupabase = async () => {
-    if (!user || products.length === 0) return;
+  const syncToSupabase = async (itemsInput: any = products) => {
+    const items = Array.isArray(itemsInput) ? itemsInput : products;
+    if (!user || items.length === 0) return;
     const supabase = getSupabase();
     if (!supabase) {
       addToast('Supabase chưa được cấu hình.', 'error');
@@ -180,7 +212,7 @@ export default function Inventory() {
 
     setIsSyncing(true);
     try {
-      const supabaseData = products.map(p => ({
+      const supabaseData = items.map(p => ({
         user_id: user.uid,
         product_name: p.variant ? `${p.name} (${p.variant})` : p.name,
         sku: p.sku,
@@ -194,6 +226,15 @@ export default function Inventory() {
 
       if (error) throw error;
       addToast('Đã đồng bộ dữ liệu kho sang Supabase thành công!', 'success');
+      
+      // Refresh forecast count after sync
+      const { data: forecastData } = await supabase
+        .from('restock_forecast')
+        .select('id')
+        .eq('user_id', user.uid)
+        .or('suggested_restock_qty.gt.0,stock_quantity.lte.5');
+      
+      if (forecastData) setForecastCount(forecastData.length);
     } catch (error: any) {
       console.error('Sync Error:', error);
       addToast(`Lỗi đồng bộ: ${error.message}`, 'error');
@@ -635,14 +676,20 @@ export default function Inventory() {
     { id: 'out_of_stock', label: 'Hết hàng' }
   ];
 
-  const filteredProducts = products.filter(p => {
-    const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                         p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         (p.variant || '').toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory = categoryFilter === 'All' || p.category === categoryFilter;
-    const matchesStatus = statusFilter === 'All' || p.status === statusFilter;
-    return matchesSearch && matchesCategory && matchesStatus;
-  });
+    const filteredProducts = products.filter(p => {
+      const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                           p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                           (p.variant || '').toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesCategory = categoryFilter === 'All' || p.category === categoryFilter;
+      
+      let matchesStatus = true;
+      const stockNum = Number(p.stock);
+      if (statusFilter === 'in_stock') matchesStatus = stockNum > 10;
+      else if (statusFilter === 'low_stock') matchesStatus = stockNum > 0 && stockNum <= 10;
+      else if (statusFilter === 'out_of_stock') matchesStatus = stockNum <= 5;
+      
+      return matchesSearch && matchesCategory && matchesStatus;
+    });
 
   React.useEffect(() => {
     if (user) {
@@ -702,7 +749,7 @@ export default function Inventory() {
             accept=".csv, .xlsx, .xls"
           />
           <button 
-            onClick={syncToSupabase}
+            onClick={() => syncToSupabase()}
             disabled={isSyncing || loading}
             className="px-4 py-3 rounded-xl border border-primary/20 text-primary font-bold flex items-center gap-2 hover:bg-primary/5 transition-all disabled:opacity-50"
             title="Đồng bộ dữ liệu sang Supabase để chạy dự báo"
@@ -797,9 +844,19 @@ export default function Inventory() {
         )}
       </section>
 
+      {/* Forecast Panel Integration */}
+      <section className="mb-12">
+        <LowStockPanel />
+      </section>
+
       {/* Stats Overview */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-surface-container-lowest/60 glass-morphism p-6 rounded-xl shadow-sm flex flex-col gap-4 border border-white/20">
+        <div 
+          onClick={() => setStatusFilter('All')}
+          className={`p-6 rounded-xl shadow-sm flex flex-col gap-4 border transition-all cursor-pointer hover:scale-[1.02] active:scale-95 ${
+            statusFilter === 'All' ? 'bg-white border-primary ring-2 ring-primary/20' : 'bg-surface-container-lowest/60 border-white/20'
+          }`}
+        >
           <div className="w-10 h-10 rounded-lg bg-tertiary-fixed flex items-center justify-center text-on-tertiary-fixed">
             <Package size={20} />
           </div>
@@ -808,22 +865,34 @@ export default function Inventory() {
             <p className="text-3xl font-black text-on-surface">{products.length}</p>
           </div>
         </div>
-        <div className="bg-surface-container-lowest/60 glass-morphism p-6 rounded-xl shadow-sm flex flex-col gap-4 border border-white/20">
+        <div 
+          onClick={() => setStatusFilter('low_stock')}
+          className={`p-6 rounded-xl shadow-sm flex flex-col gap-4 border transition-all cursor-pointer hover:scale-[1.02] active:scale-95 ${
+            statusFilter === 'low_stock' ? 'bg-white border-primary ring-2 ring-primary/20' : 'bg-surface-container-lowest/60 border-white/20'
+          }`}
+        >
           <div className="w-10 h-10 rounded-lg bg-primary-fixed flex items-center justify-center text-on-primary-fixed">
             <AlertTriangle size={20} />
           </div>
           <div>
             <p className="text-[10px] uppercase tracking-widest text-secondary font-bold mb-1">Sắp hết hàng</p>
-            <p className="text-3xl font-black text-primary">{products.filter(p => p.stock < 10).length}</p>
+            <p className="text-3xl font-black text-primary">{products.filter(p => Number(p.stock) > 0 && Number(p.stock) <= 10).length}</p>
           </div>
         </div>
-        <div className="bg-surface-container-lowest/60 glass-morphism p-6 rounded-xl shadow-sm flex flex-col gap-4 border border-white/20">
+        <div 
+          onClick={() => setStatusFilter('out_of_stock')}
+          className={`p-6 rounded-xl shadow-sm flex flex-col gap-4 border transition-all cursor-pointer hover:scale-[1.02] active:scale-95 ${
+            statusFilter === 'out_of_stock' ? 'bg-white border-primary ring-2 ring-primary/20' : 'bg-surface-container-lowest/60 border-white/20'
+          }`}
+        >
           <div className="w-10 h-10 rounded-lg bg-secondary-fixed flex items-center justify-center text-on-secondary-fixed">
             <TrendingUp size={20} />
           </div>
           <div>
             <p className="text-[10px] uppercase tracking-widest text-secondary font-bold mb-1">Cần nhập thêm</p>
-            <p className="text-3xl font-black text-on-surface">{products.filter(p => p.stock === 0).length}</p>
+            <p className="text-3xl font-black text-on-surface">
+              {Math.max(forecastCount, products.filter(p => Number(p.stock) <= 5).length)}
+            </p>
           </div>
         </div>
       </div>

@@ -35,17 +35,30 @@ export default function LowStockPanel() {
     setLoading(true);
     try {
       // Sử dụng view restock_forecast đã tạo ở bước trước
-      // View này đã tính toán: daily_velocity (10 ngày), days_until_empty, suggested_restock_qty
       const { data: forecastData, error } = await supabase
         .from('restock_forecast')
         .select('*')
-        .eq('user_id', user.uid)
-        .order('days_until_empty', { ascending: true });
+        .eq('user_id', user.uid);
 
       if (error) throw error;
       
-      // Lọc các sản phẩm có tốc độ bán hoặc tồn kho thấp
-      setData(forecastData?.filter(item => item.daily_velocity > 0 || item.stock_quantity < 10) || []);
+      // Hiển thị sản phẩm nếu:
+      // 1. Có gợi ý nhập hàng (suggested_restock_qty > 0)
+      // 2. Hoặc tồn kho cực thấp (<= 5)
+      // 3. Hoặc sắp hết hàng dựa trên vận tốc (days_until_empty <= 7)
+      const filtered = forecastData?.filter(item => 
+        item.suggested_restock_qty > 0 || 
+        item.stock_quantity <= 5 ||
+        (item.daily_velocity > 0 && item.days_until_empty <= 7)
+      ) || [];
+
+      setData(filtered.sort((a, b) => {
+        // Ưu tiên sản phẩm có gợi ý nhập hàng nhiều nhất hoặc sắp hết nhất
+        if (a.suggested_restock_qty !== b.suggested_restock_qty) {
+          return b.suggested_restock_qty - a.suggested_restock_qty;
+        }
+        return a.days_until_empty - b.days_until_empty;
+      }));
     } catch (err) {
       console.error('Error fetching forecast:', err);
     } finally {
@@ -87,7 +100,8 @@ export default function LowStockPanel() {
       {data.length === 0 ? (
         <div className="glass-morphism rounded-[2rem] p-12 text-center border border-dashed border-surface-container">
           <PackageSearch size={48} className="mx-auto text-secondary opacity-20 mb-4" />
-          <p className="text-secondary font-bold">Chưa có đủ dữ liệu bán hàng để tính toán vận tốc.</p>
+          <p className="text-secondary font-bold mb-2">Chưa có đủ dữ liệu bán hàng hoặc chưa đồng bộ kho.</p>
+          <p className="text-xs text-secondary/60">Hãy nhấn nút "Đồng bộ Supabase" trong tab Kho hàng để cập nhật dữ liệu dự báo.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -127,7 +141,11 @@ export default function LowStockPanel() {
                     isUrgent ? 'bg-error/10 text-error border border-error/20' : 'bg-surface-container text-secondary'
                   }`}>
                     <Clock size={12} />
-                    <span>Dự kiến hết sau {days > 99 ? '>99' : days} ngày</span>
+                    <span>
+                      {item.daily_velocity > 0 
+                        ? `Dự kiến hết sau ${days > 99 ? '>99' : days} ngày`
+                        : item.stock_quantity === 0 ? 'Đã hết hàng' : 'Chưa có dữ liệu bán'}
+                    </span>
                   </div>
 
                   {item.suggested_restock_qty > 0 && (

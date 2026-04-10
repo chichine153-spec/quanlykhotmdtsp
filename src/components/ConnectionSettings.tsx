@@ -210,19 +210,23 @@ export default function ConnectionSettings() {
   };
 
   const sqlScript = `
--- 1. Tạo bảng lịch sử in (nếu chưa có)
+-- 1. Bật tiện ích mở rộng (nếu chưa có)
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- 2. Tạo bảng lịch sử in (nếu chưa có)
 CREATE TABLE IF NOT EXISTS public.print_history (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     user_id TEXT NOT NULL,
     tracking_number TEXT NOT NULL,
     product_name TEXT,
+    sku TEXT,
     quantity INTEGER DEFAULT 1,
     image_url TEXT,
     is_cup BOOLEAN DEFAULT false,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 2. Tạo bảng tồn kho (Inventory) trên Supabase
+-- 3. Tạo bảng tồn kho (Inventory) trên Supabase
 CREATE TABLE IF NOT EXISTS public.inventory (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -233,9 +237,10 @@ CREATE TABLE IF NOT EXISTS public.inventory (
     UNIQUE(user_id, product_name)
 );
 
--- 3. Tạo View Dự báo nhập hàng thông minh (Restock Forecast)
+-- 4. Tạo View Dự báo nhập hàng thông minh (Restock Forecast)
 CREATE OR REPLACE VIEW public.restock_forecast AS
 WITH sales_velocity AS (
+    -- Tính vận tốc bán trong 10 ngày gần nhất
     SELECT 
         user_id,
         product_name,
@@ -253,18 +258,22 @@ SELECT
     i.stock_quantity,
     COALESCE(v.daily_velocity, 0) as daily_velocity,
     CASE 
-        WHEN COALESCE(v.daily_velocity, 0) = 0 THEN 999 
+        WHEN COALESCE(v.daily_velocity, 0) = 0 THEN 
+            CASE WHEN i.stock_quantity = 0 THEN 0 ELSE 999 END
         ELSE i.stock_quantity / v.daily_velocity 
     END as days_until_empty,
     CASE 
-        WHEN (CASE WHEN COALESCE(v.daily_velocity, 0) = 0 THEN 999 ELSE i.stock_quantity / v.daily_velocity END) <= 3 
-        THEN CEIL((COALESCE(v.daily_velocity, 0) * 15) - i.stock_quantity)
+        -- Nếu hết hàng hoặc sắp hết (<= 5) và chưa có vận tốc bán, gợi ý nhập để có tồn kho ít nhất 10
+        WHEN i.stock_quantity <= 5 AND COALESCE(v.daily_velocity, 0) = 0 THEN 10 - i.stock_quantity
+        -- Nếu sắp hết hàng dựa trên vận tốc (dưới 3 ngày)
+        WHEN COALESCE(v.daily_velocity, 0) > 0 AND (i.stock_quantity / v.daily_velocity) <= 3 
+        THEN CEIL((v.daily_velocity * 15) - i.stock_quantity)
         ELSE 0 
     END as suggested_restock_qty
 FROM public.inventory i
 LEFT JOIN sales_velocity v ON i.product_name = v.product_name AND i.user_id = v.user_id;
 
--- 4. Bật RLS và tạo Policy
+-- 5. Bật RLS và tạo Policy
 ALTER TABLE public.print_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.inventory ENABLE ROW LEVEL SECURITY;
 
