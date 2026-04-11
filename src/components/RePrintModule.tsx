@@ -33,6 +33,9 @@ interface PrintHistoryRecord {
   is_cup: boolean;
   created_at: string;
   user_id: string;
+  status?: string;
+  tracking_log?: any[];
+  carrier?: string;
 }
 
 export default function RePrintModule() {

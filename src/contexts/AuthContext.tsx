@@ -100,7 +100,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           
           if (isQuotaError) {
             setError('Hệ thống đã đạt giới hạn truy cập miễn phí (Quota Exceeded). Đang sử dụng dữ liệu tạm thời.');
-            disableNetwork(db).catch(console.error);
           }
 
           if (!cachedRole) {

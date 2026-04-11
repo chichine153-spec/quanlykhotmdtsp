@@ -201,22 +201,29 @@ export default function Inventory() {
 
   const [isSyncing, setIsSyncing] = React.useState(false);
 
-  const syncToSupabase = async (itemsInput: any = products) => {
+  const syncToSupabase = async (itemsInput: any = products, silent: boolean = false) => {
     const items = Array.isArray(itemsInput) ? itemsInput : products;
     if (!user || items.length === 0) return;
     const supabase = getSupabase();
     if (!supabase) {
-      addToast('Supabase chưa được cấu hình.', 'error');
+      if (!silent) addToast('Supabase chưa được cấu hình.', 'error');
       return;
     }
 
-    setIsSyncing(true);
+    if (!silent) setIsSyncing(true);
     try {
-      const supabaseData = items.map(p => ({
+      // Robust check for items being an array
+      const itemsToProcess = Array.isArray(items) ? items : [];
+      if (itemsToProcess.length === 0) {
+        if (!silent) setIsSyncing(false);
+        return;
+      }
+
+      const supabaseData = itemsToProcess.map(p => ({
         user_id: user.uid,
         product_name: p.variant ? `${p.name} (${p.variant})` : p.name,
         sku: p.sku,
-        stock_quantity: p.stock,
+        stock_quantity: Number(p.stock),
         updated_at: new Date().toISOString()
       }));
 
@@ -225,7 +232,7 @@ export default function Inventory() {
         .upsert(supabaseData, { onConflict: 'user_id,product_name' });
 
       if (error) throw error;
-      addToast('Đã đồng bộ dữ liệu kho sang Supabase thành công!', 'success');
+      if (!silent) addToast('Đã đồng bộ dữ liệu kho sang Supabase thành công!', 'success');
       
       // Refresh forecast count after sync
       const { data: forecastData } = await supabase
@@ -237,11 +244,22 @@ export default function Inventory() {
       if (forecastData) setForecastCount(forecastData.length);
     } catch (error: any) {
       console.error('Sync Error:', error);
-      addToast(`Lỗi đồng bộ: ${error.message}`, 'error');
+      if (!silent) addToast(`Lỗi đồng bộ: ${error.message}`, 'error');
     } finally {
-      setIsSyncing(false);
+      if (!silent) setIsSyncing(false);
     }
   };
+
+  // Auto-sync to Supabase when products change (debounced)
+  React.useEffect(() => {
+    if (!user || products.length === 0 || loading) return;
+    
+    const timer = setTimeout(() => {
+      syncToSupabase(products, true);
+    }, 3000); // 3 second debounce
+    
+    return () => clearTimeout(timer);
+  }, [products, user]);
 
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();

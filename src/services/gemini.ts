@@ -23,6 +23,10 @@ export class GeminiService {
       return null;
     }
 
+    if (apiKey === GEMINI_API_KEY && GEMINI_API_KEY !== "") {
+      console.info('[GeminiService] Using shared community API Key. Quota may be limited.');
+    }
+
     this.instance = new GoogleGenAI({ apiKey });
     return this.instance;
   }

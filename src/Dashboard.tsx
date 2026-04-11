@@ -2,6 +2,7 @@ import React from 'react';
 import { 
   TrendingUp, 
   AlertTriangle, 
+  AlertCircle,
   Truck, 
   History,
   Plus,
@@ -17,7 +18,9 @@ import {
   Star,
   BarChart3,
   PieChart,
-  ShieldCheck
+  ShieldCheck,
+  RefreshCw,
+  Clock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from './contexts/AuthContext';
@@ -25,6 +28,7 @@ import { useData } from './contexts/DataContext';
 import { InventoryService, OrderRecord } from './services/inventoryService';
 import { TrackingService } from './services/trackingService';
 import LowStockPanel from './components/LowStockPanel';
+import { getSupabase } from './lib/supabase';
 
 export default function Dashboard() {
   const { user, login, error, clearError, role, expiryDate, isSubscriptionValid } = useAuth();
@@ -38,6 +42,13 @@ export default function Dashboard() {
   const [showProblematicModal, setShowProblematicModal] = React.useState(false);
   const [showTopSellersModal, setShowTopSellersModal] = React.useState(false);
   const [topSellersTimeframe, setTopSellersTimeframe] = React.useState<'today' | '7days' | '30days'>('today');
+  const [shippingOrders, setShippingOrders] = React.useState<any[]>([]);
+  const [showShippingModal, setShowShippingModal] = React.useState(false);
+  const [isRefreshing, setIsRefreshing] = React.useState(false);
+  const [trackingProgress, setTrackingProgress] = React.useState({ current: 0, total: 0 });
+  const [selectedShippingOrder, setSelectedShippingOrder] = React.useState<any | null>(null);
+  const [isFetchingTimeline, setIsFetchingTimeline] = React.useState(false);
+  const [trackingTimeline, setTrackingTimeline] = React.useState<any[]>([]);
 
   // Get last 10 days
   const last10Days = React.useMemo(() => {
@@ -75,10 +86,99 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [user]);
 
+  // Fetch shipping orders from Supabase
+  const fetchShippingOrders = React.useCallback(async () => {
+    if (!user) return;
+    const supabase = getSupabase();
+    if (!supabase) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('print_history')
+        .select('*')
+        .eq('user_id', user.uid)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setShippingOrders(data || []);
+    } catch (err) {
+      console.error('Error fetching shipping orders:', err);
+    }
+  }, [user]);
+
+  React.useEffect(() => {
+    fetchShippingOrders();
+  }, [fetchShippingOrders]);
+
+  const handleRefreshDelivery = async () => {
+    if (!user || isRefreshing) return;
+    setIsRefreshing(true);
+    setTrackingProgress({ current: 0, total: 0 });
+    try {
+      const result = await TrackingService.refreshDeliveryStatus(user.uid, (current, total) => {
+        setTrackingProgress({ current, total });
+      });
+      if (result.success) {
+        await fetchShippingOrders();
+      }
+    } catch (err) {
+      console.error('Refresh error:', err);
+    } finally {
+      setIsRefreshing(false);
+      setTrackingProgress({ current: 0, total: 0 });
+    }
+  };
+
+  const handleTrackOrder = async (order: any) => {
+    setSelectedShippingOrder(order);
+    setTrackingTimeline(order.tracking_log || []);
+    
+    // Always prioritize fresh fetch when opening modal, unless already final
+    const isFinalStatus = order.status === 'Success' || order.status === 'Issue';
+    
+    setIsFetchingTimeline(true);
+    try {
+      // Pass forceFetch=true to ignore cache
+      const result = await TrackingService.fetchSingleTracking(order.id, order.tracking_number, order.status, !isFinalStatus);
+      if (result.success) {
+        setTrackingTimeline(result.data);
+        // Update the local list to refresh dashboard counts immediately
+        if (!result.cached) {
+          setShippingOrders(prev => prev.map(o => 
+            o.id === order.id ? { ...o, status: result.status, tracking_log: result.data, last_checked_at: new Date().toISOString() } : o
+          ));
+          // Still fetch from server to be sure
+          await fetchShippingOrders();
+        }
+      }
+    } catch (err) {
+      console.error('Fetch timeline error:', err);
+    } finally {
+      setIsFetchingTimeline(false);
+    }
+  };
+
   // Derived stats
   const dailyOrders = React.useMemo(() => {
     return orders.filter(o => o.processedAt.split('T')[0] === selectedDate);
   }, [orders, selectedDate]);
+
+  const shippingCount = React.useMemo(() => {
+    return shippingOrders.filter(o => o.status === 'Giao hàng' || o.status === 'Đang giao' || !o.status).length;
+  }, [shippingOrders]);
+
+  const successCount = React.useMemo(() => {
+    return shippingOrders.filter(o => o.status === 'Success').length;
+  }, [shippingOrders]);
+
+  const issueCount = React.useMemo(() => {
+    return shippingOrders.filter(o => o.status === 'Issue').length;
+  }, [shippingOrders]);
+
+  const successRate = React.useMemo(() => {
+    if (shippingOrders.length === 0) return 0;
+    return Math.round((successCount / shippingOrders.length) * 100);
+  }, [shippingOrders.length, successCount]);
 
   const lowStockItems = React.useMemo(() => {
     return InventoryService.getLowStockItems(inventory, 5);
@@ -91,10 +191,6 @@ export default function Dashboard() {
   const totalItemsToday = React.useMemo(() => {
     return (Object.values(salesByCategory) as number[]).reduce((a, b) => a + b, 0);
   }, [salesByCategory]);
-
-  const deliveredToday = React.useMemo(() => {
-    return dailyOrders.filter(o => o.trackingStatus === 'delivered').length;
-  }, [dailyOrders]);
 
   const topSellers = React.useMemo(() => {
     return InventoryService.getTopSellers(orders, topSellersTimeframe);
@@ -257,7 +353,8 @@ export default function Dashboard() {
         {/* Delivered Stats */}
         <motion.div 
           variants={item}
-          className="glass-morphism rounded-3xl p-8 shadow-sm border border-white/10 flex flex-col justify-between"
+          className="glass-morphism rounded-3xl p-8 shadow-sm border border-white/10 flex flex-col justify-between cursor-pointer hover:scale-[1.02] transition-all"
+          onClick={() => setShowShippingModal(true)}
         >
           <div>
             <div className="flex justify-between items-start mb-4">
@@ -266,27 +363,35 @@ export default function Dashboard() {
                 <CheckCircle2 size={16} />
               </div>
             </div>
-            <h3 className="text-5xl font-black text-on-surface font-headline">{deliveredToday}</h3>
-            <p className="text-secondary mt-2 font-medium">Đơn đã giao trong ngày</p>
+            <h3 className="text-5xl font-black text-on-surface font-headline">{successCount}</h3>
+            <p className="text-secondary mt-2 font-medium">Tổng đơn đã xác nhận giao thành công</p>
+            <p className="text-[10px] text-secondary mt-1 italic">Dựa trên dữ liệu hành trình đã kiểm tra</p>
           </div>
           <div className="mt-8 flex items-center gap-2 text-success font-bold text-sm">
             <ShieldCheck size={18} />
-            <span>Tỉ lệ: {dailyOrders.length > 0 ? Math.round((deliveredToday / dailyOrders.length) * 100) : 0}%</span>
+            <span>Tỉ lệ thành công: {successRate}%</span>
           </div>
         </motion.div>
 
         {/* Total Processed (Shipping) */}
         <motion.div 
           variants={item}
-          className="glass-morphism rounded-3xl p-8 shadow-sm border border-white/10 flex flex-col justify-between"
+          className="glass-morphism rounded-3xl p-8 shadow-sm border border-white/10 flex flex-col justify-between cursor-pointer hover:scale-[1.02] transition-all"
+          onClick={() => {
+            setShowShippingModal(true);
+            handleRefreshDelivery();
+          }}
         >
-          <div className="w-12 h-12 rounded-2xl bg-tertiary-fixed flex items-center justify-center text-tertiary">
-            <Truck size={24} />
+          <div className="flex justify-between items-start">
+            <div className="w-12 h-12 rounded-2xl bg-tertiary-fixed flex items-center justify-center text-tertiary">
+              <Truck size={24} />
+            </div>
+            {isRefreshing && <Loader2 size={16} className="animate-spin text-primary" />}
           </div>
           <div>
-            <h3 className="text-3xl font-black text-on-surface font-headline mt-6">{orders.length.toLocaleString()}</h3>
+            <h3 className="text-3xl font-black text-on-surface font-headline mt-6">{shippingCount}</h3>
             <p className="text-secondary font-medium">Đang giao hàng</p>
-            <p className="text-[10px] text-secondary mt-1 italic">Tổng đơn đã khấu trừ kho</p>
+            <p className="text-[10px] text-secondary mt-1 italic">Nhấn để kiểm tra hành trình</p>
           </div>
         </motion.div>
 
@@ -780,6 +885,266 @@ export default function Dashboard() {
                 >
                   Đóng
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Shipping Orders Modal */}
+      <AnimatePresence>
+        {showShippingModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-8">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowShippingModal(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-4xl bg-white rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <div className="p-8 border-b border-surface-container flex justify-between items-center bg-gradient-to-r from-primary/5 to-transparent">
+                <div>
+                  <h3 className="text-2xl font-black text-on-surface tracking-tight flex items-center gap-2">
+                    <Truck className="text-primary" size={24} />
+                    Theo dõi hành trình vận chuyển
+                  </h3>
+                  <p className="text-secondary font-medium mt-1">Đồng bộ dữ liệu từ print_history (Supabase)</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button 
+                    onClick={handleRefreshDelivery}
+                    disabled={isRefreshing}
+                    className="flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-2xl font-bold text-sm shadow-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
+                  >
+                    {isRefreshing ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
+                    Làm mới trạng thái
+                  </button>
+                  <button 
+                    onClick={() => setShowShippingModal(false)}
+                    className="w-12 h-12 rounded-full bg-surface-container flex items-center justify-center text-secondary hover:bg-primary hover:text-white transition-all"
+                  >
+                    <Plus className="rotate-45" size={24} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-8 space-y-8">
+                {/* Progress Bar for Batch Update */}
+                {isRefreshing && trackingProgress.total > 0 && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mb-8 p-6 bg-primary/5 rounded-[32px] border border-primary/10 shadow-sm"
+                  >
+                    <div className="flex justify-between items-center mb-3">
+                      <div className="flex items-center gap-2">
+                        <Loader2 size={16} className="animate-spin text-primary" />
+                        <span className="text-sm font-black text-primary uppercase tracking-tight">Đang quét hành trình hàng loạt...</span>
+                      </div>
+                      <span className="text-sm font-black text-primary">{trackingProgress.current}/{trackingProgress.total} đơn</span>
+                    </div>
+                    <div className="w-full h-3 bg-surface-container rounded-full overflow-hidden">
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        animate={{ width: `${(trackingProgress.current / trackingProgress.total) * 100}%` }}
+                        className="h-full bg-primary shadow-[0_0_10px_rgba(var(--primary),0.5)]"
+                      />
+                    </div>
+                    <p className="text-[10px] text-secondary mt-3 italic font-medium">Hệ thống đang kiểm tra trạng thái từ nhà vận chuyển (GHN/SPX) với độ trễ 300ms để đảm bảo an toàn.</p>
+                  </motion.div>
+                )}
+
+                {/* In Transit Section */}
+                <section>
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-2 h-6 bg-primary rounded-full"></div>
+                    <h4 className="text-lg font-black text-on-surface uppercase tracking-tight">Đang giao hàng ({shippingCount})</h4>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {shippingOrders.filter(o => o.status === 'Giao hàng' || o.status === 'Đang giao' || !o.status).map((order) => (
+                      <div 
+                        key={order.id} 
+                        onClick={() => handleTrackOrder(order)}
+                        className="p-5 bg-surface-container-low rounded-3xl border border-surface-container hover:border-primary/30 transition-all group cursor-pointer active:scale-95"
+                      >
+                        <div className="flex justify-between items-start mb-3">
+                          <span className="text-xs font-black text-primary font-mono">{order.tracking_number}</span>
+                          <span className="px-3 py-1 bg-primary/10 text-primary rounded-full text-[10px] font-bold uppercase">
+                            {(order.tracking_number || '').toUpperCase().startsWith('SPX') || (order.tracking_number || '').toUpperCase().startsWith('SPXVN') ? 'SPX' : (order.carrier || 'GHN')}
+                          </span>
+                        </div>
+                        <p className="text-sm font-bold text-on-surface line-clamp-1 mb-2">{order.product_name}</p>
+                        <div className="flex items-center gap-2 text-[10px] text-secondary">
+                          <Clock size={12} />
+                          <span className="line-clamp-1">Cập nhật: {order.tracking_log?.[0]?.description || order.tracking_log?.[0]?.status || 'Đang chờ lấy hàng...'}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                {/* Successfully Delivered Section */}
+                <section>
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-2 h-6 bg-success rounded-full"></div>
+                    <h4 className="text-lg font-black text-on-surface uppercase tracking-tight">Giao thành công ({successCount})</h4>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {shippingOrders.filter(o => o.status === 'Success').map((order) => (
+                      <div 
+                        key={order.id} 
+                        onClick={() => handleTrackOrder(order)}
+                        className="p-5 bg-success/5 rounded-3xl border border-success/20 transition-all cursor-pointer hover:bg-success/10 active:scale-95"
+                      >
+                        <div className="flex justify-between items-start mb-3">
+                          <span className="text-xs font-black text-success font-mono">{order.tracking_number}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="px-3 py-1 bg-success/10 text-success rounded-full text-[10px] font-bold uppercase">
+                              {(order.tracking_number || '').toUpperCase().startsWith('SPX') || (order.tracking_number || '').toUpperCase().startsWith('SPXVN') ? 'SPX' : (order.carrier || 'GHN')}
+                            </span>
+                            <CheckCircle2 size={16} className="text-success" />
+                          </div>
+                        </div>
+                        <p className="text-sm font-bold text-on-surface line-clamp-1 mb-2">{order.product_name}</p>
+                        <p className="text-[10px] text-success font-bold">Đã giao thành công</p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                {/* Delivery Issues Section */}
+                <section>
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-2 h-6 bg-error rounded-full"></div>
+                    <h4 className="text-lg font-black text-on-surface uppercase tracking-tight">Đơn giao gặp vấn đề ({issueCount})</h4>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {shippingOrders.filter(o => o.status === 'Issue').map((order) => (
+                      <div 
+                        key={order.id} 
+                        onClick={() => handleTrackOrder(order)}
+                        className="p-5 bg-error/5 rounded-3xl border border-error/20 transition-all cursor-pointer hover:bg-error/10 active:scale-95"
+                      >
+                        <div className="flex justify-between items-start mb-3">
+                          <span className="text-xs font-black text-error font-mono">{order.tracking_number}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="px-3 py-1 bg-error/10 text-error rounded-full text-[10px] font-bold uppercase">
+                              {(order.tracking_number || '').toUpperCase().startsWith('SPX') || (order.tracking_number || '').toUpperCase().startsWith('SPXVN') ? 'SPX' : (order.carrier || 'GHN')}
+                            </span>
+                            <AlertCircle size={16} className="text-error" />
+                          </div>
+                        </div>
+                        <p className="text-sm font-bold text-on-surface line-clamp-1 mb-2">{order.product_name}</p>
+                        <p className="text-[10px] text-error font-bold">Vấn đề: {order.tracking_log?.[0]?.status || 'Chuyển hoàn/Hủy'}</p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      {/* Tracking Timeline Modal */}
+      <AnimatePresence>
+        {selectedShippingOrder && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-8">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedShippingOrder(null)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-2xl bg-white rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <div className="p-6 border-b border-surface-container bg-white flex justify-between items-center">
+                <div>
+                  <h3 className="text-xl font-black text-on-surface">Chi tiết hành trình</h3>
+                  <p className="text-xs text-secondary font-mono mt-1">{selectedShippingOrder.tracking_number}</p>
+                </div>
+                <button 
+                  onClick={() => setSelectedShippingOrder(null)}
+                  className="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center text-secondary hover:bg-primary hover:text-white transition-all"
+                >
+                  <Plus className="rotate-45" size={20} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-8 bg-white">
+                {/* Status Stepper */}
+                <div className="flex justify-between items-center mb-12 relative px-4">
+                  <div className="absolute top-5 left-12 right-12 h-0.5 bg-surface-container -z-0"></div>
+                  
+                  {[
+                    { label: 'Chờ lấy hàng', icon: Package, active: true },
+                    { label: 'Đang vận chuyển', icon: Truck, active: selectedShippingOrder.status !== 'Giao hàng' },
+                    { label: 'Đang giao hàng', icon: Truck, active: selectedShippingOrder.status === 'Success' || selectedShippingOrder.status === 'Issue' },
+                    { label: 'Đã giao hàng', icon: CheckCircle2, active: selectedShippingOrder.status === 'Success' }
+                  ].map((step, idx) => (
+                    <div key={idx} className="flex flex-col items-center gap-2 relative z-10">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all ${
+                        step.active ? 'bg-white border-[#FF4500] text-[#FF4500]' : 'bg-white border-surface-container text-secondary'
+                      }`}>
+                        <step.icon size={18} />
+                      </div>
+                      <span className={`text-[10px] font-bold text-center w-20 ${step.active ? 'text-[#FF4500]' : 'text-secondary'}`}>
+                        {step.label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Timeline */}
+                <div className="space-y-8">
+                  {isFetchingTimeline ? (
+                    <div className="space-y-6">
+                      {[1, 2, 3].map(i => (
+                        <div key={i} className="flex gap-4 animate-pulse">
+                          <div className="w-24 h-4 bg-surface-container rounded"></div>
+                          <div className="flex-1 h-4 bg-surface-container rounded"></div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : trackingTimeline && trackingTimeline.length > 0 ? (
+                    <div className="relative pl-8 space-y-8 before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-0.5 before:bg-surface-container">
+                      {trackingTimeline.map((step, idx) => (
+                        <div key={idx} className="relative flex gap-6">
+                          <div className={`absolute -left-[29px] top-1.5 w-4 h-4 rounded-full border-4 border-white shadow-sm ${idx === 0 ? 'bg-[#FF4500]' : 'bg-surface-container'}`}></div>
+                          <div className="w-24 shrink-0">
+                            <p className="text-[10px] font-black text-on-surface">{new Date(step.time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</p>
+                            <p className="text-[9px] text-secondary font-bold">{new Date(step.time).toLocaleDateString('vi-VN')}</p>
+                          </div>
+                          <div className="flex-1">
+                            <p className={`text-xs font-bold leading-relaxed ${idx === 0 ? 'text-[#FF4500]' : 'text-secondary'}`}>
+                              {step.status}
+                            </p>
+                            {step.location && <p className="text-[10px] text-secondary mt-1">{step.location}</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="py-12 text-center">
+                      <Truck size={40} className="mx-auto text-secondary opacity-20 mb-4" />
+                      <p className="text-sm font-bold text-secondary">Không có lịch sử hành trình chi tiết</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-6 border-t border-surface-container bg-surface-container-low flex justify-center">
+                <p className="text-[10px] text-secondary font-medium">Đăng nhập to see more details.</p>
               </div>
             </motion.div>
           </div>

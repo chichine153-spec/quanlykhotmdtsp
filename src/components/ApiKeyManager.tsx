@@ -4,6 +4,7 @@ import { ShopeeService } from '../services/shopeeService';
 
 export default function ApiKeyManager() {
   const [geminiKey, setGeminiKey] = React.useState('');
+  const [ghnToken, setGhnToken] = React.useState('');
   const [supabaseUrl, setSupabaseUrl] = React.useState('');
   const [supabaseKey, setSupabaseKey] = React.useState('');
   const [isValidating, setIsValidating] = React.useState(false);
@@ -12,10 +13,12 @@ export default function ApiKeyManager() {
 
   React.useEffect(() => {
     const savedGemini = localStorage.getItem('gemini_api_key');
+    const savedGhn = localStorage.getItem('ghn_token');
     const savedSbUrl = localStorage.getItem('supabase_url');
     const savedSbKey = localStorage.getItem('supabase_anon_key');
     
     if (savedGemini) setGeminiKey(savedGemini);
+    if (savedGhn) setGhnToken(savedGhn);
     if (savedSbUrl) setSupabaseUrl(savedSbUrl);
     if (savedSbKey) setSupabaseKey(savedSbKey);
 
@@ -34,6 +37,7 @@ export default function ApiKeyManager() {
     
     if (isGeminiValid && supabaseKey) {
       localStorage.setItem('gemini_api_key', geminiKey);
+      localStorage.setItem('ghn_token', ghnToken);
       localStorage.setItem('supabase_url', supabaseUrl || 'https://pdqhkeewyvimykvyexgo.supabase.co');
       localStorage.setItem('supabase_anon_key', supabaseKey);
       setStatus('valid');
@@ -91,6 +95,18 @@ export default function ApiKeyManager() {
                 value={geminiKey}
                 onChange={(e) => setGeminiKey(e.target.value)}
                 placeholder="Dán Gemini API Key..."
+                className="w-full px-4 py-3 bg-surface-container-low rounded-xl text-sm outline-none border-2 border-transparent focus:border-primary transition-all"
+              />
+            </div>
+
+            {/* GHN Token Section */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-secondary uppercase tracking-widest">GHN API Token</label>
+              <input 
+                type="password"
+                value={ghnToken}
+                onChange={(e) => setGhnToken(e.target.value)}
+                placeholder="Dán GHN Token..."
                 className="w-full px-4 py-3 bg-surface-container-low rounded-xl text-sm outline-none border-2 border-transparent focus:border-primary transition-all"
               />
             </div>

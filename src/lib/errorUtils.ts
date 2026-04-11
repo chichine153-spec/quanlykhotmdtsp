@@ -48,6 +48,16 @@ export function classifyError(error: any, defaultService: ServiceType): Classifi
     isAuth = true;
   }
 
+  // Detect Offline/Connection issues
+  if (errorStr.includes('offline') || errorStr.includes('failed to get document')) {
+    return {
+      service,
+      message: `Lỗi Kết Nối (${service}): Không thể kết nối tới máy chủ. Vui lòng kiểm tra Internet hoặc Project ID/API Key có chính xác không.`,
+      isQuota: false,
+      isAuth: false
+    };
+  }
+
   return {
     service,
     message: formatFriendlyMessage(service, isQuota, isAuth, message),

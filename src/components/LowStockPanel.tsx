@@ -45,11 +45,11 @@ export default function LowStockPanel() {
       // Hiển thị sản phẩm nếu:
       // 1. Có gợi ý nhập hàng (suggested_restock_qty > 0)
       // 2. Hoặc tồn kho cực thấp (<= 5)
-      // 3. Hoặc sắp hết hàng dựa trên vận tốc (days_until_empty <= 7)
+      // 3. Hoặc sắp hết hàng dựa trên vận tốc (days_until_empty <= 3)
       const filtered = forecastData?.filter(item => 
         item.suggested_restock_qty > 0 || 
         item.stock_quantity <= 5 ||
-        (item.daily_velocity > 0 && item.days_until_empty <= 7)
+        (item.daily_velocity > 0 && item.days_until_empty <= 3)
       ) || [];
 
       setData(filtered.sort((a, b) => {

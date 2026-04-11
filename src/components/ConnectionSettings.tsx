@@ -57,6 +57,19 @@ export default function ConnectionSettings() {
   const [isLoadingSample, setIsLoadingSample] = React.useState(false);
   const [showSql, setShowSql] = React.useState(false);
 
+  const handleReset = () => {
+    if (window.confirm('Bạn có chắc muốn xóa toàn bộ cấu hình và quay về mặc định?')) {
+      localStorage.removeItem('gemini_api_key');
+      localStorage.removeItem('supabase_url');
+      localStorage.removeItem('supabase_anon_key');
+      localStorage.removeItem('fb_web_api_key');
+      localStorage.removeItem('fb_web_auth_domain');
+      localStorage.removeItem('fb_web_project_id');
+      localStorage.removeItem('fb_web_storage_bucket');
+      window.location.reload();
+    }
+  };
+
   const handleSave = () => {
     localStorage.setItem('gemini_api_key', config.geminiKey);
     localStorage.setItem('supabase_url', config.supabaseUrl);
@@ -132,7 +145,17 @@ export default function ConnectionSettings() {
 
       // Attempt a simple read to test connection
       // We use a dummy doc path
-      await getDoc(doc(firestore, 'test_connection', 'ping'));
+      try {
+        await getDoc(doc(firestore, 'test_connection', 'ping'));
+      } catch (readErr: any) {
+        // If it's just a permission error, it means we connected but can't read
+        // which is fine for a connection test if the project exists
+        if (readErr.code === 'permission-denied') {
+          setStatus(prev => ({ ...prev, firebase: 'success' }));
+          return;
+        }
+        throw readErr;
+      }
       
       setStatus(prev => ({ ...prev, firebase: 'success' }));
     } catch (err: any) {
@@ -223,6 +246,10 @@ CREATE TABLE IF NOT EXISTS public.print_history (
     quantity INTEGER DEFAULT 1,
     image_url TEXT,
     is_cup BOOLEAN DEFAULT false,
+    status TEXT DEFAULT 'Giao hàng',
+    tracking_log JSONB DEFAULT '[]'::jsonb,
+    carrier TEXT DEFAULT 'GHN',
+    last_checked_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -504,6 +531,14 @@ CREATE POLICY "Allow anon access for inventory" ON public.inventory FOR ALL TO a
           >
             <CheckCircle2 size={20} />
             LƯU VÀ ÁP DỤNG CẤU HÌNH
+          </button>
+
+          <button 
+            onClick={handleReset}
+            className="flex-1 min-w-[200px] py-4 bg-error/10 text-error rounded-2xl font-black text-sm hover:bg-error hover:text-white transition-all flex items-center justify-center gap-2"
+          >
+            <RefreshCw size={20} />
+            XÓA CẤU HÌNH & RESET
           </button>
 
           <button 
