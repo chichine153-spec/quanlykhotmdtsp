@@ -904,7 +904,8 @@ export class PDFService {
             quantity: item.quantity,
             user_id: auth.currentUser?.uid,
             created_at: new Date().toISOString(),
-            is_cup: order.isCup || false
+            is_cup: order.isCup || false,
+            status: 'Giao hàng'
           }));
 
           const { error: supabaseError } = await supabase

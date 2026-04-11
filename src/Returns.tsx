@@ -232,7 +232,7 @@ export default function Returns() {
                   <div className="bg-surface-container-low rounded-2xl p-4">
                     <p className="text-[10px] text-secondary font-bold uppercase tracking-widest mb-3">Sản phẩm hoàn trả</p>
                     <div className="space-y-4">
-                      {currentOrder.items.map((item: any, idx: number) => (
+                      {Array.isArray(currentOrder.items) && currentOrder.items.map((item: any, idx: number) => (
                         <div key={idx} className="flex items-center gap-4">
                           <div className="w-16 h-16 rounded-lg overflow-hidden bg-white border border-surface-container flex items-center justify-center">
                             <Package className="text-secondary/20" size={32} />
@@ -340,7 +340,7 @@ export default function Returns() {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex flex-col gap-1">
-                        {record.items.map((item: any, i: number) => (
+                        {Array.isArray(record.items) && record.items.map((item: any, i: number) => (
                           <div key={i} className="text-xs">
                             <span className="font-bold">{item.productName}</span>
                             <span className="text-secondary ml-2">({item.sku} | {item.variant})</span>

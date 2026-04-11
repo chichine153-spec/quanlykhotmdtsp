@@ -16,6 +16,7 @@ interface AuthContextType {
   paymentStatus: 'none' | 'pending' | 'completed' | null;
   expiryDate: string | null;
   phone: string | null;
+  globalConfig: any | null;
   loading: boolean;
   error: string | null;
   login: () => Promise<void>;
@@ -33,6 +34,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [paymentStatus, setPaymentStatus] = useState<'none' | 'pending' | 'completed' | null>(null);
   const [expiryDate, setExpiryDate] = useState<string | null>(null);
   const [phone, setPhone] = useState<string | null>(null);
+  const [globalConfig, setGlobalConfig] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,6 +59,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         // Fetch/Create profile from Firestore
         try {
+          // Fetch Global Config first
+          const configDoc = await getDoc(doc(db, 'system_settings', 'config'));
+          if (configDoc.exists()) {
+            const configData = configDoc.data();
+            setGlobalConfig(configData);
+            // Sync to localStorage as fallback for services that don't use context
+            if (configData.gemini_api_key) localStorage.setItem('global_gemini_key', configData.gemini_api_key);
+            if (configData.supabase_url) localStorage.setItem('global_supabase_url', configData.supabase_url);
+            if (configData.supabase_anon_key) localStorage.setItem('global_supabase_key', configData.supabase_anon_key);
+            if (configData.fb_web_api_key) localStorage.setItem('global_fb_api_key', configData.fb_web_api_key);
+            if (configData.fb_web_project_id) localStorage.setItem('global_fb_project_id', configData.fb_web_project_id);
+          }
+
           const userDocRef = doc(db, 'users', user.uid);
           const userDoc = await getDoc(userDocRef);
           
@@ -158,7 +173,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const clearError = () => setError(null);
 
   return (
-    <AuthContext.Provider value={{ user, role, status, paymentStatus, expiryDate, phone, loading, error, login, logout, clearError, isSubscriptionValid }}>
+    <AuthContext.Provider value={{ user, role, status, paymentStatus, expiryDate, phone, globalConfig, loading, error, login, logout, clearError, isSubscriptionValid }}>
       {!loading && children}
     </AuthContext.Provider>
   );

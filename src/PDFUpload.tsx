@@ -612,7 +612,7 @@ export default function PDFUpload() {
                       <p className="text-[10px] uppercase tracking-wider font-bold text-primary mb-2">Đơn hàng cuối cùng:</p>
                       <p className="font-mono text-xs mb-2">{lastOrder.trackingCode}</p>
                       <div className="space-y-1">
-                        {lastOrder.items.map((item, idx) => (
+                        {Array.isArray(lastOrder.items) && lastOrder.items.map((item, idx) => (
                           <div key={idx} className="flex justify-between text-[11px]">
                             <span>{item.sku} {item.color ? `(${item.color})` : ''}</span>
                             <span className="font-bold">-{item.quantity}</span>
@@ -869,7 +869,7 @@ export default function PDFUpload() {
                           <td className="px-4 py-3 font-mono text-[11px] text-on-surface">{order.trackingCode}</td>
                           <td className="px-4 py-3">
                             <div className="space-y-2">
-                              {order.items.map((item, iIdx) => (
+                              {Array.isArray(order.items) && order.items.map((item, iIdx) => (
                                 <div key={iIdx} className="flex flex-col">
                                   <div className="text-[11px] font-bold text-secondary">
                                     {item.sku} {item.color ? ` - ${item.color}` : ''}

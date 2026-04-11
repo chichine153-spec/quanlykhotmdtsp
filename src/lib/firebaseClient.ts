@@ -7,9 +7,9 @@ import { getFirestore, Firestore } from 'firebase/firestore';
  */
 export function getFirebaseApp(): FirebaseApp | null {
   const config = {
-    apiKey: localStorage.getItem('fb_web_api_key'),
+    apiKey: localStorage.getItem('fb_web_api_key') || localStorage.getItem('global_fb_api_key'),
     authDomain: localStorage.getItem('fb_web_auth_domain'),
-    projectId: localStorage.getItem('fb_web_project_id'),
+    projectId: localStorage.getItem('fb_web_project_id') || localStorage.getItem('global_fb_project_id'),
     storageBucket: localStorage.getItem('fb_web_storage_bucket')
   };
 

@@ -3,9 +3,16 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 let supabaseInstance: SupabaseClient | null = null;
 
 export function getSupabase(customUrl?: string, customKey?: string): SupabaseClient | null {
-  // Priority: 1. Custom arguments (for testing) 2. LocalStorage (user config) 3. Environment variables (defaults)
-  const supabaseAnonKey = customKey || localStorage.getItem('supabase_anon_key') || import.meta.env.VITE_SUPABASE_ANON_KEY;
-  const supabaseUrl = customUrl || localStorage.getItem('supabase_url') || import.meta.env.VITE_SUPABASE_URL;
+  // Priority: 1. Custom arguments (for testing) 2. LocalStorage (user config) 3. Global Config (admin set) 4. Environment variables (defaults)
+  const supabaseAnonKey = customKey || 
+                         localStorage.getItem('supabase_anon_key') || 
+                         localStorage.getItem('global_supabase_key') ||
+                         import.meta.env.VITE_SUPABASE_ANON_KEY;
+                         
+  const supabaseUrl = customUrl || 
+                     localStorage.getItem('supabase_url') || 
+                     localStorage.getItem('global_supabase_url') ||
+                     import.meta.env.VITE_SUPABASE_URL;
   
   if (!supabaseUrl || !supabaseAnonKey) {
     console.warn('[Supabase] Supabase URL or Anon Key is missing. Supabase features will be disabled.');

@@ -21,9 +21,11 @@ import { db, auth } from '../firebase';
 import { collection, addDoc, getDocs, query, where, limit } from 'firebase/firestore';
 import { classifyError } from '../lib/errorUtils';
 import { getFirebaseFirestore } from '../lib/firebaseClient';
-import { getDoc, doc } from 'firebase/firestore';
+import { getDoc, doc, setDoc } from 'firebase/firestore';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function ConnectionSettings() {
+  const { role } = useAuth();
   const [config, setConfig] = React.useState({
     geminiKey: localStorage.getItem('gemini_api_key') || '',
     supabaseUrl: localStorage.getItem('supabase_url') || '',
@@ -31,7 +33,8 @@ export default function ConnectionSettings() {
     firebaseApiKey: localStorage.getItem('fb_web_api_key') || '',
     firebaseAuthDomain: localStorage.getItem('fb_web_auth_domain') || '',
     firebaseProjectId: localStorage.getItem('fb_web_project_id') || '',
-    firebaseStorageBucket: localStorage.getItem('fb_web_storage_bucket') || ''
+    firebaseStorageBucket: localStorage.getItem('fb_web_storage_bucket') || '',
+    ghnToken: localStorage.getItem('ghn_api_token') || ''
   });
 
   const [status, setStatus] = React.useState<{
@@ -66,6 +69,7 @@ export default function ConnectionSettings() {
       localStorage.removeItem('fb_web_auth_domain');
       localStorage.removeItem('fb_web_project_id');
       localStorage.removeItem('fb_web_storage_bucket');
+      localStorage.removeItem('ghn_api_token');
       window.location.reload();
     }
   };
@@ -78,9 +82,37 @@ export default function ConnectionSettings() {
     localStorage.setItem('fb_web_auth_domain', config.firebaseAuthDomain);
     localStorage.setItem('fb_web_project_id', config.firebaseProjectId);
     localStorage.setItem('fb_web_storage_bucket', config.firebaseStorageBucket);
+    localStorage.setItem('ghn_api_token', config.ghnToken);
     resetSupabaseInstance();
     alert('Đã lưu cấu hình! Hệ thống sẽ tải lại để áp dụng.');
     window.location.reload();
+  };
+
+  const handleSaveGlobal = async () => {
+    if (role !== 'admin') return;
+    
+    if (!window.confirm('Bạn có chắc muốn lưu cấu hình này làm MẶC ĐỊNH cho toàn bộ hệ thống? Tất cả tài khoản phụ sẽ sử dụng cấu hình này nếu họ chưa tự thiết lập riêng.')) {
+      return;
+    }
+
+    setIsInitializing(true);
+    try {
+      await setDoc(doc(db, 'system_settings', 'config'), {
+        gemini_api_key: config.geminiKey,
+        supabase_url: config.supabaseUrl,
+        supabase_anon_key: config.supabaseKey,
+        fb_web_api_key: config.firebaseApiKey,
+        fb_web_auth_domain: config.firebaseAuthDomain,
+        fb_web_project_id: config.firebaseProjectId,
+        fb_web_storage_bucket: config.firebaseStorageBucket,
+        updatedAt: new Date().toISOString()
+      });
+      alert('Đã lưu cấu hình hệ thống thành công!');
+    } catch (err: any) {
+      alert('Lỗi lưu cấu hình hệ thống: ' + err.message);
+    } finally {
+      setIsInitializing(false);
+    }
   };
 
   const checkGemini = async () => {
@@ -106,6 +138,10 @@ export default function ConnectionSettings() {
     setErrors(prev => ({ ...prev, supabase: '' }));
     
     try {
+      if (config.supabaseUrl && !config.supabaseUrl.startsWith('http')) {
+        throw new Error('URL Supabase phải bắt đầu bằng http:// hoặc https://');
+      }
+      
       // Use current input values for testing, not just what's in localStorage
       const supabase = getSupabase(config.supabaseUrl, config.supabaseKey);
       if (!supabase) throw new Error('Vui lòng nhập đầy đủ URL và Key');
@@ -253,18 +289,64 @@ CREATE TABLE IF NOT EXISTS public.print_history (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- 2.1 Cập nhật các cột còn thiếu nếu bảng đã tồn tại
+DO $$ 
+BEGIN 
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='print_history' AND column_name='status') THEN
+        ALTER TABLE public.print_history ADD COLUMN status TEXT DEFAULT 'Giao hàng';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='print_history' AND column_name='tracking_log') THEN
+        ALTER TABLE public.print_history ADD COLUMN tracking_log JSONB DEFAULT '[]'::jsonb;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='print_history' AND column_name='carrier') THEN
+        ALTER TABLE public.print_history ADD COLUMN carrier TEXT DEFAULT 'GHN';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='print_history' AND column_name='last_checked_at') THEN
+        ALTER TABLE public.print_history ADD COLUMN last_checked_at TIMESTAMPTZ;
+    END IF;
+END $$;
+
 -- 3. Tạo bảng tồn kho (Inventory) trên Supabase
 CREATE TABLE IF NOT EXISTS public.inventory (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     user_id TEXT NOT NULL,
     product_name TEXT NOT NULL,
     sku TEXT,
+    variant TEXT,
     stock_quantity INTEGER DEFAULT 0,
+    min_stock INTEGER DEFAULT 5,
+    image_url TEXT,
     updated_at TIMESTAMPTZ DEFAULT now(),
-    UNIQUE(user_id, product_name)
+    UNIQUE(user_id, product_name, variant)
 );
 
+-- 3.1 Cập nhật các cột còn thiếu cho bảng inventory
+DO $$ 
+BEGIN 
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='inventory' AND column_name='variant') THEN
+        ALTER TABLE public.inventory ADD COLUMN variant TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='inventory' AND column_name='min_stock') THEN
+        ALTER TABLE public.inventory ADD COLUMN min_stock INTEGER DEFAULT 5;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='inventory' AND column_name='image_url') THEN
+        ALTER TABLE public.inventory ADD COLUMN image_url TEXT;
+    END IF;
+END $$;
+
 -- 4. Tạo View Dự báo nhập hàng thông minh (Restock Forecast)
+DROP VIEW IF EXISTS public.restock_forecast;
+CREATE OR REPLACE VIEW public.restock_forecast AS
+SELECT 
+    user_id,
+    sku,
+    product_name,
+    variant,
+    stock_quantity,
+    min_stock,
+    (min_stock - stock_quantity) as needed_quantity
+FROM public.inventory
+WHERE stock_quantity < min_stock;
 CREATE OR REPLACE VIEW public.restock_forecast AS
 WITH sales_velocity AS (
     -- Tính vận tốc bán trong 10 ngày gần nhất
@@ -343,6 +425,18 @@ CREATE POLICY "Allow anon access for inventory" ON public.inventory FOR ALL TO a
                 placeholder="Dán API Key từ Google AI Studio..."
                 className="w-full px-4 py-3 bg-surface-container-low rounded-xl text-sm outline-none border-2 border-transparent focus:border-primary transition-all"
               />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-secondary uppercase tracking-widest">GHN API Token (Vận chuyển)</label>
+              <input 
+                type="password"
+                value={config.ghnToken}
+                onChange={(e) => setConfig({ ...config, ghnToken: e.target.value })}
+                placeholder="Dán Token từ Giao Hàng Nhanh..."
+                className="w-full px-4 py-3 bg-surface-container-low rounded-xl text-sm outline-none border-2 border-transparent focus:border-primary transition-all"
+              />
+              <p className="text-[9px] text-secondary italic">Dùng để tự động cập nhật hành trình đơn hàng GHN.</p>
             </div>
 
             <div className="flex items-center justify-between pt-2">
@@ -530,8 +624,19 @@ CREATE POLICY "Allow anon access for inventory" ON public.inventory FOR ALL TO a
             className="flex-1 min-w-[200px] py-4 bg-primary text-white rounded-2xl font-black text-sm shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2"
           >
             <CheckCircle2 size={20} />
-            LƯU VÀ ÁP DỤNG CẤU HÌNH
+            LƯU VÀ ÁP DỤNG CÁ NHÂN
           </button>
+
+          {role === 'admin' && (
+            <button 
+              onClick={handleSaveGlobal}
+              disabled={isInitializing}
+              className="flex-1 min-w-[200px] py-4 bg-purple-600 text-white rounded-2xl font-black text-sm shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+            >
+              {isInitializing ? <Loader2 size={20} className="animate-spin" /> : <Cpu size={20} />}
+              LƯU LÀM MẶC ĐỊNH HỆ THỐNG
+            </button>
+          )}
 
           <button 
             onClick={handleReset}

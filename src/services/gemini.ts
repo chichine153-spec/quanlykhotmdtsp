@@ -17,7 +17,9 @@ export class GeminiService {
   static getInstance(): GoogleGenAI | null {
     if (this.instance) return this.instance;
 
-    const apiKey = localStorage.getItem('gemini_api_key') || GEMINI_API_KEY;
+    const apiKey = localStorage.getItem('gemini_api_key') || 
+                   localStorage.getItem('global_gemini_key') || 
+                   GEMINI_API_KEY;
     if (!apiKey) {
       console.warn('[GeminiService] No API Key found in LocalStorage or Constant.');
       return null;

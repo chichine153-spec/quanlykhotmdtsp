@@ -686,7 +686,7 @@ export default function Inventory() {
     }
   };
 
-  const categories = ['All', ...Array.from(new Set(products.map(p => p.category)))];
+  const categories = ['All', ...Array.from(new Set((Array.isArray(products) ? products : []).map(p => p.category)))];
   const statuses = [
     { id: 'All', label: 'Tất cả trạng thái' },
     { id: 'in_stock', label: 'Còn hàng' },
@@ -694,7 +694,7 @@ export default function Inventory() {
     { id: 'out_of_stock', label: 'Hết hàng' }
   ];
 
-    const filteredProducts = products.filter(p => {
+    const filteredProducts = (Array.isArray(products) ? products : []).filter(p => {
       const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
                            p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
                            (p.variant || '').toLowerCase().includes(searchTerm.toLowerCase());
@@ -880,7 +880,7 @@ export default function Inventory() {
           </div>
           <div>
             <p className="text-[10px] uppercase tracking-widest text-secondary font-bold mb-1">Tổng sản phẩm</p>
-            <p className="text-3xl font-black text-on-surface">{products.length}</p>
+            <p className="text-3xl font-black text-on-surface">{(Array.isArray(products) ? products : []).length}</p>
           </div>
         </div>
         <div 
@@ -894,7 +894,7 @@ export default function Inventory() {
           </div>
           <div>
             <p className="text-[10px] uppercase tracking-widest text-secondary font-bold mb-1">Sắp hết hàng</p>
-            <p className="text-3xl font-black text-primary">{products.filter(p => Number(p.stock) > 0 && Number(p.stock) <= 10).length}</p>
+            <p className="text-3xl font-black text-primary">{(Array.isArray(products) ? products : []).filter(p => Number(p.stock) > 0 && Number(p.stock) <= 10).length}</p>
           </div>
         </div>
         <div 
@@ -909,7 +909,7 @@ export default function Inventory() {
           <div>
             <p className="text-[10px] uppercase tracking-widest text-secondary font-bold mb-1">Cần nhập thêm</p>
             <p className="text-3xl font-black text-on-surface">
-              {Math.max(forecastCount, products.filter(p => Number(p.stock) <= 5).length)}
+              {Math.max(forecastCount, (Array.isArray(products) ? products : []).filter(p => Number(p.stock) <= 5).length)}
             </p>
           </div>
         </div>
@@ -923,7 +923,7 @@ export default function Inventory() {
               <Loader2 className="animate-spin" size={48} />
               <p className="font-bold">Đang tải kho hàng...</p>
             </div>
-          ) : products.length === 0 ? (
+          ) : (Array.isArray(products) ? products : []).length === 0 ? (
             <div className="p-20 flex flex-col items-center justify-center text-secondary gap-4">
               <Package size={48} className="opacity-20" />
               <p className="font-bold">Kho hàng trống. Hãy nạp dữ liệu mẫu hoặc thêm SKU mới.</p>
