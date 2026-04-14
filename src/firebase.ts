@@ -12,6 +12,7 @@ const initialDbId = firebaseConfig.firestoreDatabaseId || '(default)';
 
 // Initialize Firestore with long-polling to prevent "INTERNAL ASSERTION FAILED" errors
 // and improve stability when hitting quota limits or in restricted network environments.
+// Note: "INTERNAL ASSERTION FAILED" is often a side-effect of hitting the daily free read quota.
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
 }, initialDbId);

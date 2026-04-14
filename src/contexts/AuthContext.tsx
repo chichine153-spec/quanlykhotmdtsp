@@ -110,11 +110,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } catch (err: any) {
           console.error('Error fetching user role:', err);
           
-          // If quota exceeded, we already have cached values or we use defaults
-          const isQuotaError = err.message?.includes('Quota') || JSON.stringify(err).includes('Quota');
+          // If quota exceeded or internal error, we already have cached values or we use defaults
+          const errorMsg = err.message || JSON.stringify(err);
+          const isQuotaError = errorMsg.includes('Quota') || errorMsg.includes('INTERNAL ASSERTION FAILED');
           
           if (isQuotaError) {
-            setError('Hệ thống đã đạt giới hạn truy cập miễn phí (Quota Exceeded). Đang sử dụng dữ liệu tạm thời.');
+            setError('Hệ thống đã đạt giới hạn truy cập hoặc gặp sự cố kết nối. Đang sử dụng dữ liệu tạm thời.');
           }
 
           if (!cachedRole) {

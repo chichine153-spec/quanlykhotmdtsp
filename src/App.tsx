@@ -68,11 +68,6 @@ export default function App() {
   }, [user]);
 
   const renderScreen = () => {
-    // Prevent non-admins from accessing settings
-    if (activeScreen === 'settings' && role !== 'admin') {
-      return <Dashboard />;
-    }
-
     switch (activeScreen) {
       case 'dashboard':
         return <Dashboard />;
