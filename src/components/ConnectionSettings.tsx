@@ -419,7 +419,7 @@ CREATE POLICY "Allow anon access for inventory" ON public.inventory FOR ALL TO a
             <div className="space-y-2">
               <label className="text-[10px] font-black text-secondary uppercase tracking-widest">Gemini API Key</label>
               <input 
-                type="text"
+                type="password"
                 value={config.geminiKey}
                 onChange={(e) => setConfig({ ...config, geminiKey: e.target.value })}
                 placeholder="Dán API Key từ Google AI Studio..."
@@ -430,7 +430,7 @@ CREATE POLICY "Allow anon access for inventory" ON public.inventory FOR ALL TO a
             <div className="space-y-2">
               <label className="text-[10px] font-black text-secondary uppercase tracking-widest">GHN API Token (Vận chuyển)</label>
               <input 
-                type="text"
+                type="password"
                 value={config.ghnToken}
                 onChange={(e) => setConfig({ ...config, ghnToken: e.target.value })}
                 placeholder="Dán Token từ Giao Hàng Nhanh..."
@@ -486,7 +486,7 @@ CREATE POLICY "Allow anon access for inventory" ON public.inventory FOR ALL TO a
             <div className="space-y-2">
               <label className="text-[10px] font-black text-secondary uppercase tracking-widest">Supabase Anon Key</label>
               <input 
-                type="text"
+                type="password"
                 value={config.supabaseKey}
                 onChange={(e) => setConfig({ ...config, supabaseKey: e.target.value })}
                 placeholder="Dán Anon Key..."
@@ -549,7 +549,7 @@ CREATE POLICY "Allow anon access for inventory" ON public.inventory FOR ALL TO a
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-secondary uppercase tracking-widest">API Key</label>
                 <input 
-                  type="text"
+                  type="password"
                   value={config.firebaseApiKey}
                   onChange={(e) => setConfig({ ...config, firebaseApiKey: e.target.value })}
                   placeholder="Firebase API Key..."

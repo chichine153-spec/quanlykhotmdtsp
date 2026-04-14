@@ -100,9 +100,12 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
     { id: 'stockin', label: 'Nhập kho hàng về', icon: Search },
     { id: 'reprint', label: 'In lại đơn hàng', icon: RotateCcw },
     { id: 'profit', label: 'Báo cáo lợi nhuận', icon: TrendingUp },
-    { id: 'settings', label: 'Cấu hình kết nối', icon: Settings },
-    { id: 'accounts', label: 'Quản lý tài khoản', icon: Users },
   ];
+
+  if (role === 'admin') {
+    navItems.push({ id: 'settings', label: 'Cấu hình kết nối', icon: Settings });
+    navItems.push({ id: 'accounts', label: 'Quản lý tài khoản', icon: Users });
+  }
 
   const isExpired = expiryDate ? new Date(expiryDate) < new Date() : true;
   const isValid = isSubscriptionValid();
@@ -128,7 +131,7 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
                 <AlertTriangle size={20} className="animate-pulse" />
                 <div className="flex flex-col">
                   <span className="text-sm font-black uppercase tracking-widest">Hết hạn mức truy cập (Quota Exceeded)</span>
-                  <span className="text-[10px] opacity-80 font-medium">Hệ thống đã đạt giới hạn truy cập miễn phí trong ngày. Vui lòng quay lại sau 24h hoặc <b>Cấu hình kết nối</b> với Supabase riêng của bạn để không bị giới hạn.</span>
+                  <span className="text-[10px] opacity-80 font-medium">Hệ thống đã đạt giới hạn truy cập miễn phí trong ngày. Vui lòng quay lại sau 24h {role === 'admin' && <>hoặc <b>Cấu hình kết nối</b> với Supabase riêng của bạn để không bị giới hạn.</>}</span>
                 </div>
               </div>
               <button 
@@ -188,19 +191,21 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
             </div>
           )}
 
-          <button 
-            onClick={onOpenKeyModal}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border ${
-              hasApiKey 
-                ? 'bg-green-50 border-green-200 text-green-600' 
-                : 'bg-red-50 border-red-200 text-red-600 animate-pulse'
-            }`}
-          >
-            <Key size={18} />
-            <span className="text-xs font-bold uppercase tracking-tight">
-              {hasApiKey ? 'Hệ thống: Đã kết nối' : 'Cấu hình API'}
-            </span>
-          </button>
+          {role === 'admin' && (
+            <button 
+              onClick={onOpenKeyModal}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border ${
+                hasApiKey 
+                  ? 'bg-green-50 border-green-200 text-green-600' 
+                  : 'bg-red-50 border-red-200 text-red-600 animate-pulse'
+              }`}
+            >
+              <Key size={18} />
+              <span className="text-xs font-bold uppercase tracking-tight">
+                {hasApiKey ? 'Hệ thống: Đã kết nối' : 'Cấu hình API'}
+              </span>
+            </button>
+          )}
           {error && !user && (
             <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-red-50 text-red-600 rounded-full text-[10px] font-bold border border-red-100">
               <AlertTriangle size={12} />
