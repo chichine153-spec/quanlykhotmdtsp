@@ -32,12 +32,12 @@ export default function App() {
     }
   }, [user, isValid, role]);
 
-  // Check for API key on load
+  // Check for API key on load - Only for Admin
   React.useEffect(() => {
-    if (!GeminiService.hasApiKey()) {
+    if (role === 'admin' && !GeminiService.hasApiKey()) {
       setShowKeyModal(true);
     }
-  }, []);
+  }, [role]);
 
   // Automatic cleanup of expired data on app load - only once per session
   React.useEffect(() => {

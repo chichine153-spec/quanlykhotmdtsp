@@ -44,6 +44,8 @@ export class GeminiService {
    * Checks if an API key is configured.
    */
   static hasApiKey(): boolean {
-    return !!(localStorage.getItem('gemini_api_key') || GEMINI_API_KEY);
+    return !!(localStorage.getItem('gemini_api_key') || 
+              localStorage.getItem('global_gemini_key') || 
+              GEMINI_API_KEY);
   }
 }
