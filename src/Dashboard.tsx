@@ -174,12 +174,6 @@ export default function Dashboard() {
           <h2 className="text-3xl font-black tracking-tight text-on-surface font-headline leading-none uppercase">CHÀO MỪNG TRỞ LẠI, {role === 'admin' ? 'ADMIN' : user?.displayName?.toUpperCase()}</h2>
           <p className="text-secondary mt-2 body-md">Zenith OMS - Hệ thống quản lý kho chuyên nghiệp.</p>
         </div>
-        <div className="flex gap-2">
-          <button className="px-6 py-2 bg-gradient-to-br from-primary to-primary-container text-white rounded-full font-medium text-sm transition-all hover:shadow-lg active:scale-95 flex items-center gap-2">
-            <Plus size={18} />
-            Tạo đơn hàng mới
-          </button>
-        </div>
       </header>
 
       {/* Date Selector for 10-Day Report */}
@@ -234,12 +228,12 @@ export default function Dashboard() {
       )}
 
       {/* Bento Grid Dashboard */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {/* Main Summary Stats - Clickable for details */}
         <motion.div 
           variants={item}
           onClick={() => setShowOrderDetails(true)}
-          className="md:col-span-2 lg:col-span-1 glass-morphism rounded-3xl p-8 shadow-sm border border-white/10 flex flex-col justify-between cursor-pointer hover:bg-white/40 transition-all group"
+          className="glass-morphism rounded-3xl p-8 shadow-sm border border-white/10 flex flex-col justify-between cursor-pointer hover:bg-white/40 transition-all group"
         >
           <div>
             <div className="flex justify-between items-start mb-4">
@@ -273,50 +267,14 @@ export default function Dashboard() {
           </div>
           <div>
             <h3 className="text-3xl font-black text-on-surface font-headline mt-6">{shippingCount}</h3>
-            <p className="text-secondary font-medium">Đang giao hàng</p>
+            <p className="text-secondary font-medium">Đơn hàng đã xử lý</p>
           </div>
         </motion.div>
-
-        {/* Subscription Status Card */}
-        {role !== 'admin' && (
-          <motion.div 
-            variants={item}
-            className={`glass-morphism rounded-3xl p-8 border flex flex-col justify-between ${
-              isSubscriptionValid() ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
-            }`}
-          >
-            <div className="flex justify-between items-start">
-              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white ${
-                isSubscriptionValid() ? 'bg-green-500' : 'bg-red-500'
-              }`}>
-                <ShieldCheck size={24} />
-              </div>
-              <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
-                isSubscriptionValid() ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-              }`}>
-                {isSubscriptionValid() ? 'Đã kích hoạt' : 'Hết hạn'}
-              </span>
-            </div>
-            <div>
-              <h3 className={`text-lg font-black font-headline mt-6 ${
-                isSubscriptionValid() ? 'text-green-900' : 'text-red-900'
-              }`}>
-                Gói Foot
-              </h3>
-              <p className="text-xs font-bold text-secondary opacity-80">
-                Hết hạn: {expiryDate ? new Date(expiryDate).toLocaleDateString('vi-VN') : 'N/A'}
-              </p>
-              {!isSubscriptionValid() && (
-                <p className="text-[10px] text-red-600 mt-2 font-bold italic">Vui lòng liên hệ Admin để kích hoạt</p>
-              )}
-            </div>
-          </motion.div>
-        )}
 
         {/* Best Seller Analysis */}
         <motion.div 
           variants={item}
-          className="md:col-span-3 lg:col-span-1 lg:row-span-2 glass-morphism rounded-3xl p-6 shadow-sm border border-white/10 overflow-hidden flex flex-col"
+          className="lg:row-span-2 glass-morphism rounded-3xl p-6 shadow-sm border border-white/10 overflow-hidden flex flex-col"
         >
           <h3 className="text-lg font-bold text-on-surface mb-6 flex items-center gap-2">
             <Star className="text-primary" size={20} />
@@ -355,77 +313,113 @@ export default function Dashboard() {
           </button>
         </motion.div>
 
+        {/* Subscription Status Card */}
+        {role !== 'admin' && (
+          <motion.div 
+            variants={item}
+            className={`glass-morphism rounded-3xl p-8 border flex flex-col justify-between ${
+              isSubscriptionValid() ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+            }`}
+          >
+            <div className="flex justify-between items-start">
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white ${
+                isSubscriptionValid() ? 'bg-green-500' : 'bg-red-500'
+              }`}>
+                <ShieldCheck size={24} />
+              </div>
+              <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
+                isSubscriptionValid() ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+              }`}>
+                {isSubscriptionValid() ? 'Đã kích hoạt' : 'Hết hạn'}
+              </span>
+            </div>
+            <div>
+              <h3 className={`text-lg font-black font-headline mt-6 ${
+                isSubscriptionValid() ? 'text-green-900' : 'text-red-900'
+              }`}>
+                Gói Foot
+              </h3>
+              <p className="text-xs font-bold text-secondary opacity-80">
+                Hết hạn: {expiryDate ? new Date(expiryDate).toLocaleDateString('vi-VN') : 'N/A'}
+              </p>
+              {!isSubscriptionValid() && (
+                <p className="text-[10px] text-red-600 mt-2 font-bold italic">Vui lòng liên hệ Admin để kích hoạt</p>
+              )}
+            </div>
+          </motion.div>
+        )}
+
         {/* Category Analysis Visualizer */}
         <motion.div 
           variants={item}
-          className="md:col-span-2 lg:col-span-3 glass-morphism rounded-3xl p-8 shadow-sm border border-white/10 min-h-[350px] flex flex-col"
+          className={`${role === 'admin' ? 'md:col-span-2' : 'md:col-span-1 lg:col-span-2'} glass-morphism rounded-3xl p-8 shadow-sm border border-white/10 min-h-[350px] flex flex-col`}
         >
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
             <div>
               <h3 className="text-lg font-bold text-on-surface">Phân tích danh mục kinh doanh</h3>
               <p className="text-xs text-secondary mt-1">Dữ liệu bán ra ngày {new Date(selectedDate).toLocaleDateString('vi-VN')}</p>
             </div>
-            <div className="flex gap-4">
+            <div className="flex flex-wrap gap-2">
               <div className="flex items-center gap-2 px-3 py-1.5 bg-tertiary/10 text-tertiary rounded-full text-[10px] font-bold">
                 <span className="w-2 h-2 rounded-full bg-tertiary"></span>
-                Bình giữ nhiệt: {salesByCategory['Bình giữ nhiệt']} cái
+                Bình: {salesByCategory['Bình giữ nhiệt']}
               </div>
               <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 text-primary rounded-full text-[10px] font-bold">
                 <span className="w-2 h-2 rounded-full bg-primary"></span>
-                Cốc giữ nhiệt: {salesByCategory['Cốc giữ nhiệt']} cái
+                Cốc: {salesByCategory['Cốc giữ nhiệt']}
               </div>
             </div>
           </div>
           
-          <div className="flex-grow flex items-end justify-center gap-12 md:gap-24">
+          <div className="flex-grow flex items-end justify-around gap-4">
             {/* Bình giữ nhiệt Bar */}
-            <div className="flex flex-col items-center gap-4 flex-1 max-w-[120px]">
-              <div className="relative w-full h-48 bg-surface-container rounded-2xl overflow-hidden">
+            <div className="flex flex-col items-center gap-4 flex-1 max-w-[140px]">
+              <div className="relative w-full h-48 bg-surface-container rounded-2xl overflow-hidden shadow-inner">
                 <motion.div 
                   initial={{ height: 0 }}
                   animate={{ height: `${Math.min(100, (salesByCategory['Bình giữ nhiệt'] / (totalItemsToday || 1)) * 100)}%` }}
-                  className="absolute bottom-0 left-0 right-0 bg-tertiary rounded-t-xl flex items-start justify-center pt-2"
+                  className="absolute bottom-0 left-0 right-0 bg-tertiary rounded-t-xl flex items-start justify-center pt-2 shadow-lg"
                 >
                   <span className="text-[10px] font-bold text-white">{salesByCategory['Bình giữ nhiệt']}</span>
                 </motion.div>
               </div>
               <div className="text-center">
-                <span className="text-xs font-black text-on-surface uppercase block">Bình giữ nhiệt</span>
-                <span className="text-[10px] text-secondary font-bold">Tồn kho: {inventory.filter(p => (p.category || '').toLowerCase().includes('bình')).reduce((acc, p) => acc + p.stock, 0)} cái</span>
+                <span className="text-xs font-black text-on-surface uppercase block truncate w-full">Bình giữ nhiệt</span>
+                <span className="text-[10px] text-secondary font-bold">Tồn: {inventory.filter(p => (p.category || '').toLowerCase().includes('bình')).reduce((acc, p) => acc + p.stock, 0)}</span>
               </div>
             </div>
 
             {/* Cốc giữ nhiệt Bar */}
-            <div className="flex flex-col items-center gap-4 flex-1 max-w-[120px]">
-              <div className="relative w-full h-48 bg-surface-container rounded-2xl overflow-hidden">
+            <div className="flex flex-col items-center gap-4 flex-1 max-w-[140px]">
+              <div className="relative w-full h-48 bg-surface-container rounded-2xl overflow-hidden shadow-inner">
                 <motion.div 
                   initial={{ height: 0 }}
                   animate={{ height: `${Math.min(100, (salesByCategory['Cốc giữ nhiệt'] / (totalItemsToday || 1)) * 100)}%` }}
-                  className="absolute bottom-0 left-0 right-0 bg-primary rounded-t-xl flex items-start justify-center pt-2"
+                  className="absolute bottom-0 left-0 right-0 bg-primary rounded-t-xl flex items-start justify-center pt-2 shadow-lg"
                 >
                   <span className="text-[10px] font-bold text-white">{salesByCategory['Cốc giữ nhiệt']}</span>
                 </motion.div>
               </div>
               <div className="text-center">
-                <span className="text-xs font-black text-on-surface uppercase block">Cốc giữ nhiệt</span>
-                <span className="text-[10px] text-secondary font-bold">Tồn kho: {inventory.filter(p => (p.category || '').toLowerCase().includes('cốc')).reduce((acc, p) => acc + p.stock, 0)} cái</span>
+                <span className="text-xs font-black text-on-surface uppercase block truncate w-full">Cốc giữ nhiệt</span>
+                <span className="text-[10px] text-secondary font-bold">Tồn: {inventory.filter(p => (p.category || '').toLowerCase().includes('cốc')).reduce((acc, p) => acc + p.stock, 0)}</span>
               </div>
             </div>
 
             {/* Other Bar */}
-            <div className="flex flex-col items-center gap-4 flex-1 max-w-[120px]">
-              <div className="relative w-full h-48 bg-surface-container rounded-2xl overflow-hidden">
+            <div className="flex flex-col items-center gap-4 flex-1 max-w-[140px]">
+              <div className="relative w-full h-48 bg-surface-container rounded-2xl overflow-hidden shadow-inner">
                 <motion.div 
                   initial={{ height: 0 }}
                   animate={{ height: `${Math.min(100, (salesByCategory['Khác'] / (totalItemsToday || 1)) * 100)}%` }}
-                  className="absolute bottom-0 left-0 right-0 bg-secondary rounded-t-xl flex items-start justify-center pt-2"
+                  className="absolute bottom-0 left-0 right-0 bg-secondary rounded-t-xl flex items-start justify-center pt-2 shadow-lg"
                 >
                   <span className="text-[10px] font-bold text-white">{salesByCategory['Khác']}</span>
                 </motion.div>
               </div>
               <div className="text-center">
-                <span className="text-xs font-black text-on-surface uppercase block">Khác</span>
-                <span className="text-[10px] text-secondary font-bold">Tồn kho: {inventory.filter(p => !(p.category || '').toLowerCase().includes('bình') && !(p.category || '').toLowerCase().includes('cốc')).reduce((acc, p) => acc + p.stock, 0)} cái</span>
+                <span className="text-xs font-black text-on-surface uppercase block truncate w-full">Khác</span>
+                <span className="text-[10px] text-secondary font-bold">Tồn: {inventory.filter(p => !(p.category || '').toLowerCase().includes('bình') && !(p.category || '').toLowerCase().includes('cốc')).reduce((acc, p) => acc + p.stock, 0)}</span>
               </div>
             </div>
           </div>

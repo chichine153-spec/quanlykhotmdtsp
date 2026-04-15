@@ -32,6 +32,7 @@ export interface Product {
   costPrice?: number;
   sellingPrice?: number;
   destination?: string;
+  supplier?: string;
 }
 
 export interface InventoryLog {

@@ -219,7 +219,8 @@ export class PDFService {
        - Trích xuất các mô tả như: Màu sắc, Kích thước, Chất liệu.
        - KHÔNG bao gồm số lượng (SL: 1) vào trường này.
     4. Số lượng (Quantity): Chỉ lấy con số (ví dụ: 1, 2).
-       - QUAN TRỌNG: Nếu một đơn hàng có nhiều sản phẩm khác nhau (ví dụ: 1 Cốc và 1 Túi), hãy đảm bảo trích xuất đầy đủ cả 2 sản phẩm vào mảng "items".
+       - QUAN TRỌNG: Nếu một đơn hàng có nhiều sản phẩm hoặc nhiều phân loại khác nhau (ví dụ: 1 Cốc Tím và 1 Cốc Đỏ), hãy đảm bảo trích xuất đầy đủ thành các phần tử riêng biệt trong mảng "items".
+       - Nếu nhãn dán ghi tổng số lượng là 2 nhưng liệt kê 2 màu khác nhau bên dưới (ví dụ: "315 - Lót Sứ Màu Tím" và "315 - Lót Sứ Màu Đỏ"), hãy tạo 2 item riêng biệt, mỗi item có số lượng 1.
     5. Thông tin người nhận: Trích xuất Tên, SĐT, Địa chỉ nếu có.
     
     YÊU CẦU ĐỊA PHƯƠNG HÓA:
@@ -268,10 +269,19 @@ export class PDFService {
     
     // Split items with quantity > 1 into multiple items with quantity 1
     // as requested: "khi đơn sl 2 thì chia ra mỗi sku màu sl 1 rồi trừ kho"
+    // This ensures each item can be reviewed and matched individually in the UI.
     const splitResult = result.map(order => ({
       ...order,
       items: order.items.flatMap(item => {
         if (item.quantity > 1) {
+          // If the color field contains multiple variants (e.g. "Tím, Đỏ"), 
+          // we try to split them if possible, otherwise we clone.
+          const colors = item.color ? item.color.split(/[,&/+]| và /).map(c => c.trim()).filter(Boolean) : [];
+          
+          if (colors.length === item.quantity) {
+            return colors.map(c => ({ ...item, color: c, quantity: 1 }));
+          }
+          
           return Array(item.quantity).fill(null).map(() => ({ ...item, quantity: 1 }));
         }
         return [item];

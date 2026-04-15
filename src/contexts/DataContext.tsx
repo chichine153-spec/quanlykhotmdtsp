@@ -145,7 +145,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
     // Set up real-time listeners for inventory and orders
     const inventoryQuery = query(collection(db, 'inventory'), where('userId', '==', user.uid));
-    const ordersQuery = query(collection(db, 'orders'), where('userId', '==', user.uid), orderBy('processedAt', 'desc'), limit(100));
+    const ordersQuery = query(collection(db, 'orders'), where('userId', '==', user.uid), orderBy('processedAt', 'desc'), limit(500));
 
     const unsubscribeInventory = onSnapshot(inventoryQuery, (snapshot) => {
       const newInventory = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as Product[];

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Settings, Save, Loader2, Package } from 'lucide-react';
+import { Settings, Save, Loader2, Package, Clock } from 'lucide-react';
 import { ProfitConfig } from '../types';
 import { ProfitService } from '../services/profitService';
 import { useAuth } from '../contexts/AuthContext';
@@ -93,6 +93,24 @@ export default function FinanceSettings({ onClose, initialConfig }: FinanceSetti
               />
             </div>
           </div>
+          <div className="space-y-2">
+            <label className="block text-[10px] font-black uppercase tracking-widest text-secondary">Giờ chốt ca (0-23)</label>
+            <div className="relative group">
+              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-secondary group-focus-within:text-primary transition-colors">
+                <Clock size={18} />
+              </div>
+              <input 
+                type="number"
+                min="0"
+                max="23"
+                value={config.cutoffHour}
+                onChange={(e) => setConfig({...config, cutoffHour: parseInt(e.target.value) || 0})}
+                className="w-full pl-12 pr-4 py-4 bg-surface-container-low border border-surface-container rounded-2xl focus:ring-2 focus:ring-primary/20 outline-none transition-all font-bold text-lg"
+                placeholder="Ví dụ: 15"
+                required
+              />
+            </div>
+          </div>
         </div>
 
         {/* Platform Fees */}
@@ -167,25 +185,12 @@ export default function FinanceSettings({ onClose, initialConfig }: FinanceSetti
               required
             />
           </div>
-          <div className="space-y-2">
-            <label className="block text-[10px] font-black uppercase tracking-widest text-secondary">Giờ cắt đơn (0-23h)</label>
-            <input 
-              type="number"
-              min="0"
-              max="23"
-              value={config.cutoffHour ?? 15}
-              onChange={(e) => setConfig({...config, cutoffHour: parseInt(e.target.value) || 0})}
-              className="w-full px-4 py-4 bg-surface-container-low border border-surface-container rounded-2xl focus:ring-2 focus:ring-primary/20 outline-none transition-all font-bold"
-              required
-            />
-          </div>
         </div>
 
         {/* Daily Marketing Costs */}
         <div className="space-y-4 pt-6 border-t border-surface-container">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-on-surface uppercase tracking-widest">Chi phí Marketing theo ngày</h3>
-            <span className="text-[10px] text-secondary font-medium italic">* Chi phí sẽ được chia theo tỷ lệ đơn hàng trước/sau giờ cắt đơn</span>
           </div>
           
           <div className="bg-surface-container-lowest p-6 rounded-3xl border border-surface-container space-y-4">

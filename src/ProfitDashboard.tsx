@@ -50,7 +50,7 @@ const COLORS = ['#22c55e', '#ef4444', '#f59e0b', '#3b82f6', '#8b5cf6'];
 
 export default function ProfitDashboard() {
   const { user } = useAuth();
-  const { orders, returns, config: globalConfig, loading: dataLoading } = useData();
+  const { orders, returns, config: globalConfig, loading: dataLoading, refreshData, lastUpdated } = useData();
   const [activeTab, setActiveTab] = React.useState<'today' | 'week' | 'month'>('today');
   const [config, setConfig] = React.useState<ProfitConfig>({
     platformFeePercent: 12,
@@ -137,9 +137,24 @@ export default function ProfitDashboard() {
       <header className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
           <h1 className="text-4xl font-extrabold tracking-tight text-on-surface mb-2">Phân tích lợi nhuận</h1>
-          <p className="text-secondary font-medium">Báo cáo doanh thu, chi phí và lợi nhuận thực tế.</p>
+          <div className="flex items-center gap-2">
+            <p className="text-secondary font-medium">Báo cáo doanh thu, chi phí và lợi nhuận thực tế.</p>
+            {lastUpdated && (
+              <span className="text-[10px] bg-surface-container px-2 py-0.5 rounded-full text-secondary font-mono">
+                Cập nhật: {lastUpdated.toLocaleTimeString('vi-VN')}
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-3">
+          <button 
+            onClick={refreshData}
+            disabled={dataLoading}
+            className="p-3 rounded-2xl bg-surface-container-lowest border border-surface-container text-secondary hover:bg-surface-container transition-all disabled:opacity-50"
+            title="Làm mới dữ liệu"
+          >
+            <RefreshCw size={20} className={dataLoading ? 'animate-spin' : ''} />
+          </button>
           <div className="bg-surface-container-low p-1 rounded-2xl flex gap-1">
             {TIME_TABS.map(tab => (
               <button
@@ -211,40 +226,6 @@ export default function ProfitDashboard() {
         </div>
       </div>
 
-      {/* Pending Orders Alert */}
-      {activeTab === 'today' && stats.pendingStats && stats.pendingStats.orderCount > 0 && (
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="bg-amber-50 border border-amber-200 p-6 rounded-3xl flex flex-col md:flex-row md:items-center justify-between gap-4"
-        >
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-amber-100 flex items-center justify-center text-amber-600">
-              <Clock size={24} />
-            </div>
-            <div>
-              <h3 className="text-lg font-bold text-amber-900">Đơn chờ phiên sau (Sau {config.cutoffHour ?? 15}:00)</h3>
-              <p className="text-sm text-amber-700">
-                Các đơn hàng này sẽ được tính vào báo cáo của phiên đóng gói tiếp theo.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-6">
-            <div className="text-right">
-              <p className="text-[10px] uppercase tracking-widest text-amber-600 font-bold mb-1">Số lượng đơn</p>
-              <p className="text-xl font-black text-amber-900">{stats.pendingStats.orderCount}</p>
-            </div>
-            <div className="text-right">
-              <p className="text-[10px] uppercase tracking-widest text-amber-600 font-bold mb-1">Doanh thu dự kiến</p>
-              <p className="text-xl font-black text-amber-900">{stats.pendingStats.revenue.toLocaleString()}đ</p>
-            </div>
-            <div className="bg-amber-200 text-amber-900 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest">
-              Đang chờ
-            </div>
-          </div>
-        </motion.div>
-      )}
-
       {/* Charts Section */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-surface-container">
@@ -257,7 +238,7 @@ export default function ProfitDashboard() {
               <BarChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fontWeight: 600 }} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fontWeight: 600 }} tickFormatter={(value) => `${(value / 1000000).toFixed(1)}M`} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fontWeight: 600 }} tickFormatter={(value) => `${((value || 0) / 1000000).toFixed(1)}M`} />
                 <Tooltip 
                   cursor={{ fill: '#f8fafc' }}
                   contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
@@ -368,10 +349,7 @@ export default function ProfitDashboard() {
                 const now = new Date();
                 
                 if (activeTab === 'today') {
-                  const d = new Date(now);
-                  d.setHours(cutoffHour, 0, 0, 0);
-                  const end = new Date(d);
-                  const start = new Date(d.getTime() - 24 * 60 * 60 * 1000);
+                  const { start, end } = ProfitService.getSessionBounds(now, cutoffHour);
                   const orderDate = new Date(o.processedAt);
                   return orderDate >= start && orderDate < end;
                 } else if (activeTab === 'week') {

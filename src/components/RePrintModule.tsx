@@ -20,7 +20,6 @@ import Barcode from 'react-barcode';
 import { QRCodeSVG } from 'qrcode.react';
 import { useReactToPrint } from 'react-to-print';
 import { GeminiService } from '../services/gemini';
-import GeminiKeyModal from './GeminiKeyModal';
 import { getDoc, doc, getDocs } from 'firebase/firestore';
 
 import { getSupabase } from '../lib/supabase';
@@ -45,7 +44,6 @@ export default function RePrintModule() {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [refreshKey, setRefreshKey] = React.useState(0);
-  const [showApiKeyModal, setShowApiKeyModal] = React.useState(false);
   const [orderToPrint, setOrderToPrint] = React.useState<any>(null);
   const [imageToPrint, setImageToPrint] = React.useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = React.useState<string | null>(null);
@@ -484,11 +482,6 @@ export default function RePrintModule() {
           )}
         </div>
       </div>
-
-      <GeminiKeyModal 
-        isOpen={showApiKeyModal} 
-        onClose={() => setShowApiKeyModal(false)} 
-      />
 
       {/* Delete Confirmation Modal */}
       <AnimatePresence>

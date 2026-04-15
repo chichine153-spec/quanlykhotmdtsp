@@ -170,6 +170,29 @@ export class ProfitService {
   }
 
   /**
+   * Get session bounds based on cutoff hour
+   */
+  static getSessionBounds(date: Date, cutoffHour: number) {
+    const d = new Date(date);
+    const currentCutoff = new Date(date);
+    currentCutoff.setHours(cutoffHour, 0, 0, 0);
+    
+    let start: Date;
+    let end: Date;
+    
+    if (d >= currentCutoff) {
+      // We are after today's cutoff, so the current session started today at cutoff
+      start = currentCutoff;
+      end = new Date(currentCutoff.getTime() + 24 * 60 * 60 * 1000);
+    } else {
+      // We are before today's cutoff, so the current session started yesterday at cutoff
+      start = new Date(currentCutoff.getTime() - 24 * 60 * 60 * 1000);
+      end = currentCutoff;
+    }
+    return { start, end };
+  }
+
+  /**
    * Calculate profit stats for a given timeframe
    */
   static calculateProfitStats(
@@ -181,20 +204,11 @@ export class ProfitService {
   ) {
     const cutoffHour = config?.cutoffHour ?? 15;
     
-    // Helper to get session bounds for a given date
-    const getSessionBounds = (date: Date) => {
-      const d = new Date(date);
-      d.setHours(cutoffHour, 0, 0, 0);
-      const end = new Date(d);
-      const start = new Date(d.getTime() - 24 * 60 * 60 * 1000);
-      return { start, end };
-    };
-
     let startDate: Date;
     let endDate: Date = new Date(); // Default to now for filtering
 
     if (timeframe === 'today') {
-      const { start, end } = getSessionBounds(targetDate);
+      const { start, end } = this.getSessionBounds(targetDate, cutoffHour);
       startDate = start;
       endDate = end;
     } else if (timeframe === 'week') {

@@ -934,13 +934,9 @@ export default function Inventory() {
                 <tr className="bg-surface-container-low/50">
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary">Thông tin sản phẩm</th>
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary">Mã SKU</th>
-                  {isAdmin && (
-                    <>
-                      <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Giá vốn</th>
-                      <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Giá bán</th>
-                      <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Lợi nhuận</th>
-                    </>
-                  )}
+                  <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Giá vốn</th>
+                  <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Giá bán</th>
+                  <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Lợi nhuận</th>
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Tồn kho</th>
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Phí sàn</th>
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Trạng thái</th>
@@ -1007,69 +1003,65 @@ export default function Inventory() {
                           </div>
                         </td>
                         <td className="px-6 py-4 font-mono text-xs font-bold text-on-surface-variant/70">{variant.sku}</td>
-                        {isAdmin && (
-                          <>
-                            <td className="px-6 py-4 text-center">
-                              {editingPriceId?.id === variant.id && editingPriceId?.type === 'cost' ? (
-                                <input 
-                                  type="number"
-                                  autoFocus
-                                  value={quickPriceValue}
-                                  onChange={(e) => setQuickPriceValue(parseInt(e.target.value) || 0)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleQuickPriceUpdate(variant, 'cost', quickPriceValue);
-                                    if (e.key === 'Escape') setEditingPriceId(null);
-                                  }}
-                                  onBlur={() => handleQuickPriceUpdate(variant, 'cost', quickPriceValue)}
-                                  className="w-24 px-2 py-1 bg-white border border-primary rounded-lg text-center font-bold text-sm outline-none"
-                                />
-                              ) : (
-                                <button 
-                                  onClick={() => {
-                                    setEditingPriceId({ id: variant.id, type: 'cost' });
-                                    setQuickPriceValue(variant.costPrice || 0);
-                                  }}
-                                  className="text-sm font-bold text-error hover:bg-error/5 px-2 py-1 rounded transition-all"
-                                  title="Sửa giá vốn"
-                                >
-                                  {(variant.costPrice || 0).toLocaleString()}đ
-                                </button>
-                              )}
-                            </td>
-                            <td className="px-6 py-4 text-center">
-                              {editingPriceId?.id === variant.id && editingPriceId?.type === 'selling' ? (
-                                <input 
-                                  type="number"
-                                  autoFocus
-                                  value={quickPriceValue}
-                                  onChange={(e) => setQuickPriceValue(parseInt(e.target.value) || 0)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleQuickPriceUpdate(variant, 'selling', quickPriceValue);
-                                    if (e.key === 'Escape') setEditingPriceId(null);
-                                  }}
-                                  onBlur={() => handleQuickPriceUpdate(variant, 'selling', quickPriceValue)}
-                                  className="w-24 px-2 py-1 bg-white border border-primary rounded-lg text-center font-bold text-sm outline-none"
-                                />
-                              ) : (
-                                <button 
-                                  onClick={() => {
-                                    setEditingPriceId({ id: variant.id, type: 'selling' });
-                                    setQuickPriceValue(variant.sellingPrice || 0);
-                                  }}
-                                  className="text-sm font-bold text-green-600 hover:bg-green-50 px-2 py-1 rounded transition-all"
-                                  title="Sửa giá bán"
-                                >
-                                  {(variant.sellingPrice || 0).toLocaleString()}đ
-                                </button>
-                              )}
-                            </td>
-                            <td className="px-6 py-4 text-center">
-                              <span className={`text-sm font-black ${(variant.sellingPrice || 0) - (variant.costPrice || 0) > 0 ? 'text-primary' : 'text-secondary'}`}>
-                                {((variant.sellingPrice || 0) - (variant.costPrice || 0)).toLocaleString()}đ
-                              </span>
-                            </td>
-                          </>
-                        )}
+                        <td className="px-6 py-4 text-center">
+                          {editingPriceId?.id === variant.id && editingPriceId?.type === 'cost' ? (
+                            <input 
+                              type="number"
+                              autoFocus
+                              value={quickPriceValue}
+                              onChange={(e) => setQuickPriceValue(parseInt(e.target.value) || 0)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleQuickPriceUpdate(variant, 'cost', quickPriceValue);
+                                if (e.key === 'Escape') setEditingPriceId(null);
+                              }}
+                              onBlur={() => handleQuickPriceUpdate(variant, 'cost', quickPriceValue)}
+                              className="w-24 px-2 py-1 bg-white border border-primary rounded-lg text-center font-bold text-sm outline-none"
+                            />
+                          ) : (
+                            <button 
+                              onClick={() => {
+                                setEditingPriceId({ id: variant.id, type: 'cost' });
+                                setQuickPriceValue(variant.costPrice || 0);
+                              }}
+                              className="text-sm font-bold text-error hover:bg-error/5 px-2 py-1 rounded transition-all"
+                              title="Sửa giá vốn"
+                            >
+                              {(variant.costPrice || 0).toLocaleString()}đ
+                            </button>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          {editingPriceId?.id === variant.id && editingPriceId?.type === 'selling' ? (
+                            <input 
+                              type="number"
+                              autoFocus
+                              value={quickPriceValue}
+                              onChange={(e) => setQuickPriceValue(parseInt(e.target.value) || 0)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleQuickPriceUpdate(variant, 'selling', quickPriceValue);
+                                if (e.key === 'Escape') setEditingPriceId(null);
+                              }}
+                              onBlur={() => handleQuickPriceUpdate(variant, 'selling', quickPriceValue)}
+                              className="w-24 px-2 py-1 bg-white border border-primary rounded-lg text-center font-bold text-sm outline-none"
+                            />
+                          ) : (
+                            <button 
+                              onClick={() => {
+                                setEditingPriceId({ id: variant.id, type: 'selling' });
+                                setQuickPriceValue(variant.sellingPrice || 0);
+                              }}
+                              className="text-sm font-bold text-green-600 hover:bg-green-50 px-2 py-1 rounded transition-all"
+                              title="Sửa giá bán"
+                            >
+                              {(variant.sellingPrice || 0).toLocaleString()}đ
+                            </button>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          <span className={`text-sm font-black ${(variant.sellingPrice || 0) - (variant.costPrice || 0) > 0 ? 'text-primary' : 'text-secondary'}`}>
+                            {((variant.sellingPrice || 0) - (variant.costPrice || 0)).toLocaleString()}đ
+                          </span>
+                        </td>
                         <td className="px-6 py-4 text-center">
                           {editingStockId === variant.id ? (
                             <div className="flex items-center justify-center gap-2">

@@ -11,8 +11,6 @@ import ScanSuccess from './ScanSuccess';
 import Returns from './Returns';
 import AccountManagement from './AccountManagement';
 import UpgradeAccount from './UpgradeAccount';
-import ConnectionSettings from './components/ConnectionSettings';
-import GeminiKeyModal from './components/GeminiKeyModal';
 import { Screen } from './types';
 import { PDFService } from './services/pdfService';
 import { useAuth } from './contexts/AuthContext';
@@ -21,7 +19,6 @@ import { GeminiService } from './services/gemini';
 export default function App() {
   const { user, role, isSubscriptionValid } = useAuth();
   const [activeScreen, setActiveScreen] = React.useState<Screen>('dashboard');
-  const [showKeyModal, setShowKeyModal] = React.useState(false);
 
   const isValid = isSubscriptionValid();
   
@@ -31,13 +28,6 @@ export default function App() {
       setActiveScreen('upgrade');
     }
   }, [user, isValid, role]);
-
-  // Check for API key on load - Only for Admin
-  React.useEffect(() => {
-    if (role === 'admin' && !GeminiService.hasApiKey()) {
-      setShowKeyModal(true);
-    }
-  }, [role]);
 
   // Automatic cleanup of expired data on app load - only once per session
   React.useEffect(() => {
@@ -94,8 +84,6 @@ export default function App() {
         return <AccountManagement />;
       case 'upgrade':
         return <UpgradeAccount />;
-      case 'settings':
-        return <ConnectionSettings />;
       default:
         return <Dashboard />;
     }
@@ -105,12 +93,10 @@ export default function App() {
     <Layout 
       activeScreen={activeScreen} 
       onScreenChange={setActiveScreen}
-      onOpenKeyModal={() => setShowKeyModal(true)}
     >
       <div className="relative">
         {renderScreen()}
       </div>
-      <GeminiKeyModal isOpen={showKeyModal} onClose={() => setShowKeyModal(false)} />
     </Layout>
   );
 }

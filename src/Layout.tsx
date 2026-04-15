@@ -12,12 +12,10 @@ import {
   Menu,
   X,
   AlertTriangle,
-  Key,
   RefreshCw,
   Clock,
   Users,
-  ShieldCheck,
-  Settings
+  ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -35,14 +33,12 @@ interface LayoutProps {
   children: React.ReactNode;
   activeScreen: Screen;
   onScreenChange: (screen: Screen) => void;
-  onOpenKeyModal: () => void;
 }
 
-export default function Layout({ children, activeScreen, onScreenChange, onOpenKeyModal }: LayoutProps) {
+export default function Layout({ children, activeScreen, onScreenChange }: LayoutProps) {
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
   const { user, login, logout, error, clearError, role, status, expiryDate, isSubscriptionValid } = useAuth();
   const { refreshData, lastUpdated, loading, quotaExceeded: dataQuotaExceeded } = useData();
-  const [hasApiKey, setHasApiKey] = React.useState(!!localStorage.getItem('gemini_api_key') && !!localStorage.getItem('supabase_anon_key'));
   const [isRefreshing, setIsRefreshing] = React.useState(false);
   const [quotaExceeded, setQuotaExceeded] = React.useState(false);
   const [pendingPayments, setPendingPayments] = React.useState(0);
@@ -69,16 +65,6 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
     }
   }, [error, dataQuotaExceeded]);
 
-  React.useEffect(() => {
-    const checkKey = () => setHasApiKey(!!localStorage.getItem('gemini_api_key') && !!localStorage.getItem('supabase_anon_key'));
-    window.addEventListener('storage', checkKey);
-    const interval = setInterval(checkKey, 1000);
-    return () => {
-      window.removeEventListener('storage', checkKey);
-      clearInterval(interval);
-    };
-  }, []);
-
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
@@ -103,7 +89,6 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
   ];
 
   if (role === 'admin') {
-    navItems.push({ id: 'settings', label: 'Cấu hình kết nối', icon: Settings });
     navItems.push({ id: 'accounts', label: 'Quản lý tài khoản', icon: Users });
   }
 
@@ -131,7 +116,7 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
                 <AlertTriangle size={20} className="animate-pulse" />
                 <div className="flex flex-col">
                   <span className="text-sm font-black uppercase tracking-widest">Hết hạn mức truy cập (Quota Exceeded)</span>
-                  <span className="text-[10px] opacity-80 font-medium">Hệ thống đã đạt giới hạn truy cập miễn phí trong ngày. Vui lòng quay lại sau 24h {role === 'admin' && <>hoặc <b>Cấu hình kết nối</b> với Supabase riêng của bạn để không bị giới hạn.</>}</span>
+                  <span className="text-[10px] opacity-80 font-medium">Hệ thống đã đạt giới hạn truy cập miễn phí trong ngày. Vui lòng quay lại sau 24h.</span>
                 </div>
               </div>
               <button 
@@ -191,21 +176,6 @@ export default function Layout({ children, activeScreen, onScreenChange, onOpenK
             </div>
           )}
 
-          {role === 'admin' && (
-            <button 
-              onClick={onOpenKeyModal}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border ${
-                hasApiKey 
-                  ? 'bg-green-50 border-green-200 text-green-600' 
-                  : 'bg-red-50 border-red-200 text-red-600 animate-pulse'
-              }`}
-            >
-              <Key size={18} />
-              <span className="text-xs font-bold uppercase tracking-tight">
-                {hasApiKey ? 'Hệ thống: Đã kết nối' : 'Cấu hình API'}
-              </span>
-            </button>
-          )}
           {error && !user && (
             <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-red-50 text-red-600 rounded-full text-[10px] font-bold border border-red-100">
               <AlertTriangle size={12} />
