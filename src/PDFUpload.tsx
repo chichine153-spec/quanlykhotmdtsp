@@ -29,7 +29,7 @@ import { OrderRecord } from './services/inventoryService';
 import { Printer, X } from 'lucide-react';
 
 export default function PDFUpload() {
-  const { user, login } = useAuth();
+  const { user, login, role } = useAuth();
   const { inventory, config: dataConfig, orders: allOrders, loading: dataLoading } = useData();
   const [isUploading, setIsUploading] = React.useState(false);
   const [progress, setProgress] = React.useState(0);
@@ -293,8 +293,15 @@ export default function PDFUpload() {
     } catch (err: any) {
       console.error('Processing Error:', err);
       let errMsg = 'Đã xảy ra lỗi khi xử lý file.';
-      if (err.message?.includes('Quota limit exceeded') || JSON.stringify(err).includes('Quota limit exceeded')) {
-        errMsg = 'Zenith OMS đã đạt giới hạn truy cập miễn phí trong ngày (Quota). Vui lòng quay lại sau 24h hoặc nâng cấp gói dịch vụ.';
+      
+      const errorStr = err.message || JSON.stringify(err);
+      
+      if (errorStr.includes('GEMINI_QUOTA_EXCEEDED') || errorStr.includes('RESOURCE_EXHAUSTED')) {
+        errMsg = 'Hạn mức AI đã hết (Quota Exceeded). Admin vui lòng cập nhật API Key mới hoặc quay lại sau.';
+      } else if (errorStr.includes('MISSING_API_KEY')) {
+        errMsg = 'Hệ thống chưa được cấu hình API Key. Admin vui lòng cài đặt trong Quản lý tài khoản.';
+      } else if (errorStr.includes('GEMINI_ERROR')) {
+        errMsg = `Lỗi từ AI: ${err.message.replace('GEMINI_ERROR: ', '')}`;
       } else {
         try {
           const parsed = JSON.parse(err.message);
@@ -303,6 +310,7 @@ export default function PDFUpload() {
           errMsg = err.message || 'Đã xảy ra lỗi khi xử lý file.';
         }
       }
+      
       setError(errMsg);
       setStatus('error');
     } finally {
@@ -579,10 +587,34 @@ export default function PDFUpload() {
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
-                className="p-4 bg-error-container text-on-error-container rounded-2xl flex items-center gap-3 border border-error/20"
+                className="flex flex-col gap-4"
               >
-                <AlertCircle size={20} />
-                <span className="text-sm font-medium">{error}</span>
+                <div className="p-4 bg-error-container text-on-error-container rounded-2xl flex items-center justify-between gap-3 border border-error/20">
+                  <div className="flex items-center gap-3">
+                    <AlertCircle size={20} className="flex-shrink-0" />
+                    <span className="text-sm font-medium">{error}</span>
+                  </div>
+                  
+                  {user && (error?.includes('API Key') || error?.includes('Quota')) && (
+                    <button 
+                      onClick={() => (window as any).location.hash = '#accounts'}
+                      className="text-xs font-black uppercase tracking-widest bg-error text-white px-4 py-2 rounded-xl hover:scale-105 active:scale-95 transition-all shadow-lg shadow-error/20 flex-shrink-0"
+                    >
+                      Cài đặt ngay
+                    </button>
+                  )}
+                </div>
+                
+                {role === 'admin' && (error?.includes('API Key') || error?.includes('Quota')) && (
+                  <div className="p-4 bg-primary/5 border border-primary/20 rounded-2xl">
+                    <p className="text-xs text-secondary font-bold mb-2 uppercase tracking-wide">Hướng dẫn cho Admin:</p>
+                    <ol className="text-xs text-secondary space-y-1 list-decimal ml-4">
+                      <li>Truy cập <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-primary underline">Google AI Studio</a> để tạo API Key mới.</li>
+                      <li>Vào <b>Quản lý tài khoản</b> và dán mã mới vào mục <b>Cấu hình AI hệ thống</b>.</li>
+                      <li>Mã mới sẽ có hiệu lực ngay lập tức cho toàn bộ người dùng.</li>
+                    </ol>
+                  </div>
+                )}
               </motion.div>
             )}
 

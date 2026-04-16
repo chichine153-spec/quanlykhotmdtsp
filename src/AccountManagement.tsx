@@ -51,6 +51,7 @@ export default function AccountManagement() {
   const [selectedPackage, setSelectedPackage] = React.useState<string>('1_month');
   const [geminiKey, setGeminiKey] = React.useState('');
   const [isSavingKey, setIsSavingKey] = React.useState(false);
+  const [isTestLoading, setIsTestLoading] = React.useState(false);
 
   React.useEffect(() => {
     if (globalConfig?.geminiApiKey) {
@@ -136,6 +137,44 @@ export default function AccountManagement() {
     }
   };
 
+  const testGeminiKey = async () => {
+    if (!geminiKey.trim()) {
+      toast.error('Vui lòng nhập API Key để test');
+      return;
+    }
+
+    setIsTestLoading(true);
+    try {
+      // Temporary instance for testing
+      const { GoogleGenAI } = await import('@google/genai');
+      const ai = new GoogleGenAI({ apiKey: geminiKey });
+      
+      const response = await ai.models.generateContent({
+        model: "gemini-2.0-flash",
+        contents: "Hello, are you active? Reply with OK only.",
+      });
+      
+      const text = response.text || '';
+      
+      if (text.includes('OK')) {
+        toast.success('API Key hoạt động tốt!');
+      } else {
+        toast.error(`Kết quả không mong đợi: ${text}`);
+      }
+    } catch (error: any) {
+      console.error('Test Gemini Key error:', error);
+      let errorMsg = error.message || 'Lỗi không xác định';
+      if (errorMsg.includes('429') || errorMsg.includes('quota')) {
+        errorMsg = 'API Key này đã HẾT HẠN MỨC (429 Quota Exceeded). Hãy tạo mã mới!';
+      } else if (errorMsg.includes('400') || errorMsg.includes('API_KEY_INVALID')) {
+        errorMsg = 'API Key KHÔNG HỢP LỆ. Vui lòng kiểm tra lại.';
+      }
+      toast.error(`Lỗi: ${errorMsg}`);
+    } finally {
+      setIsTestLoading(false);
+    }
+  };
+
   const handleDeactivate = async (userId: string) => {
     setIsUpdating(userId);
     try {
@@ -214,8 +253,8 @@ export default function AccountManagement() {
           </div>
         </div>
 
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="flex-1 relative">
+        <div className="flex flex-col gap-4">
+          <div className="relative">
             <input 
               type="password"
               placeholder="Nhập Google Gemini API Key..."
@@ -224,14 +263,24 @@ export default function AccountManagement() {
               className="w-full pl-6 pr-6 py-4 bg-white border-2 border-primary/10 focus:border-primary rounded-2xl outline-none transition-all font-mono text-sm shadow-sm"
             />
           </div>
-          <button 
-            onClick={handleUpdateGeminiKey}
-            disabled={isSavingKey}
-            className="px-8 py-4 bg-primary text-white rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3 disabled:opacity-50 min-w-[200px]"
-          >
-            {isSavingKey ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />}
-            Lưu cấu hình
-          </button>
+          <div className="flex flex-col md:flex-row gap-4">
+            <button 
+              onClick={testGeminiKey}
+              disabled={isTestLoading || !geminiKey}
+              className="px-6 py-4 bg-white border-2 border-primary text-primary rounded-2xl font-black uppercase tracking-widest hover:bg-primary/5 transition-all flex items-center justify-center gap-3 disabled:opacity-50 flex-1 md:flex-none"
+            >
+              {isTestLoading ? <Loader2 className="animate-spin" size={20} /> : <BrainCircuit size={20} />}
+              Kiểm tra mã
+            </button>
+            <button 
+              onClick={handleUpdateGeminiKey}
+              disabled={isSavingKey}
+              className="flex-1 px-8 py-4 bg-primary text-white rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3 disabled:opacity-50"
+            >
+              {isSavingKey ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />}
+              Lưu cấu hình hệ thống
+            </button>
+          </div>
         </div>
       </section>
 

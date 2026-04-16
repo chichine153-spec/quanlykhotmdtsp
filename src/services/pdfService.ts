@@ -186,10 +186,21 @@ export class PDFService {
       return processedOrders;
     } catch (error: any) {
       console.error('[PDFService] Gemini Parsing Error:', error);
+      
+      const errorStr = error.message || JSON.stringify(error);
+      const isQuota = errorStr.includes('429') || 
+                      errorStr.includes('quota') || 
+                      errorStr.includes('RESOURCE_EXHAUSTED');
+      
       if (error.message === 'MISSING_API_KEY') {
-        throw new Error('Lỗi kết nối AI - VUI LÒNG KIỂM TRA LẠI API KEY');
+        throw new Error('MISSING_API_KEY');
       }
-      throw new Error(`Lỗi kết nối AI - Vui lòng kiểm tra lại API Key (${error.message})`);
+      
+      if (isQuota) {
+        throw new Error('GEMINI_QUOTA_EXCEEDED');
+      }
+      
+      throw new Error(`GEMINI_ERROR: ${error.message}`);
     }
   }
 
