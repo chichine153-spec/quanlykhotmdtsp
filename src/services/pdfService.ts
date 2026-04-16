@@ -219,8 +219,10 @@ export class PDFService {
        - Trích xuất các mô tả như: Màu sắc, Kích thước, Chất liệu.
        - KHÔNG bao gồm số lượng (SL: 1) vào trường này.
     4. Số lượng (Quantity): Chỉ lấy con số (ví dụ: 1, 2).
-       - QUAN TRỌNG: Nếu một đơn hàng có nhiều sản phẩm hoặc nhiều phân loại khác nhau (ví dụ: 1 Cốc Tím và 1 Cốc Đỏ), hãy đảm bảo trích xuất đầy đủ thành các phần tử riêng biệt trong mảng "items".
-       - Nếu nhãn dán ghi tổng số lượng là 2 nhưng liệt kê 2 màu khác nhau bên dưới (ví dụ: "315 - Lót Sứ Màu Tím" và "315 - Lót Sứ Màu Đỏ"), hãy tạo 2 item riêng biệt, mỗi item có số lượng 1.
+       - QUAN TRỌNG: TUYỆT ĐỐI KHÔNG gộp các sản phẩm khác nhau vào cùng một đối tượng item.
+       - Nếu một đơn hàng có nhiều sản phẩm (ví dụ: 1 Cốc 339 và 1 Cốc 336), bạn PHẢI tạo 2 đối tượng item riêng biệt, mỗi đối tượng có SKU và Color tương ứng, với quantity là 1.
+       - Nếu nhãn dán ghi tổng số lượng là 2 nhưng liệt kê 2 màu khác nhau bên dưới (ví dụ: "315 - Lót Sứ Màu Tím" và "315 - Lót Sứ Màu Đỏ"), bạn PHẢI tạo 2 item riêng biệt, mỗi item có số lượng 1.
+       - Chỉ để quantity > 1 nếu đó là CÙNG MỘT SKU và CÙNG MỘT MÀU SẮC (ví dụ: 2 Cốc 339 Màu Đen).
     5. Thông tin người nhận: Trích xuất Tên, SĐT, Địa chỉ nếu có.
     
     YÊU CẦU ĐỊA PHƯƠNG HÓA:
@@ -276,10 +278,19 @@ export class PDFService {
         if (item.quantity > 1) {
           // If the color field contains multiple variants (e.g. "Tím, Đỏ"), 
           // we try to split them if possible, otherwise we clone.
-          const colors = item.color ? item.color.split(/[,&/+]| và /).map(c => c.trim()).filter(Boolean) : [];
+          const parts = item.color ? item.color.split(/[,&/+\n;]| và /).map(c => c.trim()).filter(Boolean) : [];
           
-          if (colors.length === item.quantity) {
-            return colors.map(c => ({ ...item, color: c, quantity: 1 }));
+          if (parts.length === item.quantity) {
+            return parts.map(p => {
+              // Try to detect if there's a new SKU in the part (e.g. "336 - Màu Hồng")
+              const skuMatch = p.match(/\b(BGN\d*|315|330|336|338|\d{3,10})\b/i);
+              if (skuMatch) {
+                const newSku = skuMatch[1];
+                const newColor = p.replace(newSku, '').replace(/^[\s\-]+/, '').trim();
+                return { ...item, sku: newSku, color: newColor, quantity: 1 };
+              }
+              return { ...item, color: p, quantity: 1 };
+            });
           }
           
           return Array(item.quantity).fill(null).map(() => ({ ...item, quantity: 1 }));
