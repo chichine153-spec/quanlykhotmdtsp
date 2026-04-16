@@ -16,6 +16,7 @@ import { Screen } from './types';
 import { PDFService } from './services/pdfService';
 import { useAuth } from './contexts/AuthContext';
 import { GeminiService } from './services/gemini';
+import { Toaster } from 'react-hot-toast';
 
 export default function App() {
   const { user, role, isSubscriptionValid } = useAuth();
@@ -97,6 +98,7 @@ export default function App() {
       activeScreen={activeScreen} 
       onScreenChange={setActiveScreen}
     >
+      <Toaster position="top-right" reverseOrder={false} />
       <div className="relative">
         {renderScreen()}
       </div>

@@ -58,11 +58,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Fetch/Create profile from Firestore
         try {
           // Fetch Global Config first - Integrated into the system
-          const configDoc = await getDoc(doc(db, 'system_settings', 'config'));
+          const configDoc = await getDoc(doc(db, 'global_configs', 'settings'));
           if (configDoc.exists()) {
             const configData = configDoc.data();
             // Sync to localStorage as fallback for services that don't use context
-            if (configData.gemini_api_key) localStorage.setItem('global_gemini_key', configData.gemini_api_key);
+            if (configData.geminiApiKey) localStorage.setItem('global_gemini_key', configData.geminiApiKey);
             if (configData.supabase_url) localStorage.setItem('global_supabase_url', configData.supabase_url);
             if (configData.supabase_anon_key) localStorage.setItem('global_supabase_key', configData.supabase_anon_key);
             if (configData.fb_web_api_key) localStorage.setItem('global_fb_api_key', configData.fb_web_api_key);

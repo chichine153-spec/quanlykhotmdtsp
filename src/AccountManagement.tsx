@@ -10,7 +10,9 @@ import {
   Loader2,
   Filter,
   ArrowRightCircle,
-  ShieldCheck
+  ShieldCheck,
+  BrainCircuit,
+  Save
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -21,11 +23,17 @@ import {
   updateDoc, 
   addDoc,
   serverTimestamp,
-  orderBy
+  orderBy,
+  getDoc,
+  setDoc
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { useAuth } from './contexts/AuthContext';
 import { UserProfile, PaymentHistory } from './types';
+import { useData } from './contexts/DataContext';
+import { toast } from 'react-hot-toast';
+
+import { GeminiService } from './services/gemini';
 
 const PACKAGES = [
   { id: '1_month', label: '1 Tháng', months: 1, price: 199000, discount: '0%' },
@@ -35,11 +43,20 @@ const PACKAGES = [
 
 export default function AccountManagement() {
   const { user: currentUser, role } = useAuth();
+  const { globalConfig } = useData();
   const [users, setUsers] = React.useState<UserProfile[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [searchTerm, setSearchTerm] = React.useState('');
   const [isUpdating, setIsUpdating] = React.useState<string | null>(null);
   const [selectedPackage, setSelectedPackage] = React.useState<string>('1_month');
+  const [geminiKey, setGeminiKey] = React.useState('');
+  const [isSavingKey, setIsSavingKey] = React.useState(false);
+
+  React.useEffect(() => {
+    if (globalConfig?.geminiApiKey) {
+      setGeminiKey(globalConfig.geminiApiKey);
+    }
+  }, [globalConfig]);
 
   React.useEffect(() => {
     if (role !== 'admin') return;
@@ -91,6 +108,31 @@ export default function AccountManagement() {
       console.error('Activation error:', error);
     } finally {
       setIsUpdating(null);
+    }
+  };
+
+  const handleUpdateGeminiKey = async () => {
+    if (!geminiKey.trim()) {
+      toast.error('Vui lòng nhập API Key');
+      return;
+    }
+
+    setIsSavingKey(true);
+    try {
+      const configRef = doc(db, 'global_configs', 'settings');
+      await setDoc(configRef, {
+        geminiApiKey: geminiKey,
+        updatedAt: new Date().toISOString(),
+        updatedBy: currentUser?.uid
+      }, { merge: true });
+      
+      GeminiService.resetInstance();
+      toast.success('Đã lưu API Key hệ thống');
+    } catch (error) {
+      console.error('Save Gemini Key error:', error);
+      toast.error('Lỗi khi lưu API Key');
+    } finally {
+      setIsSavingKey(false);
     }
   };
 
@@ -157,6 +199,39 @@ export default function AccountManagement() {
               className="pl-12 pr-6 py-3 bg-white border-2 border-primary/10 focus:border-primary rounded-2xl outline-none transition-all font-bold w-full md:w-80 shadow-sm"
             />
           </div>
+        </div>
+      </section>
+
+      {/* Global AI Config (Admin only) */}
+      <section className="bg-primary-fixed/20 border border-primary/20 p-8 rounded-[2.5rem]">
+        <div className="flex items-center gap-4 mb-6">
+          <div className="w-12 h-12 rounded-2xl bg-primary text-white flex items-center justify-center shadow-lg shadow-primary/20">
+            <BrainCircuit size={24} />
+          </div>
+          <div>
+            <h2 className="text-xl font-black text-on-surface uppercase tracking-tight">Cấu hình AI hệ thống</h2>
+            <p className="text-xs text-secondary font-medium">API Key này sẽ được dùng chung cho tất cả người dùng để bóc tách PDF.</p>
+          </div>
+        </div>
+
+        <div className="flex flex-col md:flex-row gap-4">
+          <div className="flex-1 relative">
+            <input 
+              type="password"
+              placeholder="Nhập Google Gemini API Key..."
+              value={geminiKey}
+              onChange={(e) => setGeminiKey(e.target.value)}
+              className="w-full pl-6 pr-6 py-4 bg-white border-2 border-primary/10 focus:border-primary rounded-2xl outline-none transition-all font-mono text-sm shadow-sm"
+            />
+          </div>
+          <button 
+            onClick={handleUpdateGeminiKey}
+            disabled={isSavingKey}
+            className="px-8 py-4 bg-primary text-white rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3 disabled:opacity-50 min-w-[200px]"
+          >
+            {isSavingKey ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />}
+            Lưu cấu hình
+          </button>
         </div>
       </section>
 

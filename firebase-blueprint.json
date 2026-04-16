@@ -123,6 +123,16 @@
         "timestamp": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "productId", "productName", "sku", "quantity", "expectedArrival", "status", "timestamp"]
+    },
+    "GlobalConfig": {
+      "title": "Global Settings",
+      "description": "System-wide configurations managed by Admin.",
+      "type": "object",
+      "properties": {
+        "geminiApiKey": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      }
     }
   },
   "firestore": {
@@ -165,6 +175,10 @@
     "/in_transit_logs/{logId}": {
       "schema": "InTransitLog",
       "description": "Logs for tracking shipments from factory."
+    },
+    "/global_configs/{configId}": {
+      "schema": "GlobalConfig",
+      "description": "Shared system settings managed by Admin."
     }
   }
 }

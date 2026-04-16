@@ -290,7 +290,7 @@ service cloud.firestore {
       allow delete: if isDocOwner();
     }
 
-    match /system_settings/{docId} {
+    match /global_configs/{docId} {
       allow read: if isAuthenticated();
       allow write: if isAdmin();
     }
