@@ -45,6 +45,7 @@
         "costPrice": { "type": "number", "description": "Cost price of the product." },
         "sellingPrice": { "type": "number", "description": "Selling price of the product." },
         "destination": { "type": "string", "description": "Warehouse destination (e.g., Hà Nội, Hồ Chí Minh)." },
+        "inTransit": { "type": "integer", "description": "Quantity currently in transit from factory." },
         "createdAt": { "type": "string", "format": "date-time", "description": "When the product was created." }
       },
       "required": ["userId", "sku", "name", "stock"]
@@ -105,6 +106,23 @@
         "lastUpdated": { "type": "string", "format": "date-time", "description": "The timestamp of the last update." }
       },
       "required": ["packagingCostBottle", "packagingCostCup", "platformFeePercent", "marketingCost", "otherCosts", "lastUpdated"]
+    },
+    "InTransitLog": {
+      "title": "InTransitLog",
+      "description": "A record of goods ordered from factory but not yet in stock.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "sku": { "type": "string" },
+        "variant": { "type": "string" },
+        "quantity": { "type": "integer" },
+        "expectedArrival": { "type": "string", "format": "date" },
+        "status": { "type": "string", "enum": ["in_transit", "completed"] },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "productId", "productName", "sku", "quantity", "expectedArrival", "status", "timestamp"]
     }
   },
   "firestore": {
@@ -143,6 +161,10 @@
     "/processed_orders/{orderId}": {
       "schema": "object",
       "description": "Tracking of processed orders to avoid duplicates."
+    },
+    "/in_transit_logs/{logId}": {
+      "schema": "InTransitLog",
+      "description": "Logs for tracking shipments from factory."
     }
   }
 }

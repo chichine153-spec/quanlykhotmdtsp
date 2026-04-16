@@ -29,8 +29,13 @@ import { useData } from './contexts/DataContext';
 import { InventoryService, OrderRecord } from './services/inventoryService';
 import LowStockPanel from './components/LowStockPanel';
 import { getSupabase } from './lib/supabase';
+import { Screen } from './types';
 
-export default function Dashboard() {
+interface DashboardProps {
+  onScreenChange?: (screen: Screen) => void;
+}
+
+export default function Dashboard({ onScreenChange }: DashboardProps) {
   const { user, login, error, clearError, role, expiryDate, isSubscriptionValid } = useAuth();
   const { inventory, orders, problematicOrders, loading: dataLoading, refreshData } = useData();
   const [loading, setLoading] = React.useState(false);
@@ -428,7 +433,7 @@ export default function Dashboard() {
 
       {/* Smart Restock Forecast Section */}
       <motion.div variants={item}>
-        <LowStockPanel />
+        <LowStockPanel onScreenChange={onScreenChange} />
       </motion.div>
 
       {/* Order Details Modal */}

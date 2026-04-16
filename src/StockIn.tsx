@@ -31,15 +31,17 @@ import { useAuth } from './contexts/AuthContext';
 import { useData } from './contexts/DataContext';
 import { Product, InventoryLog } from './types';
 import { handleFirestoreError, OperationType } from './lib/firestore-errors';
+import { classifyError } from './lib/errorUtils';
 
 export default function StockIn() {
   const { user, login } = useAuth();
-  const { inventory: products, loading: dataLoading } = useData();
+  const { inventory: products, loading: dataLoading, quotaExceeded } = useData();
   const [historyLogs, setHistoryLogs] = React.useState<InventoryLog[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [successMessage, setSuccessMessage] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [quotaError, setQuotaError] = React.useState(false);
 
   // Form State
   const [selectedProductId, setSelectedProductId] = React.useState('');
@@ -54,29 +56,10 @@ export default function StockIn() {
   }, [dataLoading]);
 
   React.useEffect(() => {
-    if (!user) {
-      setLoading(false);
+    if (!user || quotaExceeded || quotaError) {
+      if (!user) setLoading(false);
       return;
     }
-
-    // No local inventory listener needed anymore, using global data from DataContext
-    /*
-    const inventoryQuery = query(
-      collection(db, 'inventory'),
-      where('userId', '==', user.uid)
-    );
-    
-    const unsubInventory = onSnapshot(inventoryQuery, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Product[];
-      setProducts(items);
-      setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'inventory');
-    });
-    */
 
     // Listen to history logs
     const logsQuery = query(
@@ -93,16 +76,20 @@ export default function StockIn() {
         ...doc.data()
       })) as InventoryLog[];
       setHistoryLogs(logs);
+      setQuotaError(false);
     }, (error) => {
-      console.error('StockIn logs error:', error);
-      // Don't throw here to avoid crashing the app
+      const classified = classifyError(error, 'Firebase');
+      if (classified.isQuota) {
+        setQuotaError(true);
+      } else {
+        console.error('StockIn logs error:', error);
+      }
     });
 
     return () => {
-      // unsubInventory();
       unsubLogs();
     };
-  }, [user]);
+  }, [user, quotaExceeded, quotaError]);
 
   if (!user) {
     return (
@@ -210,6 +197,21 @@ export default function StockIn() {
         <h1 className="text-3xl font-black tracking-tight text-on-surface mb-2 font-headline uppercase">Nhập kho hàng về (Stock In)</h1>
         <p className="text-secondary body-md">Cập nhật số lượng hàng mới về và theo dõi lịch sử biến động kho.</p>
       </section>
+
+      {/* Quota Error Alert */}
+      {(quotaExceeded || quotaError) && (
+        <motion.div 
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-4 bg-red-50 border border-red-200 rounded-2xl flex items-center gap-3 text-red-600"
+        >
+          <AlertCircle size={20} />
+          <div className="flex-grow">
+            <p className="text-sm font-bold">Hết hạn mức truy cập (Quota Exceeded)</p>
+            <p className="text-[10px] opacity-80">Hệ thống đã đạt giới hạn truy cập miễn phí trong ngày. Một số dữ liệu có thể không được cập nhật thời gian thực.</p>
+          </div>
+        </motion.div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         {/* Quick Stock Entry Form */}

@@ -30,6 +30,7 @@ service cloud.firestore {
     //   - name: string
     //   - sku: string
     //   - stock: number
+    //   - inTransit: number
     //   - variant: string
     //   - category: string
     //   - image: string
@@ -38,6 +39,18 @@ service cloud.firestore {
     //   - sellingPrice: number
     //   - destination: string
     //   - createdAt: string
+    //
+    // Collection: in_transit_logs
+    // Fields:
+    //   - userId: string (owner)
+    //   - productId: string
+    //   - productName: string
+    //   - sku: string
+    //   - variant: string
+    //   - quantity: number
+    //   - expectedArrival: string (ISO date)
+    //   - status: string ('in_transit', 'completed')
+    //   - timestamp: timestamp
     //
     // Collection: inventory_logs
     // Fields:
@@ -151,7 +164,17 @@ service cloud.firestore {
         data.name is string && data.name.size() > 0 && data.name.size() < 500 &&
         data.sku is string && data.sku.size() > 0 && data.sku.size() < 200 &&
         data.stock is number &&
+        (!('inTransit' in data) || data.inTransit is number) &&
         data.userId == request.auth.uid
+      );
+    }
+
+    function isValidInTransitLog(data) {
+      return isAdmin() || (
+        hasRequiredFields(['productId', 'productName', 'sku', 'quantity', 'expectedArrival', 'status', 'userId', 'timestamp']) &&
+        data.userId == request.auth.uid &&
+        data.quantity is number &&
+        data.status in ['in_transit', 'completed']
       );
     }
 
@@ -249,6 +272,14 @@ service cloud.firestore {
       allow create: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || isAdmin());
       allow update: if isDocOwner();
       allow delete: if isDocOwner();
+    }
+
+    match /in_transit_logs/{logId} {
+      allow read: if isDocOwner();
+      allow list: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidInTransitLog(request.resource.data);
+      allow update: if isDocOwner() && isValidInTransitLog(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /problematic_orders/{orderId} {

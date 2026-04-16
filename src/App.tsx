@@ -6,6 +6,7 @@ import RePrintModule from './components/RePrintModule';
 import PDFUpload from './PDFUpload';
 import Inventory from './Inventory';
 import StockIn from './StockIn';
+import InTransitManagement from './InTransitManagement';
 import ProfitDashboard from './ProfitDashboard';
 import ScanSuccess from './ScanSuccess';
 import Returns from './Returns';
@@ -60,18 +61,20 @@ export default function App() {
   const renderScreen = () => {
     // Prevent non-admins from accessing settings
     if (activeScreen === 'settings' && role !== 'admin') {
-      return <Dashboard />;
+      return <Dashboard onScreenChange={setActiveScreen} />;
     }
 
     switch (activeScreen) {
       case 'dashboard':
-        return <Dashboard />;
+        return <Dashboard onScreenChange={setActiveScreen} />;
       case 'stockin':
         return <StockIn />;
+      case 'intransit':
+        return <InTransitManagement />;
       case 'upload':
         return <PDFUpload />;
       case 'inventory':
-        return <Inventory />;
+        return <Inventory onScreenChange={setActiveScreen} />;
       case 'profit':
         return <ProfitDashboard />;
       case 'success':

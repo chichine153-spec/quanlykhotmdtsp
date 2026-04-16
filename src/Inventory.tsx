@@ -34,17 +34,22 @@ import { collection, onSnapshot, query, addDoc, getDocs, writeBatch, doc, update
 import { db } from './firebase';
 import { MOCK_PRODUCTS, Product, InventoryLog, ProfitConfig } from './types';
 import { ProfitService } from './services/profitService';
+import { InventoryService } from './services/inventoryService';
 import { useAuth } from './contexts/AuthContext';
 import { useData } from './contexts/DataContext';
 import * as XLSX from 'xlsx';
 import { handleFirestoreError, OperationType } from './lib/firestore-errors';
+import { Screen } from './types';
 
-export default function Inventory() {
+interface InventoryProps {
+  onScreenChange?: (screen: Screen) => void;
+}
+
+export default function Inventory({ onScreenChange }: InventoryProps) {
   const { user, role, login } = useAuth();
   const { inventory: products, config: globalConfig, loading, refreshData } = useData();
   const isAdmin = role === 'admin';
   const [forecastCount, setForecastCount] = React.useState(0);
-  const [isSeeding, setIsSeeding] = React.useState(false);
   const [isClearing, setIsClearing] = React.useState(false);
   const [showClearConfirm, setShowClearConfirm] = React.useState(false);
   const [toasts, setToasts] = React.useState<{id: string, message: string, type: 'success' | 'error' | 'info'}[]>([]);
@@ -55,8 +60,10 @@ export default function Inventory() {
   const [showHistory, setShowHistory] = React.useState(false);
   const [inventoryLogs, setInventoryLogs] = React.useState<InventoryLog[]>([]);
   const [editingStockId, setEditingStockId] = React.useState<string | null>(null);
+  const [editingInTransitId, setEditingInTransitId] = React.useState<string | null>(null);
   const [editingPriceId, setEditingPriceId] = React.useState<{id: string, type: 'cost' | 'selling'} | null>(null);
   const [quickStockValue, setQuickStockValue] = React.useState<number>(0);
+  const [quickInTransitValue, setQuickInTransitValue] = React.useState<number>(0);
   const [quickPriceValue, setQuickPriceValue] = React.useState<number>(0);
   const [isUpdating, setIsUpdating] = React.useState(false);
   const [isImporting, setIsImporting] = React.useState(false);
@@ -224,6 +231,7 @@ export default function Inventory() {
         product_name: p.variant ? `${p.name} (${p.variant})` : p.name,
         sku: p.sku,
         stock_quantity: Number(p.stock),
+        in_transit_quantity: Number(p.inTransit || 0),
         updated_at: new Date().toISOString()
       }));
 
@@ -451,6 +459,38 @@ export default function Inventory() {
     }
   };
 
+  const handleQuickInTransitUpdate = async (product: Product, newValue: number) => {
+    if (newValue === (product.inTransit || 0)) {
+      setEditingInTransitId(null);
+      return;
+    }
+
+    setIsUpdating(true);
+    try {
+      await InventoryService.updateInTransit(product.id, newValue);
+
+      // Log the change
+      await addDoc(collection(db, 'inventory_logs'), {
+        timestamp: serverTimestamp(),
+        sku: product.sku,
+        productName: product.name,
+        variant: product.variant || '',
+        change: 0,
+        type: 'manual_edit',
+        userId: user?.uid,
+        details: `Cập nhật số lượng đang về từ ${(product.inTransit || 0)} lên ${newValue}`
+      });
+
+      setEditingInTransitId(null);
+      addToast('Đã cập nhật số lượng đang về.', 'success');
+    } catch (error) {
+      console.error("Quick In-Transit Update Error:", error);
+      addToast('Lỗi khi cập nhật số lượng đang về.', 'error');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const handleBulkImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
@@ -626,28 +666,6 @@ export default function Inventory() {
     reader.readAsArrayBuffer(file);
   };
 
-  const seedData = async () => {
-    setIsSeeding(true);
-    try {
-      const batch = writeBatch(db);
-      MOCK_PRODUCTS.forEach(product => {
-        const docRef = doc(collection(db, 'inventory'));
-        batch.set(docRef, {
-          ...product,
-          userId: user.uid,
-          createdAt: new Date().toISOString()
-        });
-      });
-      await batch.commit();
-      addToast('Đã nạp dữ liệu mẫu thành công!', 'success');
-    } catch (error) {
-      console.error("Seed Error:", error);
-      addToast('Lỗi khi nạp dữ liệu mẫu.', 'error');
-    } finally {
-      setIsSeeding(false);
-    }
-  };
-
   const clearInventory = async () => {
     setIsClearing(true);
     try {
@@ -776,12 +794,12 @@ export default function Inventory() {
             <span>Đồng bộ Dự báo</span>
           </button>
           <button 
-            onClick={seedData}
-            disabled={isSeeding}
-            className="px-4 py-3 rounded-xl border border-surface-container text-secondary font-bold flex items-center gap-2 hover:bg-surface-container transition-all disabled:opacity-50"
+            onClick={() => onScreenChange?.('intransit')}
+            className="px-4 py-3 rounded-xl border border-blue-200 text-blue-600 font-bold flex items-center gap-2 hover:bg-blue-50 transition-all"
+            title="Quản lý danh sách hàng đang về từ xưởng"
           >
-            {isSeeding ? <Loader2 className="animate-spin" size={18} /> : <Database size={18} />}
-            <span>Nạp dữ liệu mẫu</span>
+            <ArrowDownCircle size={18} />
+            <span>Nhập Hàng đang về</span>
           </button>
           <button 
             onClick={() => setShowClearConfirm(true)}
@@ -938,6 +956,7 @@ export default function Inventory() {
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Giá bán</th>
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Lợi nhuận</th>
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Tồn kho</th>
+                  <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Đang về</th>
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Phí sàn</th>
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-center">Trạng thái</th>
                   <th className="px-6 py-5 text-xs font-bold uppercase tracking-widest text-secondary text-right">Thao tác</th>
@@ -1088,6 +1107,35 @@ export default function Inventory() {
                               title="Nhấn để sửa nhanh tồn kho"
                             >
                               {variant.stock}
+                            </button>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          {editingInTransitId === variant.id ? (
+                            <div className="flex items-center justify-center gap-2">
+                              <input 
+                                type="number"
+                                autoFocus
+                                value={quickInTransitValue}
+                                onChange={(e) => setQuickInTransitValue(parseInt(e.target.value) || 0)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleQuickInTransitUpdate(variant, quickInTransitValue);
+                                  if (e.key === 'Escape') setEditingInTransitId(null);
+                                }}
+                                onBlur={() => handleQuickInTransitUpdate(variant, quickInTransitValue)}
+                                className="w-20 px-2 py-1 bg-white border border-primary rounded-lg text-center font-black text-lg outline-none"
+                              />
+                            </div>
+                          ) : (
+                            <button 
+                              onClick={() => {
+                                setEditingInTransitId(variant.id);
+                                setQuickInTransitValue(variant.inTransit || 0);
+                              }}
+                              className={`w-full py-2 rounded-lg hover:bg-primary/5 transition-all font-black text-lg ${variant.inTransit ? 'text-blue-600' : 'text-secondary/40'}`}
+                              title="Nhấn để sửa nhanh số lượng đang về"
+                            >
+                              {variant.inTransit || 0}
                             </button>
                           )}
                         </td>

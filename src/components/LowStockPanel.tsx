@@ -11,7 +11,8 @@ import {
   Filter,
   Info,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Edit2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../contexts/AuthContext';
@@ -19,8 +20,13 @@ import { useData } from '../contexts/DataContext';
 import { InventoryService } from '../services/inventoryService';
 import { getSupabase } from '../lib/supabase';
 import { LineChart, Line, ResponsiveContainer, YAxis } from 'recharts';
+import { Screen } from '../types';
 
-export default function LowStockPanel() {
+interface LowStockPanelProps {
+  onScreenChange?: (screen: Screen) => void;
+}
+
+export default function LowStockPanel({ onScreenChange }: LowStockPanelProps) {
   const { user, role } = useAuth();
   const { inventory, orders, loading: dataLoading, refreshData } = useData();
   const [shippingOrders, setShippingOrders] = React.useState<any[]>([]);
@@ -159,6 +165,7 @@ export default function LowStockPanel() {
                   <th className="px-4 py-2 text-center">Đã bán (10đ)</th>
                   <th className="px-4 py-2 text-center">Tốc độ bán/ngày</th>
                   <th className="px-4 py-2 text-center">Kho</th>
+                  <th className="px-4 py-2 text-center">Đang về</th>
                   <th className="px-4 py-2 text-center">Dự kiến bán (15đ)</th>
                   <th className="px-6 py-2 text-right">Cần nhập</th>
                 </tr>
@@ -206,10 +213,12 @@ export default function LowStockPanel() {
                       <td className="px-4 py-4 text-center">
                         <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-tighter ${
                           item.priority === 'Nhập gấp' ? 'bg-error text-white animate-pulse shadow-lg shadow-error/30' : 
+                          item.priority === 'Chờ hàng về' ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30' :
                           item.priority === 'Cần chú ý' ? 'bg-warning/10 text-warning' : 
                           'bg-success/10 text-success'
                         }`}>
                           {item.priority === 'Nhập gấp' ? <AlertCircle size={10} /> : 
+                           item.priority === 'Chờ hàng về' ? <Clock size={10} /> :
                            item.priority === 'Cần chú ý' ? <Clock size={10} /> : 
                            <CheckCircle2 size={10} />}
                           {item.priority}
@@ -247,6 +256,17 @@ export default function LowStockPanel() {
                       </td>
 
                       <td className="px-4 py-4 text-center">
+                        <button 
+                          onClick={() => onScreenChange?.('intransit')}
+                          className={`group/edit flex items-center justify-center gap-1 px-3 py-1 rounded-lg transition-all ${item.inTransit > 0 ? 'bg-blue-50 text-blue-600' : 'hover:bg-surface-container'}`}
+                          title="Quản lý hàng đang về"
+                        >
+                          <span className="text-sm font-black">{item.inTransit}</span>
+                          <ArrowRight size={10} className="opacity-0 group-hover/edit:opacity-100 transition-opacity" />
+                        </button>
+                      </td>
+
+                      <td className="px-4 py-4 text-center">
                         <span className="text-sm font-black text-secondary">{Math.ceil(item.expected15Days)}</span>
                       </td>
 
@@ -254,16 +274,16 @@ export default function LowStockPanel() {
                         {item.restockQty > 0 ? (
                           <div 
                             className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl font-black text-xs shadow-lg shadow-primary/20 cursor-help group/tooltip relative"
-                            title={`Công thức: (Sức bán 15 ngày [${Math.ceil(item.expected15Days)}] - Tồn kho [${item.currentStock}])`}
+                            title={`Công thức: (Sức bán 15 ngày [${Math.ceil(item.expected15Days)}] - (Tồn kho [${item.currentStock}] + Đang về [${item.inTransit}]))`}
                           >
                             <ShoppingCart size={14} />
                             <span>+{item.restockQty}</span>
                             
                             {/* Custom Tooltip */}
                             <div className="absolute bottom-full right-0 mb-2 w-48 p-2 bg-on-surface text-surface text-[9px] rounded-lg opacity-0 group-hover/tooltip:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl font-medium">
-                              Công thức: (Sức bán 15 ngày - Tồn kho)
+                              Công thức: (Sức bán 15 ngày - (Tồn kho + Đang về))
                               <div className="mt-1 text-primary-container">
-                                {Math.ceil(item.expected15Days)} - {item.currentStock} = {item.restockQty}
+                                {Math.ceil(item.expected15Days)} - ({item.currentStock} + {item.inTransit}) = {item.restockQty}
                               </div>
                             </div>
                           </div>
@@ -290,16 +310,16 @@ export default function LowStockPanel() {
           <span className="text-[10px] font-bold text-secondary uppercase">Nhập gấp: Kho &lt; 5 & Ra đơn 48h</span>
         </div>
         <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-blue-500" />
+          <span className="text-[10px] font-bold text-secondary uppercase">Chờ hàng về: Kho &lt; 5 & Đang về &gt; 20</span>
+        </div>
+        <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-warning" />
           <span className="text-[10px] font-bold text-secondary uppercase">Cần chú ý: Kho 5-9</span>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-primary" />
-          <span className="text-[10px] font-bold text-secondary uppercase">Best-Seller: &ge; 1 đơn/48h</span>
-        </div>
         <div className="ml-auto flex items-center gap-2 text-[10px] font-bold text-primary italic">
           <Info size={12} />
-          <span>Chỉ hiển thị sản phẩm đồng thời Đang bán chạy (&ge;1 đơn/48h) và Tồn kho thấp (&lt;10)</span>
+          <span>Lượng cần nhập = Dự kiến bán 15 ngày - (Tồn kho + Đang về)</span>
         </div>
       </div>
     </div>

@@ -1,4 +1,4 @@
-export type Screen = 'dashboard' | 'upload' | 'inventory' | 'returns' | 'stockin' | 'profit' | 'success' | 'reprint' | 'accounts' | 'upgrade' | 'settings';
+export type Screen = 'dashboard' | 'upload' | 'inventory' | 'returns' | 'stockin' | 'intransit' | 'profit' | 'success' | 'reprint' | 'accounts' | 'upgrade' | 'settings';
 
 export interface UserProfile {
   uid: string;
@@ -25,6 +25,7 @@ export interface Product {
   sku: string;
   name: string;
   stock: number;
+  inTransit?: number;
   status: 'in_stock' | 'low_stock' | 'out_of_stock';
   image: string;
   category: string;
@@ -107,6 +108,19 @@ export interface ReturnRecord {
     productName?: string;
     productId?: string;
   }[];
+  userId: string;
+}
+
+export interface InTransitLog {
+  id: string;
+  timestamp: any; // Firestore Timestamp (Order Date)
+  productId: string;
+  productName: string;
+  sku: string;
+  variant?: string;
+  quantity: number;
+  expectedArrival: string; // ISO Date
+  status: 'in_transit' | 'completed';
   userId: string;
 }
 

@@ -15,7 +15,8 @@ import {
   RefreshCw,
   Clock,
   Users,
-  ShieldCheck
+  ShieldCheck,
+  ArrowDownCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -82,8 +83,9 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
     { id: 'dashboard', label: 'Bảng điều khiển', icon: LayoutDashboard },
     { id: 'upload', label: 'Tải lên PDF', icon: UploadCloud },
     { id: 'inventory', label: 'Kho hàng', icon: Package },
-    { id: 'returns', label: 'Hàng Hoàn', icon: RotateCcw },
+    { id: 'intransit', label: 'Hàng đang về', icon: ArrowDownCircle },
     { id: 'stockin', label: 'Nhập kho hàng về', icon: Search },
+    { id: 'returns', label: 'Hàng Hoàn', icon: RotateCcw },
     { id: 'reprint', label: 'In lại đơn hàng', icon: RotateCcw },
     { id: 'profit', label: 'Báo cáo lợi nhuận', icon: TrendingUp },
   ];

@@ -6,10 +6,16 @@ import {
   onSnapshot,
   orderBy,
   Timestamp,
-  limit
+  limit,
+  doc,
+  updateDoc,
+  addDoc,
+  serverTimestamp,
+  runTransaction,
+  getDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Product } from '../types';
+import { Product, InTransitLog } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
 
 export interface OrderRecord {
@@ -78,7 +84,7 @@ export class InventoryService {
       where('userId', '==', userId),
       where('processedAt', '>=', fifteenDaysAgoStr),
       orderBy('processedAt', 'desc'),
-      limit(200) // Limit to save quota
+      limit(150) // Limit to save quota
     );
     
     return onSnapshot(q, (snapshot) => {
@@ -203,7 +209,8 @@ export class InventoryService {
    * 2. Filter: stock < 10 AND sold in last 48h >= 1
    * 3. Avg_Daily_Sales = Total sold in 10 days / 10
    * 4. Target_Stock = Avg_Daily_Sales * 15
-   * 5. Restock_Qty = Target_Stock - Current_Stock (rounded up to 5/10 if < 5)
+   * 5. Total_Available = Current_Stock + In_Transit
+   * 6. Restock_Qty = Target_Stock - Total_Available (rounded up to 5/10 if < 5)
    */
   static calculateRestockForecast(orders: OrderRecord[], inventory: Product[], shippingOrders: any[]) {
     if (!Array.isArray(inventory) || !Array.isArray(shippingOrders)) return [];
@@ -265,10 +272,12 @@ export class InventoryService {
       const key = `${product.sku}_${product.variant}`;
       const sold10Days = salesMap[key] || 0;
       const sold48h = sales48hMap[key] || 0;
+      const inTransit = product.inTransit || 0;
       
       const avgDailySales = sold10Days / 10;
       const targetStock = avgDailySales * 15;
-      let restockQty = Math.max(0, Math.ceil(targetStock - product.stock));
+      const totalAvailable = product.stock + inTransit;
+      let restockQty = Math.max(0, Math.ceil(targetStock - totalAvailable));
       
       // Rounding logic: Round up to the nearest multiple of 5 to optimize shipping
       if (restockQty > 0) {
@@ -285,11 +294,16 @@ export class InventoryService {
       }));
 
       // Priority Logic:
-      // Nhập gấp (Red flashing): stock < 5 AND ra đơn liên tục (sold48h >= 1)
+      // Nhập gấp (Red flashing): stock < 5 AND ra đơn liên tục (sold48h >= 1) AND inTransit <= 20
+      // Chờ hàng về (Blue): stock < 5 AND inTransit > 20
       // Cần chú ý (Orange): stock 5-9
       let priority = 'An toàn';
       if (product.stock < 5 && sold48h >= 1) {
-        priority = 'Nhập gấp';
+        if (inTransit > 20) {
+          priority = 'Chờ hàng về';
+        } else {
+          priority = 'Nhập gấp';
+        }
       } else if (product.stock < 10) {
         priority = 'Cần chú ý';
       }
@@ -304,6 +318,7 @@ export class InventoryService {
         sold48h: sold48h,
         avgDailySales: avgDailySales,
         currentStock: product.stock,
+        inTransit: inTransit,
         expected15Days: targetStock,
         restockQty: restockQty,
         doi: doi,
@@ -324,6 +339,103 @@ export class InventoryService {
         if (scoreA !== scoreB) return scoreB - scoreA;
         return b.sold10Days - a.sold10Days;
       });
+  }
+
+  /**
+   * Update in-transit quantity for a product
+   */
+  static async updateInTransit(productId: string, quantity: number) {
+    const productRef = doc(db, 'inventory', productId);
+    try {
+      await updateDoc(productRef, {
+        inTransit: quantity,
+        lastUpdated: new Date().toISOString()
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `inventory/${productId}`);
+    }
+  }
+
+  /**
+   * Add a new in-transit log
+   */
+  static async addInTransitLog(log: Omit<InTransitLog, 'id' | 'timestamp'>) {
+    try {
+      const logRef = await addDoc(collection(db, 'in_transit_logs'), {
+        ...log,
+        timestamp: serverTimestamp()
+      });
+      
+      // If status is in_transit, update product's inTransit field
+      if (log.status === 'in_transit') {
+        const productRef = doc(db, 'inventory', log.productId);
+        const productSnap = await getDoc(productRef);
+        if (productSnap.exists()) {
+          const currentInTransit = productSnap.data().inTransit || 0;
+          await updateDoc(productRef, {
+            inTransit: currentInTransit + log.quantity
+          });
+        }
+      }
+      
+      return logRef.id;
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'in_transit_logs');
+    }
+  }
+
+  /**
+   * Toggle in-transit log status
+   */
+  static async toggleInTransitStatus(log: InTransitLog, newStatus: 'in_transit' | 'completed') {
+    if (log.status === newStatus) return;
+
+    const logRef = doc(db, 'in_transit_logs', log.id);
+    const productRef = doc(db, 'inventory', log.productId);
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        const productSnap = await transaction.get(productRef);
+        if (!productSnap.exists()) throw new Error('Product not found');
+
+        const productData = productSnap.data();
+        const currentStock = productData.stock || 0;
+        const currentInTransit = productData.inTransit || 0;
+
+        if (newStatus === 'completed') {
+          // Move from in-transit to stock
+          transaction.update(productRef, {
+            stock: currentStock + log.quantity,
+            inTransit: Math.max(0, currentInTransit - log.quantity),
+            status: (currentStock + log.quantity) > 10 ? 'in_stock' : ((currentStock + log.quantity) > 0 ? 'low_stock' : 'out_of_stock')
+          });
+          
+          // Log to inventory_logs
+          const invLogRef = doc(collection(db, 'inventory_logs'));
+          transaction.set(invLogRef, {
+            timestamp: serverTimestamp(),
+            sku: log.sku,
+            productName: log.productName,
+            variant: log.variant || '',
+            change: log.quantity,
+            type: 'addition',
+            userId: log.userId,
+            details: `Nhập kho từ hàng đang về (Lô: ${log.id})`
+          });
+        } else {
+          // Move back from stock to in-transit (revert)
+          transaction.update(productRef, {
+            stock: Math.max(0, currentStock - log.quantity),
+            inTransit: currentInTransit + log.quantity,
+            status: Math.max(0, currentStock - log.quantity) > 10 ? 'in_stock' : (Math.max(0, currentStock - log.quantity) > 0 ? 'low_stock' : 'out_of_stock')
+          });
+        }
+
+        transaction.update(logRef, { status: newStatus });
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `in_transit_logs/${log.id}`);
+    }
   }
 
   /**
