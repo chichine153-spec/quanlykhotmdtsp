@@ -1093,27 +1093,16 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
                         </div>
                       </div>
                       <div className="flex items-center gap-1">
-                        {item.pdfUrl && (
-                          <button 
-                            onClick={() => window.open(item.pdfUrl, '_blank')}
-                            className="p-1.5 text-primary hover:bg-primary/10 rounded-lg transition-all"
-                            title="In nhanh PDF gốc"
-                          >
-                            <Printer size={14} />
-                          </button>
-                        )}
-                        {!item.pdfUrl && (
-                          <button 
-                            onClick={() => {
-                              setSelectedOrderToPrint(item);
-                              setShowPrintTemplate(true);
-                            }}
-                            className="p-1.5 text-primary hover:bg-primary/10 rounded-lg transition-all"
-                            title="In nhiệt (mẫu hệ thống)"
-                          >
-                            <Printer size={14} />
-                          </button>
-                        )}
+                        <button 
+                          onClick={() => {
+                            setSelectedOrderToPrint(item);
+                            setShowPrintTemplate(true);
+                          }}
+                          className="p-1.5 text-primary hover:bg-primary/10 rounded-lg transition-all"
+                          title={(item.pdfUrl || item.image_url) ? "In vận đơn gốc" : "In nhiệt (mẫu hệ thống)"}
+                        >
+                          <Printer size={14} />
+                        </button>
                         <button 
                           onClick={() => setConfirmingRevert(item.trackingCode || item.id)}
                           className="p-1.5 text-secondary hover:text-error hover:bg-error/10 rounded-lg transition-all"

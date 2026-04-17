@@ -441,11 +441,29 @@ export class PDFService {
                 console.error('[PDFService] CRITICAL: You are using a Service Role Key in the browser. Please switch to the Anon Key in Settings.');
               }
             } else {
-              console.log(`[PDFService] Successfully saved ${matchingOrder.trackingCode} to print_history.`);
+            console.log(`[PDFService] Successfully saved ${matchingOrder.trackingCode} to print_history.`);
+
+            // 4. ALSO update the main Firestore 'orders' collection if possible
+            // This ensures "Tra cứu" via Firestore fallback also gets the image_url
+            try {
+              const ordersQuery = query(
+                collection(db, 'orders'), 
+                where('userId', '==', userId),
+                where('trackingCode', '==', matchingOrder.trackingCode)
+              );
+              const orderDocs = await getDocs(ordersQuery);
+              if (!orderDocs.empty) {
+                const orderRef = doc(db, 'orders', orderDocs.docs[0].id);
+                await updateDoc(orderRef, { image_url: publicUrl });
+                console.log(`[PDFService] Updated Firestore order ${matchingOrder.trackingCode} with image_url.`);
+              }
+            } catch (fsErr) {
+              console.error(`[PDFService] Failed to update Firestore order with image_url:`, fsErr);
             }
-          } else {
-            console.warn(`[PDFService] No matching order found for page ${i}. Page text snippet: ${normalizedPageText.substring(0, 100)}...`);
           }
+        } else {
+          console.warn(`[PDFService] No matching order found for page ${i}. Page text snippet: ${normalizedPageText.substring(0, 100)}...`);
+        }
         } catch (pageErr) {
           console.error(`[PDFService] Error processing page ${i}:`, pageErr);
         }

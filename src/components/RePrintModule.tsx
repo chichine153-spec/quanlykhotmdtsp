@@ -213,22 +213,37 @@ export default function RePrintModule() {
 
       // 2. If not found in Supabase, try Firestore Search
       if (!foundLabel) {
-        console.log('[RePrintModule] Tracking not found in Supabase, searching in Firestore...');
-        const orderRef = doc(db, 'orders', queryStr);
-        const orderSnap = await getDoc(orderRef);
+        const cleanQuery = queryStr.trim().toUpperCase();
+        console.log(`[RePrintModule] Tracking not found in Supabase, searching in Firestore for: ${cleanQuery}`);
+        
+        // Try direct lookup first
+        let orderSnap = await getDoc(doc(db, 'orders', cleanQuery));
+        
+        // If not found by ID, try a query as backup (sometimes IDs might be different)
+        if (!orderSnap.exists()) {
+          const q = query(
+            collection(db, 'orders'), 
+            where('userId', '==', user.uid), 
+            where('trackingCode', '==', cleanQuery)
+          );
+          const qSnap = await getDocs(q);
+          if (!qSnap.empty) {
+            orderSnap = qSnap.docs[0];
+          }
+        }
         
         if (orderSnap.exists()) {
           const data = orderSnap.data();
-          if (data.userId === user.uid) {
+          if (data && (data.userId === user.uid || !data.userId)) {
             foundLabel = {
               id: orderSnap.id,
-              tracking_number: data.trackingCode,
+              tracking_number: data.trackingCode || cleanQuery,
               product_name: Array.isArray(data.items) 
                 ? data.items.map((i: any) => `${i.sku} (${i.quantity})`).join(', ')
-                : 'Đơn hàng',
-              image_url: data.pdfUrl || '',
+                : (data.productName || 'Đơn hàng'),
+              image_url: data.image_url || data.pdfUrl || '', // Support both fields
               is_cup: false,
-              created_at: data.processedAt,
+              created_at: data.processedAt || new Date().toISOString(),
               user_id: user.uid
             } as PrintHistoryRecord;
           }
@@ -596,6 +611,31 @@ export function ThermalLabel({ order }: { order: any }) {
   const now = new Date();
   const dateStr = now.toLocaleDateString('vi-VN');
   const timeStr = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+
+  // If there's an original image scan, use it!
+  if (order.image_url || order.pdfUrl) {
+    const imageUrl = order.image_url || order.pdfUrl;
+    return (
+      <div className="thermal-label-container bg-white" style={{ width: '100mm', height: '150mm' }}>
+        <img 
+          src={imageUrl} 
+          alt="Original Shipping Label" 
+          className="w-full h-full object-contain"
+          referrerPolicy="no-referrer"
+        />
+        <style>
+          {`
+            @media print {
+              @page { size: 100mm 150mm; margin: 0; }
+              body { margin: 0; padding: 0; }
+              .thermal-label-container { width: 100mm !important; height: 150mm !important; }
+              img { width: 100% !important; height: 100% !important; display: block !important; }
+            }
+          `}
+        </style>
+      </div>
+    );
+  }
 
   const items = Array.isArray(order.items) ? order.items : [];
   

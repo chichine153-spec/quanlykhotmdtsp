@@ -38,6 +38,7 @@ export interface OrderRecord {
   taxFee?: number;
   packagingFee?: number;
   pdfUrl?: string;
+  image_url?: string;
   productName?: string;
   sku?: string;
   quantity?: number;
