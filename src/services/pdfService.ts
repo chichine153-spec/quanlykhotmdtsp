@@ -629,9 +629,16 @@ export class PDFService {
   }
 
   /**
-   * Checks if a product is in stock
+   * Checks if a product is in stock and returns product details including prices
    */
-  static async checkStockStatus(sku: string, color: string, preFetchedProducts?: any[]): Promise<{ inStock: boolean, currentStock: number, productName?: string, category?: string }> {
+  static async checkStockStatus(sku: string, color: string, preFetchedProducts?: any[]): Promise<{ 
+    inStock: boolean, 
+    currentStock: number, 
+    productName?: string, 
+    category?: string,
+    costPrice?: number,
+    sellingPrice?: number
+  }> {
     try {
       const matchedProduct = await this.findMatchedProduct(sku, color, preFetchedProducts);
       if (!matchedProduct) return { inStock: false, currentStock: 0 };
@@ -640,7 +647,9 @@ export class PDFService {
         inStock: matchedProduct.stock > 0, 
         currentStock: matchedProduct.stock,
         productName: matchedProduct.name,
-        category: matchedProduct.category
+        category: matchedProduct.category,
+        costPrice: matchedProduct.costPrice,
+        sellingPrice: matchedProduct.sellingPrice
       };
     } catch (error) {
       handleFirestoreError(error, OperationType.GET, 'inventory');
@@ -1065,8 +1074,6 @@ export class PDFService {
         
         if (!orderSnap.exists()) {
           // If order record is missing, we still try to delete other records if they exist
-          // But we need the items to revert stock. If order is missing, we can't revert stock.
-          // However, we should still delete the other records to be "clean".
           transaction.delete(orderRef);
           transaction.delete(processedOrderRef);
           transaction.delete(shippingLabelRef);
@@ -1076,31 +1083,44 @@ export class PDFService {
         const data = orderSnap.data();
         const items = data.items || [];
 
-        for (const item of items) {
-          if (item.productId) {
-            const productRef = doc(db, 'inventory', item.productId);
-            const productSnap = await transaction.get(productRef);
-            
-            if (productSnap.exists()) {
-              transaction.update(productRef, {
-                stock: increment(item.quantity)
-              });
+        // 1. COLLECT ALL READS FIRST
+        const productRefs = items
+          .filter((item: any) => item.productId)
+          .map((item: any) => doc(db, 'inventory', item.productId));
+        
+        // Remove duplicates to minimize reads
+        const uniqueProductIds = Array.from(new Set(productRefs.map((r: any) => r.id)));
+        const uniqueProductRefs = uniqueProductIds.map(id => doc(db, 'inventory', id as string));
 
-              // Add log for reversion
-              const newLogRef = doc(inventoryLogsRef);
-              transaction.set(newLogRef, {
-                userId: currentUserId,
-                sku: item.sku,
-                productName: item.productName || 'Sản phẩm (Hoàn tác)',
-                variant: item.variant || '',
-                change: item.quantity,
-                type: 'manual_edit',
-                trackingCode: `REVERT_${trackingCode}`,
-                timestamp: Timestamp.now()
-              });
-            } else {
-              console.warn(`[PDFService] Product ${item.productId} not found for order ${trackingCode}, skipping stock revert.`);
-            }
+        const productSnaps = new Map<string, any>();
+        for (const ref of uniqueProductRefs) {
+          const snap = await transaction.get(ref);
+          if (snap.exists()) {
+            productSnaps.set(ref.id, snap.data());
+          }
+        }
+
+        // 2. ALL WRITES SECOND
+        for (const item of (items as any[])) {
+          if (item.productId && productSnaps.has(item.productId)) {
+            const productRef = doc(db, 'inventory', item.productId as string);
+            
+            transaction.update(productRef, {
+              stock: increment(item.quantity)
+            });
+
+            // Add log for reversion
+            const newLogRef = doc(inventoryLogsRef);
+            transaction.set(newLogRef, {
+              userId: currentUserId,
+              sku: item.sku,
+              productName: item.productName || 'Sản phẩm (Hoàn tác)',
+              variant: item.variant || '',
+              change: item.quantity,
+              type: 'manual_edit',
+              trackingCode: `REVERT_${trackingCode}`,
+              timestamp: Timestamp.now()
+            });
           }
         }
 

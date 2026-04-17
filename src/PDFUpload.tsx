@@ -283,6 +283,8 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
             currentStock: stockInfo.currentStock,
             productName: stockInfo.productName || item.productName,
             category: stockInfo.category,
+            costPrice: stockInfo.costPrice || item.costPrice || 0,
+            sellingPrice: stockInfo.sellingPrice || item.sellingPrice || 0,
             packagingFee
           };
         }));
@@ -365,6 +367,10 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
           item.currentStock = stockInfo.currentStock;
           item.productName = stockInfo.productName || item.productName;
           item.category = stockInfo.category;
+          
+          // Auto-fill prices if available
+          if (stockInfo.costPrice) item.costPrice = stockInfo.costPrice;
+          if (stockInfo.sellingPrice) item.sellingPrice = stockInfo.sellingPrice;
           
           // Recalculate packaging fee with new category
           item.packagingFee = item.quantity * ProfitService.calculatePackagingFee(item.sku, stockInfo.productName || item.productName, profitConfig);
