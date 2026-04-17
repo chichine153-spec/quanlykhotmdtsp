@@ -267,7 +267,17 @@ export class PDFService {
       }
     });
 
-    const result = JSON.parse(response.text || "[]") as ExtractedOrder[];
+    const rawResult = JSON.parse(response.text || "[]") as ExtractedOrder[];
+    
+    // Sanitize results: convert strings like "null" or "undefined" to empty strings
+    const result = rawResult.map(order => ({
+      ...order,
+      trackingCode: (order.trackingCode && String(order.trackingCode).toLowerCase() !== 'null') ? String(order.trackingCode).toUpperCase() : '',
+      recipientName: (order.recipientName && String(order.recipientName).toLowerCase() !== 'null') ? order.recipientName : '',
+      recipientPhone: (order.recipientPhone && String(order.recipientPhone).toLowerCase() !== 'null') ? order.recipientPhone : '',
+      recipientAddress: (order.recipientAddress && String(order.recipientAddress).toLowerCase() !== 'null') ? order.recipientAddress : '',
+      region: (order.region && String(order.region).toLowerCase() !== 'null') ? order.region : '',
+    }));
     
     // Split items with quantity > 1 into multiple items with quantity 1
     // as requested: "hệ thống phải tạo ra 2 dòng thực thi trừ kho riêng biệt, mỗi dòng có SL = 1"

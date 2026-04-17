@@ -38,7 +38,8 @@ interface PrintHistoryRecord {
 }
 
 export default function RePrintModule() {
-  const { user } = useAuth();
+  const { user, role } = useAuth();
+  const isAdmin = role === 'admin';
   const [searchQuery, setSearchQuery] = React.useState('');
   const [labels, setLabels] = React.useState<PrintHistoryRecord[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -100,12 +101,17 @@ export default function RePrintModule() {
         let historyData: PrintHistoryRecord[] = [];
         
         if (supabase) {
-          const { data, error: sbError } = await supabase
+          let sbQuery = supabase
             .from('print_history')
             .select('*')
-            .eq('user_id', user.uid)
             .order('created_at', { ascending: false })
             .limit(100);
+
+          if (!isAdmin) {
+            sbQuery = sbQuery.eq('user_id', user.uid);
+          }
+
+          const { data, error: sbError } = await sbQuery;
 
           if (!sbError) {
             historyData = data || [];
@@ -118,14 +124,24 @@ export default function RePrintModule() {
         if (historyData.length === 0) {
           console.log('[RePrintModule] Fetching history from Firestore fallback...');
           const ordersRef = collection(db, 'orders');
-          const q = query(
-            ordersRef,
-            where('userId', '==', user.uid),
-            orderBy('processedAt', 'desc'),
-            limit(50)
-          );
+          let fsQuery;
           
-          const querySnap = await getDocs(q);
+          if (isAdmin) {
+            fsQuery = query(
+              ordersRef,
+              orderBy('processedAt', 'desc'),
+              limit(50)
+            );
+          } else {
+            fsQuery = query(
+              ordersRef,
+              where('userId', '==', user.uid),
+              orderBy('processedAt', 'desc'),
+              limit(50)
+            );
+          }
+          
+          const querySnap = await getDocs(fsQuery);
           const firestoreOrders = querySnap.docs.map(doc => {
             const data = doc.data();
             return {
@@ -160,13 +176,16 @@ export default function RePrintModule() {
     let channel: any = null;
     
     if (supabase) {
+      let filter = `user_id=eq.${user.uid}`;
+      if (isAdmin) filter = ''; // Listen to all changes if admin
+
       channel = supabase
         .channel('print_history_changes')
         .on('postgres_changes', { 
           event: '*', 
           schema: 'public', 
           table: 'print_history',
-          filter: `user_id=eq.${user.uid}`
+          ...(isAdmin ? {} : { filter: `user_id=eq.${user.uid}` })
         }, (payload) => {
           console.log('[RePrintModule] Real-time update:', payload);
           fetchHistory();
@@ -199,12 +218,18 @@ export default function RePrintModule() {
 
       // 1. Try Supabase Search first
       if (supabase) {
-        const { data, error } = await supabase
+        let sbQuery = supabase
           .from('print_history')
           .select('*')
-          .eq('user_id', user.uid)
           .eq('tracking_number', queryStr)
           .limit(1);
+        
+        // Only restrict by user_id if not admin
+        if (!isAdmin) {
+          sbQuery = sbQuery.eq('user_id', user.uid);
+        }
+
+        const { data, error } = await sbQuery;
 
         if (!error && data && data.length > 0) {
           foundLabel = data[0];
@@ -221,12 +246,17 @@ export default function RePrintModule() {
         
         // If not found by ID, try a query as backup (sometimes IDs might be different)
         if (!orderSnap.exists()) {
-          const q = query(
+          let fsQuery = query(
             collection(db, 'orders'), 
-            where('userId', '==', user.uid), 
             where('trackingCode', '==', cleanQuery)
           );
-          const qSnap = await getDocs(q);
+          
+          // Only restrict by userId if not admin
+          if (!isAdmin) {
+            fsQuery = query(fsQuery, where('userId', '==', user.uid));
+          }
+          
+          const qSnap = await getDocs(fsQuery);
           if (!qSnap.empty) {
             orderSnap = qSnap.docs[0];
           }
@@ -234,7 +264,8 @@ export default function RePrintModule() {
         
         if (orderSnap.exists()) {
           const data = orderSnap.data();
-          if (data && (data.userId === user.uid || !data.userId)) {
+          // Allow access if admin OR if it's the owner
+          if (data && (isAdmin || data.userId === user.uid || !data.userId)) {
             foundLabel = {
               id: orderSnap.id,
               tracking_number: data.trackingCode || cleanQuery,
@@ -244,7 +275,7 @@ export default function RePrintModule() {
               image_url: data.image_url || data.pdfUrl || '', // Support both fields
               is_cup: false,
               created_at: data.processedAt || new Date().toISOString(),
-              user_id: user.uid
+              user_id: data.userId || user.uid
             } as PrintHistoryRecord;
           }
         }
@@ -613,23 +644,40 @@ export function ThermalLabel({ order }: { order: any }) {
   const timeStr = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 
   // If there's an original image scan, use it!
-  if (order.image_url || order.pdfUrl) {
+  const hasImage = order.image_url || order.pdfUrl;
+  
+  if (hasImage) {
     const imageUrl = order.image_url || order.pdfUrl;
     return (
-      <div className="thermal-label-container bg-white" style={{ width: '100mm', height: '150mm' }}>
+      <div className="thermal-label-container bg-white flex items-center justify-center" style={{ width: '100mm', height: '150mm' }}>
         <img 
           src={imageUrl} 
           alt="Original Shipping Label" 
-          className="w-full h-full object-contain"
+          className="w-[98%] h-[98%] object-contain"
           referrerPolicy="no-referrer"
+          onError={(e) => {
+            console.error('Image load error in ThermalLabel');
+            // We can't really fall back here easily without state, but logging helps
+          }}
         />
         <style>
           {`
             @media print {
               @page { size: 100mm 150mm; margin: 0; }
               body { margin: 0; padding: 0; }
-              .thermal-label-container { width: 100mm !important; height: 150mm !important; }
-              img { width: 100% !important; height: 100% !important; display: block !important; }
+              .thermal-label-container { 
+                width: 100mm !important; 
+                height: 150mm !important; 
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+              }
+              img { 
+                width: 98% !important; 
+                height: 98% !important; 
+                display: block !important; 
+                object-fit: contain !important;
+              }
             }
           `}
         </style>
@@ -640,8 +688,9 @@ export function ThermalLabel({ order }: { order: any }) {
   const items = Array.isArray(order.items) ? order.items : [];
   
   // Format phone number to avoid "null"
-  const displayPhone = (order.recipientPhone && order.recipientPhone !== 'null') 
-    ? order.recipientPhone 
+  const rawPhone = String(order.recipientPhone || '');
+  const displayPhone = (rawPhone && rawPhone !== 'null' && rawPhone !== 'undefined') 
+    ? rawPhone 
     : '';
 
   return (
