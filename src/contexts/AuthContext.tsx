@@ -4,7 +4,10 @@ import {
   onAuthStateChanged, 
   signInWithPopup, 
   GoogleAuthProvider, 
-  signOut 
+  signOut,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, disableNetwork } from 'firebase/firestore';
 import { auth, db } from '../firebase';
@@ -19,6 +22,9 @@ interface AuthContextType {
   loading: boolean;
   error: string | null;
   login: () => Promise<void>;
+  loginWithEmail: (email: string, pass: string) => Promise<void>;
+  signupWithEmail: (email: string, pass: string) => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
   isSubscriptionValid: () => boolean;
@@ -157,6 +163,55 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const loginWithEmail = async (email: string, pass: string) => {
+    setError(null);
+    try {
+      await signInWithEmailAndPassword(auth, email, pass);
+    } catch (err: any) {
+      console.error('Email login failed:', err);
+      if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found') {
+        setError('Email hoặc mật khẩu không chính xác.');
+      } else if (err.code === 'auth/too-many-requests') {
+        setError('Tài khoản đã bị tạm khóa do nhập sai nhiều lần. Vui lòng thử lại sau.');
+      } else {
+        setError(err.message || 'Đăng nhập thất bại.');
+      }
+      throw err;
+    }
+  };
+
+  const signupWithEmail = async (email: string, pass: string) => {
+    setError(null);
+    try {
+      await createUserWithEmailAndPassword(auth, email, pass);
+    } catch (err: any) {
+      console.error('Signup failed:', err);
+      if (err.code === 'auth/email-already-in-use') {
+        setError('Email này đã được sử dụng.');
+      } else if (err.code === 'auth/weak-password') {
+        setError('Mật khẩu quá yếu. Vui lòng dùng ít nhất 6 ký tự.');
+      } else {
+        setError(err.message || 'Đăng ký thất bại.');
+      }
+      throw err;
+    }
+  };
+
+  const resetPassword = async (email: string) => {
+    setError(null);
+    try {
+      await sendPasswordResetEmail(auth, email);
+    } catch (err: any) {
+      console.error('Password reset failed:', err);
+      if (err.code === 'auth/user-not-found') {
+        setError('Không tìm thấy tài khoản với email này.');
+      } else {
+        setError(err.message || 'Gửi yêu cầu cài lại mật khẩu thất bại.');
+      }
+      throw err;
+    }
+  };
+
   const logout = async () => {
     try {
       await signOut(auth);
@@ -168,7 +223,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const clearError = () => setError(null);
 
   return (
-    <AuthContext.Provider value={{ user, role, status, paymentStatus, expiryDate, phone, loading, error, login, logout, clearError, isSubscriptionValid }}>
+    <AuthContext.Provider value={{ 
+      user, role, status, paymentStatus, expiryDate, phone, loading, error, 
+      login, loginWithEmail, signupWithEmail, resetPassword, logout, clearError, isSubscriptionValid 
+    }}>
       {!loading && children}
     </AuthContext.Provider>
   );

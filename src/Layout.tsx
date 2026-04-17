@@ -30,6 +30,7 @@ import { auth, db } from './firebase';
 import { Screen } from './types';
 import { useAuth } from './contexts/AuthContext';
 import { useData } from './contexts/DataContext';
+import AuthModal from './components/AuthModal';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -39,6 +40,7 @@ interface LayoutProps {
 
 export default function Layout({ children, activeScreen, onScreenChange }: LayoutProps) {
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = React.useState(false);
   const { user, login, logout, error, clearError, role, status, expiryDate, isSubscriptionValid } = useAuth();
   const { refreshData, lastUpdated, loading, quotaExceeded: dataQuotaExceeded } = useData();
   const [isRefreshing, setIsRefreshing] = React.useState(false);
@@ -229,8 +231,8 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
             </>
           ) : (
             <button 
-              onClick={login}
-              className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl text-sm font-bold hover:opacity-90 transition-all"
+              onClick={() => setIsAuthModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl text-sm font-bold hover:opacity-90 transition-all font-headline uppercase tracking-tight"
             >
               <LogIn size={18} />
               <span>Đăng nhập</span>
@@ -238,6 +240,8 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
           )}
         </div>
       </header>
+
+      <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
 
       {/* Desktop Sidebar */}
       <aside className="hidden lg:flex fixed left-0 top-0 z-[60] w-72 p-4 flex-col gap-6 bg-white/60 backdrop-blur-2xl rounded-r-3xl h-[calc(100vh-2rem)] my-4 ml-4 shadow-2xl shadow-slate-200/50">
@@ -288,8 +292,8 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
             </button>
           ) : (
             <button 
-              onClick={login}
-              className="flex items-center gap-3 px-4 py-3 w-full text-primary hover:bg-surface-container rounded-xl transition-all"
+              onClick={() => setIsAuthModalOpen(true)}
+              className="flex items-center gap-3 px-4 py-3 w-full text-primary hover:bg-surface-container rounded-xl transition-all font-black uppercase tracking-widest text-[10px]"
             >
               <LogIn size={20} />
               <span className="text-sm font-medium">Đăng nhập</span>
