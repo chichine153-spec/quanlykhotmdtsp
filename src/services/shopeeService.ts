@@ -22,7 +22,7 @@ export class ShopeeService {
       const tempAi = new GoogleGenAI({ apiKey: key });
       
       await tempAi.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3-flash-preview",
         contents: "test",
         config: { maxOutputTokens: 1 }
       });
@@ -75,7 +75,7 @@ export class ShopeeService {
         Trả về kết quả dưới dạng mảng JSON các đối tượng.`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3-flash-preview",
         contents: prompt,
         config: {
           tools: rawText ? [] : [{ urlContext: {} }],

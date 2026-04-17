@@ -243,7 +243,7 @@ export class PDFService {
     Trả về kết quả dưới dạng mảng JSON các đối tượng ExtractedOrder.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-3-flash-preview",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
