@@ -1,8 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 
-// Cố định API Key để đảm bảo hệ thống luôn hoạt động
-// Bạn có thể dán mã API của mình vào đây: const GEMINI_API_KEY = "MÃ_API_CỦA_BẠN";
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+// Safe access to environment variables in both Node and Browser
+const GEMINI_API_KEY = (typeof process !== 'undefined' ? process.env?.GEMINI_API_KEY : '') || '';
 
 /**
  * Centralized Gemini API configuration and initialization.
@@ -14,8 +13,8 @@ export class GeminiService {
    * Gets or initializes the Gemini instance.
    * @returns The GoogleGenAI instance or null if no API key is set.
    */
-  static getInstance(): GoogleGenAI | null {
-    if (this.instance) return this.instance;
+  static getInstance(customKey?: string): GoogleGenAI | null {
+    if (!customKey && this.instance) return this.instance;
 
     // Get shared key from global config (synced via DataContext)
     let sharedKey = '';
@@ -29,7 +28,8 @@ export class GeminiService {
       console.error('[GeminiService] Error reading global config cache:', e);
     }
 
-    const apiKey = localStorage.getItem('gemini_api_key') || 
+    const apiKey = customKey ||
+                   localStorage.getItem('gemini_api_key') || 
                    sharedKey ||
                    localStorage.getItem('global_gemini_key') || 
                    GEMINI_API_KEY;
@@ -38,14 +38,12 @@ export class GeminiService {
       return null;
     }
 
-    if (apiKey === sharedKey && sharedKey !== "") {
-      console.info('[GeminiService] Using Global Shared API Key.');
-    } else if (apiKey === GEMINI_API_KEY && GEMINI_API_KEY !== "") {
-      console.info('[GeminiService] Using fallback community API Key.');
+    if (customKey) {
+      // Don't cache the test instance
+      return new GoogleGenAI({ apiKey });
     }
 
-    this.instance = new GoogleGenAI({ apiKey });
-    return this.instance;
+    if (this.instance) return this.instance;
   }
 
   /**

@@ -8,7 +8,6 @@ import {
   doc, 
   updateDoc, 
   increment,
-  onSnapshot,
   orderBy,
   deleteDoc,
   runTransaction,
@@ -120,25 +119,26 @@ export class ReturnService {
   }
 
   /**
-   * Listen to return history
+   * Fetch return history
    */
-  static listenToReturns(userId: string, callback: (returns: any[]) => void) {
-    const q = query(
-      collection(db, 'returns'),
-      where('userId', '==', userId),
-      orderBy('returnedAt', 'desc'),
-      limit(50) // Limit to save quota
-    );
+  static async fetchReturns(userId: string) {
+    try {
+      const q = query(
+        collection(db, 'returns'),
+        where('userId', '==', userId),
+        orderBy('returnedAt', 'desc'),
+        limit(50) // Limit to save quota
+      );
 
-    return onSnapshot(q, (snapshot) => {
-      const returns = snapshot.docs.map(doc => ({
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
-      callback(returns);
-    }, (error) => {
+    } catch (error) {
       handleFirestoreError(error, OperationType.LIST, 'returns');
-    });
+      return [];
+    }
   }
 
   /**

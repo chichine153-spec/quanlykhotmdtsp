@@ -21,7 +21,7 @@ import { handleFirestoreError, OperationType } from './lib/firestore-errors';
 import { ProfitService } from './services/profitService';
 import { useAuth } from './contexts/AuthContext';
 import { useData } from './contexts/DataContext';
-import { collection, query, limit, getDocs, onSnapshot, where, doc, getDoc, orderBy } from 'firebase/firestore';
+import { collection, query, limit, getDocs, where, doc, getDoc, orderBy } from 'firebase/firestore';
 import { db, storage } from './firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { ThermalLabel } from './components/RePrintModule';

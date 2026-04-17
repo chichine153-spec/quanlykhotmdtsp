@@ -23,7 +23,8 @@ import {
   collection, 
   query, 
   where, 
-  onSnapshot 
+  getDocs,
+  limit
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { Screen } from './types';
@@ -44,20 +45,26 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
   const [quotaExceeded, setQuotaExceeded] = React.useState(false);
   const [pendingPayments, setPendingPayments] = React.useState(0);
 
-  // Check for pending payments if admin
-  React.useEffect(() => {
-    if (role !== 'admin') return;
-    const q = query(collection(db, 'users'), where('paymentStatus', '==', 'pending'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+  // Check for pending payments if admin - Manual fetch to save quota and stop Watch errors
+  const fetchPendingPayments = async () => {
+    if (role !== 'admin' || !user) return;
+    try {
+      const q = query(collection(db, 'users'), where('paymentStatus', '==', 'pending'), limit(20));
+      const snapshot = await getDocs(q);
       setPendingPayments(snapshot.size);
-    }, (error) => {
-      const isQuotaError = error.message?.includes('Quota') || JSON.stringify(error).includes('Quota');
-      if (!isQuotaError) {
-        console.error('Pending payments listener error:', error);
+    } catch (error: any) {
+      if (!error.message?.includes('Quota')) {
+        console.error('Pending payments fetch error:', error);
       }
-    });
-    return unsubscribe;
-  }, [role]);
+    }
+  };
+
+  React.useEffect(() => {
+    fetchPendingPayments();
+    // Refresh occasionally instead of real-time listener
+    const interval = setInterval(fetchPendingPayments, 5 * 60 * 1000); // 5 minutes
+    return () => clearInterval(interval);
+  }, [role, user]);
 
   // Check for quota error in global error state or data context
   React.useEffect(() => {
@@ -118,16 +125,15 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
                 <AlertTriangle size={20} className="animate-pulse" />
                 <div className="flex flex-col">
                   <span className="text-sm font-black uppercase tracking-widest">Hết hạn mức truy cập (Quota Exceeded)</span>
-                  <span className="text-[10px] opacity-80 font-medium">Hệ thống đã đạt giới hạn truy cập miễn phí trong ngày. Vui lòng quay lại sau 24h.</span>
+                  <span className="text-[10px] opacity-80 font-medium">Hệ thống đã đạt giới hạn truy cập miễn phí trong ngày. Vui lòng tải lại trang hoặc quay lại sau 24h.</span>
                 </div>
               </div>
               <button 
-                onClick={handleRefresh}
-                disabled={isRefreshing}
-                className="px-3 py-1 bg-white/20 hover:bg-white/30 rounded-lg text-[10px] font-black uppercase transition-all flex items-center gap-1"
+                onClick={() => window.location.reload()}
+                className="px-3 py-1 bg-white text-red-600 hover:bg-white/90 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-1 shadow-lg"
               >
-                {isRefreshing ? <RefreshCw size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                Thử lại
+                <RefreshCw size={12} />
+                Tải lại trang
               </button>
             </div>
             <button 

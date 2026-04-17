@@ -3,7 +3,6 @@ import {
   query, 
   where, 
   getDocs, 
-  onSnapshot,
   orderBy,
   Timestamp,
   limit,
@@ -53,49 +52,51 @@ export interface OrderRecord {
 
 export class InventoryService {
   /**
-   * Listen to all inventory changes
+   * Fetch all inventory
    */
-  static listenToInventory(userId: string, callback: (products: Product[]) => void) {
-    const q = query(
-      collection(db, 'inventory'),
-      where('userId', '==', userId)
-    );
-    return onSnapshot(q, (snapshot) => {
-      const products = snapshot.docs.map(doc => ({
+  static async fetchInventory(userId: string) {
+    try {
+      const q = query(
+        collection(db, 'inventory'),
+        where('userId', '==', userId)
+      );
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as Product[];
-      callback(products);
-    }, (error) => {
+    } catch (error) {
       handleFirestoreError(error, OperationType.LIST, 'inventory');
-    });
+      return [];
+    }
   }
 
   /**
-   * Listen to all orders (filtered to last 15 days)
+   * Fetch all orders (filtered to last 15 days)
    */
-  static listenToOrders(userId: string, callback: (orders: OrderRecord[]) => void) {
-    const fifteenDaysAgo = new Date();
-    fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
-    const fifteenDaysAgoStr = fifteenDaysAgo.toISOString();
+  static async fetchOrders(userId: string) {
+    try {
+      const fifteenDaysAgo = new Date();
+      fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
+      const fifteenDaysAgoStr = fifteenDaysAgo.toISOString();
 
-    const q = query(
-      collection(db, 'orders'), 
-      where('userId', '==', userId),
-      where('processedAt', '>=', fifteenDaysAgoStr),
-      orderBy('processedAt', 'desc'),
-      limit(150) // Limit to save quota
-    );
-    
-    return onSnapshot(q, (snapshot) => {
-      const orders = snapshot.docs.map(doc => ({
+      const q = query(
+        collection(db, 'orders'), 
+        where('userId', '==', userId),
+        where('processedAt', '>=', fifteenDaysAgoStr),
+        orderBy('processedAt', 'desc'),
+        limit(150) // Limit to save quota
+      );
+      
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as OrderRecord[];
-      callback(orders);
-    }, (error) => {
+    } catch (error) {
       handleFirestoreError(error, OperationType.LIST, 'orders');
-    });
+      return [];
+    }
   }
 
   /**

@@ -77,31 +77,6 @@ export default function ProfitDashboard() {
   }, [dataLoading]);
 
   // No local listeners needed anymore, using global data from DataContext
-  /*
-  React.useEffect(() => {
-    if (!user) return;
-
-    const unsubConfig = ProfitService.listenToConfig(user.uid, (data) => {
-      if (data) setConfig(data);
-    });
-
-    const unsubOrders = InventoryService.listenToOrders(user.uid, (data) => {
-      setOrders(data);
-    });
-
-    const unsubReturns = ProfitService.listenToReturns(user.uid, (data) => {
-      setReturns(data);
-      setLoading(false);
-    });
-
-    return () => {
-      unsubConfig();
-      unsubOrders();
-      unsubReturns();
-    };
-  }, [user]);
-  */
-
   const stats = ProfitService.calculateProfitStats(orders, returns, config, activeTab);
 
   const chartData = [

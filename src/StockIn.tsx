@@ -20,7 +20,7 @@ import {
   where, 
   orderBy, 
   limit, 
-  onSnapshot, 
+  getDocs, 
   runTransaction, 
   doc, 
   serverTimestamp,
@@ -60,35 +60,41 @@ export default function StockIn() {
       if (!user) setLoading(false);
       return;
     }
+  }, [user, quotaExceeded, quotaError]);
 
-    // Listen to history logs
-    const logsQuery = query(
-      collection(db, 'inventory_logs'),
-      where('userId', '==', user.uid),
-      where('type', '==', 'addition'),
-      orderBy('timestamp', 'desc'),
-      limit(20)
-    );
+  const fetchHistory = async () => {
+    if (!user || quotaExceeded || quotaError) return;
+    
+    try {
+      const logsQuery = query(
+        collection(db, 'inventory_logs'),
+        where('userId', '==', user.uid),
+        where('type', '==', 'addition'),
+        orderBy('timestamp', 'desc'),
+        limit(20)
+      );
 
-    const unsubLogs = onSnapshot(logsQuery, (snapshot) => {
+      const snapshot = await getDocs(logsQuery);
       const logs = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as InventoryLog[];
       setHistoryLogs(logs);
       setQuotaError(false);
-    }, (error) => {
+    } catch (error: any) {
       const classified = classifyError(error, 'Firebase');
       if (classified.isQuota) {
         setQuotaError(true);
       } else {
         console.error('StockIn logs error:', error);
       }
-    });
+    }
+  };
 
-    return () => {
-      unsubLogs();
-    };
+  React.useEffect(() => {
+    fetchHistory();
+    // No interval needed here as this is just a log history, 
+    // but we could add one if desired. DataContext handles the main inventory.
   }, [user, quotaExceeded, quotaError]);
 
   if (!user) {

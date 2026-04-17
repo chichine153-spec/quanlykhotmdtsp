@@ -18,14 +18,15 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   collection, 
   query, 
-  onSnapshot, 
+  getDocs,
   doc, 
   updateDoc, 
   addDoc,
   serverTimestamp,
   orderBy,
   getDoc,
-  setDoc
+  setDoc,
+  limit
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { useAuth } from './contexts/AuthContext';
@@ -59,19 +60,30 @@ export default function AccountManagement() {
     }
   }, [globalConfig]);
 
-  React.useEffect(() => {
+  const fetchUsers = async () => {
     if (role !== 'admin') return;
-
-    const usersQuery = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(usersQuery, (snapshot) => {
+    setLoading(true);
+    try {
+      const usersQuery = query(collection(db, 'users'), orderBy('createdAt', 'desc'), limit(100));
+      const snapshot = await getDocs(usersQuery);
       const usersList = snapshot.docs.map(doc => ({
         ...doc.data()
       })) as UserProfile[];
       setUsers(usersList);
+    } catch (error: any) {
+      console.error('Fetch users error:', error);
+      if (error.message?.includes('Quota')) {
+        toast.error('Hết hạn mức truy cập dữ liệu người dùng.');
+      }
+    } finally {
       setLoading(false);
-    });
+    }
+  };
 
-    return unsubscribe;
+  React.useEffect(() => {
+    if (role === 'admin') {
+      fetchUsers();
+    }
   }, [role]);
 
   const handleActivate = async (user: UserProfile) => {
@@ -145,12 +157,11 @@ export default function AccountManagement() {
 
     setIsTestLoading(true);
     try {
-      // Temporary instance for testing
-      const { GoogleGenAI } = await import('@google/genai');
-      const ai = new GoogleGenAI({ apiKey: geminiKey });
+      const ai = GeminiService.getInstance(geminiKey);
+      if (!ai) throw new Error('Không thể khởi tạo Gemini instance');
       
       const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3-flash-preview",
         contents: "Hello, are you active? Reply with OK only.",
       });
       

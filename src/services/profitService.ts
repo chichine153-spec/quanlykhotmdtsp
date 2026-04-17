@@ -5,7 +5,6 @@ import {
   setDoc, 
   query, 
   where, 
-  onSnapshot, 
   orderBy,
   Timestamp,
   getDocs,
@@ -17,19 +16,20 @@ import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
 
 export class ProfitService {
   /**
-   * Listen to profit configuration
+   * Fetch profit configuration
    */
-  static listenToConfig(userId: string, callback: (config: ProfitConfig | null) => void) {
-    const docRef = doc(db, 'profit_configs', userId);
-    return onSnapshot(docRef, (docSnap) => {
+  static async fetchConfig(userId: string) {
+    try {
+      const docRef = doc(db, 'profit_configs', userId);
+      const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
-        callback(docSnap.data() as ProfitConfig);
-      } else {
-        callback(null);
+        return docSnap.data() as ProfitConfig;
       }
-    }, (error) => {
+      return null;
+    } catch (error) {
       handleFirestoreError(error, OperationType.GET, `profit_configs/${userId}`);
-    });
+      return null;
+    }
   }
 
   /**
@@ -137,24 +137,25 @@ export class ProfitService {
   }
 
   /**
-   * Listen to return records
+   * Fetch return records
    */
-  static listenToReturns(userId: string, callback: (returns: ReturnRecord[]) => void) {
-    const q = query(
-      collection(db, 'returns'),
-      where('userId', '==', userId),
-      orderBy('returnedAt', 'desc'),
-      limit(100) // Limit to save quota
-    );
-    return onSnapshot(q, (snapshot) => {
-      const returns = snapshot.docs.map(doc => ({
+  static async fetchReturns(userId: string) {
+    try {
+      const q = query(
+        collection(db, 'returns'),
+        where('userId', '==', userId),
+        orderBy('returnedAt', 'desc'),
+        limit(100) // Limit to save quota
+      );
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as ReturnRecord[];
-      callback(returns);
-    }, (error) => {
+    } catch (error) {
       handleFirestoreError(error, OperationType.LIST, 'returns');
-    });
+      return [];
+    }
   }
 
   /**

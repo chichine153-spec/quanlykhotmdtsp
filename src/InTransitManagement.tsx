@@ -22,7 +22,7 @@ import {
   where, 
   orderBy, 
   limit, 
-  onSnapshot, 
+  getDocs,
   Timestamp 
 } from 'firebase/firestore';
 import { db } from './firebase';
@@ -55,38 +55,39 @@ export default function InTransitManagement() {
     setLoading(dataLoading);
   }, [dataLoading]);
 
-  React.useEffect(() => {
-    if (!user || quotaExceeded || quotaError) {
-      if (!user) setLoading(false);
-      return;
-    }
-
-    const logsQuery = query(
-      collection(db, 'in_transit_logs'),
-      where('userId', '==', user.uid),
-      orderBy('timestamp', 'desc'),
-      limit(50)
-    );
-
-    const unsubLogs = onSnapshot(logsQuery, (snapshot) => {
+  const fetchLogs = async () => {
+    if (!user || quotaExceeded) return;
+    
+    setLoading(true);
+    try {
+      const logsQuery = query(
+        collection(db, 'in_transit_logs'),
+        where('userId', '==', user.uid),
+        orderBy('timestamp', 'desc'),
+        limit(50)
+      );
+      const snapshot = await getDocs(logsQuery);
       const logs = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as InTransitLog[];
       setInTransitLogs(logs);
-      setLoading(false);
       setQuotaError(false);
-    }, (error) => {
+    } catch (error: any) {
       const classified = classifyError(error, 'Firebase');
       if (classified.isQuota) {
         setQuotaError(true);
       } else {
         console.error('InTransit logs error:', error);
       }
-    });
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    return () => unsubLogs();
-  }, [user, quotaExceeded, quotaError]);
+  React.useEffect(() => {
+    fetchLogs();
+  }, [user, quotaExceeded]);
 
   if (!user) {
     return (

@@ -30,7 +30,7 @@ import {
   Upload
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { collection, onSnapshot, query, addDoc, getDocs, writeBatch, doc, updateDoc, deleteDoc, orderBy, limit, serverTimestamp, where } from 'firebase/firestore';
+import { collection, query, addDoc, getDocs, writeBatch, doc, updateDoc, deleteDoc, orderBy, limit, serverTimestamp, where } from 'firebase/firestore';
 import { db } from './firebase';
 import { MOCK_PRODUCTS, Product, InventoryLog, ProfitConfig } from './types';
 import { ProfitService } from './services/profitService';
@@ -117,74 +117,99 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
     sellingPrice: 0
   });
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file && editingProduct) {
+    if (file) {
+      // Basic size check for very large files
+      if (file.size > 10 * 1024 * 1024) {
+        addToast('File quá lớn. Vui lòng chọn ảnh dưới 10MB.', 'error');
+        return;
+      }
+
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setEditingProduct({
-          ...editingProduct,
-          image: reader.result as string
-        });
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          
+          // Max dimension 500px for good performance and small footprint
+          const maxDim = 500;
+          if (width > height) {
+            if (width > maxDim) {
+              height *= maxDim / width;
+              width = maxDim;
+            }
+          } else {
+            if (height > maxDim) {
+              width *= maxDim / height;
+              height = maxDim;
+            }
+          }
+          
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            
+            // Quality 0.6 ensures the resulting Base64 is well under the 1MB Firestore limit
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+            
+            if (isAddingNew) {
+              setNewProduct(prev => ({ ...prev, image: dataUrl }));
+            } else if (editingProduct) {
+              setEditingProduct(prev => prev ? ({ ...prev, image: dataUrl }) : null);
+            }
+          }
+          // Reset input value
+          e.target.value = '';
+        };
+        img.onerror = () => {
+          addToast('Lỗi khi xử lý ảnh.', 'error');
+        };
+        img.src = event.target?.result as string;
+      };
+      reader.onerror = () => {
+        addToast('Lỗi khi đọc file ảnh.', 'error');
       };
       reader.readAsDataURL(file);
     }
   };
 
   // No local inventory listener needed anymore, using global data from DataContext
-  /*
-  React.useEffect(() => {
-    if (!user) {
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-    const q = query(
-      collection(db, 'inventory'),
-      where('userId', '==', user.uid)
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Product[];
-      setProducts(items);
-      setLoading(false);
-    }, (error) => {
-      console.error("Inventory Listener Error:", error);
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, [user]);
-  */
-
-  React.useEffect(() => {
-    if (!user || !showHistory) return;
-
-    const q = query(
-      collection(db, 'inventory_logs'),
-      where('userId', '==', user.uid),
-      orderBy('timestamp', 'desc'),
-      limit(20)
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+  const fetchHistory = async () => {
+    if (!user) return;
+    setIsUpdating(true);
+    try {
+      const q = query(
+        collection(db, 'inventory_logs'),
+        where('userId', '==', user.uid),
+        orderBy('timestamp', 'desc'),
+        limit(50)
+      );
+      const snapshot = await getDocs(q);
       const logs = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as InventoryLog[];
       setInventoryLogs(logs);
-    }, (error) => {
-      const isQuotaError = error.message?.includes('Quota') || JSON.stringify(error).includes('Quota');
-      if (!isQuotaError) {
-        console.error('Inventory logs error:', error);
+    } catch (error: any) {
+      console.error('Fetch History Error:', error);
+      if (error.message?.includes('Quota')) {
+        addToast('Không thể tải lịch sử do hết hạn mức truy cập.', 'error');
       }
-      // The global quotaExceeded in DataContext will handle the UI banner
-    });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
 
-    return () => unsubscribe();
-  }, [user, showHistory]);
+  React.useEffect(() => {
+    if (showHistory && user) {
+      fetchHistory();
+    }
+  }, [showHistory, user]);
 
   if (!user) {
     return (
@@ -231,7 +256,6 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
         product_name: p.variant ? `${p.name} (${p.variant})` : p.name,
         sku: p.sku,
         stock_quantity: Number(p.stock),
-        in_transit_quantity: Number(p.inTransit || 0),
         updated_at: new Date().toISOString()
       }));
 
@@ -303,9 +327,16 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
         image: 'https://picsum.photos/seed/piti/200/200'
       });
       addToast('Đã thêm sản phẩm mới thành công!', 'success');
+      // Refresh global data to show new product immediately
+      refreshData();
     } catch (error) {
       console.error("Add Error:", error);
-      addToast('Lỗi khi thêm sản phẩm mới.', 'error');
+      try {
+        handleFirestoreError(error, OperationType.WRITE, 'inventory');
+      } catch (fe: any) {
+        const errObj = JSON.parse(fe.message);
+        addToast(errObj.userFriendlyMessage || 'Lỗi khi thêm sản phẩm mới. Có thể ảnh quá lớn.', 'error');
+      }
     } finally {
       setIsUpdating(false);
     }
@@ -362,9 +393,16 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
 
       setEditingProduct(null);
       addToast('Đã cập nhật thông tin sản phẩm.', 'success');
+      // Refresh global data to show changes immediately
+      refreshData();
     } catch (error) {
       console.error("Update Error:", error);
-      addToast('Lỗi khi cập nhật sản phẩm.', 'error');
+      try {
+        handleFirestoreError(error, OperationType.UPDATE, 'inventory');
+      } catch (fe: any) {
+        const errObj = JSON.parse(fe.message);
+        addToast(errObj.userFriendlyMessage || 'Lỗi khi cập nhật sản phẩm. Có thể ảnh quá lớn.', 'error');
+      }
     } finally {
       setIsUpdating(false);
     }
@@ -377,6 +415,8 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
       setEditingProduct(null);
       setConfirmingDeleteId(null);
       addToast('Đã xoá sản phẩm khỏi kho.', 'info');
+      // Refresh to update list
+      refreshData();
     } catch (error) {
       console.error("Delete Error:", error);
       addToast('Lỗi khi xóa sản phẩm.', 'error');
@@ -414,6 +454,8 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
 
       setEditingPriceId(null);
       addToast(`Đã cập nhật ${type === 'cost' ? 'giá vốn' : 'giá bán'}.`, 'success');
+      // Refresh global data to show changes immediately
+      refreshData();
     } catch (error) {
       console.error("Quick Price Update Error:", error);
       addToast('Lỗi khi cập nhật giá.', 'error');
@@ -451,6 +493,8 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
 
       setEditingStockId(null);
       addToast('Đã cập nhật tồn kho.', 'success');
+      // Refresh global data to show changes immediately
+      refreshData();
     } catch (error) {
       console.error("Quick Update Error:", error);
       addToast('Lỗi khi cập nhật tồn kho.', 'error');
@@ -483,6 +527,8 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
 
       setEditingInTransitId(null);
       addToast('Đã cập nhật số lượng đang về.', 'success');
+      // Refresh global data to show changes immediately
+      refreshData();
     } catch (error) {
       console.error("Quick In-Transit Update Error:", error);
       addToast('Lỗi khi cập nhật số lượng đang về.', 'error');
@@ -696,6 +742,7 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
       
       setShowClearConfirm(false);
       addToast('Đã khôi phục kho về trạng thái gốc thành công!', 'success');
+      refreshData();
     } catch (error) {
       console.error("Clear Error:", error);
       addToast('Lỗi khi xoá sạch kho hàng.', 'error');
@@ -722,7 +769,7 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
       const stockNum = Number(p.stock);
       if (statusFilter === 'in_stock') matchesStatus = stockNum > 10;
       else if (statusFilter === 'low_stock') matchesStatus = stockNum > 0 && stockNum <= 10;
-      else if (statusFilter === 'out_of_stock') matchesStatus = stockNum <= 5;
+      else if (statusFilter === 'out_of_stock') matchesStatus = stockNum <= 0;
       
       return matchesSearch && matchesCategory && matchesStatus;
     });
@@ -1015,10 +1062,23 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
                     {/* Variant Rows */}
                     {variants.map((variant) => (
                       <tr key={variant.id} className="hover:bg-slate-50/50 transition-colors group">
-                        <td className="px-6 py-4 pl-20">
-                          <div className="flex items-center gap-3">
-                            <div className="w-2 h-2 rounded-full bg-primary/30 group-hover:bg-primary transition-colors"></div>
-                            <span className="font-bold text-secondary text-sm">Màu sắc: {variant.variant || 'Mặc định'}</span>
+                        <td className="px-6 py-4 pl-20" colSpan={1}>
+                          <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 rounded-lg overflow-hidden border border-surface-container bg-white shadow-sm flex-shrink-0">
+                               <img 
+                                 src={variant.image} 
+                                 alt={variant.variant} 
+                                 className="w-full h-full object-cover"
+                                 referrerPolicy="no-referrer"
+                                 onError={(e) => {
+                                   (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/placeholder/100/100';
+                                 }}
+                               />
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="w-1.5 h-1.5 rounded-full bg-primary/30 group-hover:bg-primary transition-colors"></div>
+                              <span className="font-bold text-secondary text-sm">Màu sắc: {variant.variant || 'Mặc định'}</span>
+                            </div>
                           </div>
                         </td>
                         <td className="px-6 py-4 font-mono text-xs font-bold text-on-surface-variant/70">{variant.sku}</td>
@@ -1351,27 +1411,19 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
                   <div className="md:col-span-2 flex flex-col items-center gap-4 p-6 bg-surface-container-low rounded-2xl border-2 border-dashed border-surface-container">
                     <input 
                       type="file" 
+                      id="product-image-input"
                       ref={fileInputRef} 
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          const reader = new FileReader();
-                          reader.onloadend = () => {
-                            if (isAddingNew) {
-                              setNewProduct({...newProduct, image: reader.result as string});
-                            } else if (editingProduct) {
-                              setEditingProduct({...editingProduct, image: reader.result as string});
-                            }
-                          };
-                          reader.readAsDataURL(file);
-                        }
-                      }} 
+                      onChange={handleImageChange} 
                       className="hidden" 
                       accept="image/*"
                     />
                     <div 
                       className="relative group cursor-pointer"
-                      onClick={() => fileInputRef.current?.click()}
+                      onClick={() => {
+                        const input = document.getElementById('product-image-input');
+                        if (input) (input as HTMLInputElement).click();
+                        else fileInputRef.current?.click();
+                      }}
                     >
                       <div className="w-32 h-32 rounded-2xl overflow-hidden shadow-lg border-4 border-white">
                         <img 
@@ -1390,7 +1442,11 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
                         <label className="block text-xs font-bold uppercase tracking-widest text-secondary">Hình ảnh sản phẩm</label>
                         <button 
                           type="button"
-                          onClick={() => fileInputRef.current?.click()}
+                          onClick={() => {
+                            const input = document.getElementById('product-image-input');
+                            if (input) (input as HTMLInputElement).click();
+                            else fileInputRef.current?.click();
+                          }}
                           className="text-[10px] font-bold text-primary uppercase tracking-wider hover:underline"
                         >
                           Tải ảnh từ máy tính

@@ -105,25 +105,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setExpiryDate(newProfile.expiryDate);
           }
         } catch (err: any) {
-          console.error('Error fetching user role:', err);
+          console.warn('Auth profile fetch error (likely quota):', err.message);
           
-          // If quota exceeded or internal error, we already have cached values or we use defaults
-          const errorMsg = err.message || JSON.stringify(err);
-          const isQuotaError = errorMsg.includes('Quota') || errorMsg.includes('INTERNAL ASSERTION FAILED');
+          const errorMsg = err.message || '';
+          const isQuotaError = errorMsg.includes('Quota') || errorMsg.includes('limit exceeded') || errorMsg.includes('INTERNAL ASSERTION FAILED');
           
           if (isQuotaError) {
-            setError('Hệ thống đã đạt giới hạn truy cập hoặc gặp sự cố kết nối. Đang sử dụng dữ liệu tạm thời.');
+            setError('Hệ thống đang quá tải hoặc hết hạn mức truy cập. Đang sử dụng dữ liệu tạm thời.');
           }
 
-          if (!cachedRole) {
-            // Fallback for default admin email if no cache
+          // Ensure we have some role even on error
+          if (!role && !cachedRole) {
             if (user.email === 'chichine153@gmail.com') {
               setRole('admin');
               setStatus('active');
-              setPaymentStatus('completed');
             } else {
               setRole('user');
-              setStatus('inactive');
             }
           }
         }

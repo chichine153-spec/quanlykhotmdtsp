@@ -12,7 +12,6 @@ import {
   doc, 
   orderBy, 
   limit,
-  onSnapshot,
   disableNetwork,
   enableNetwork
 } from 'firebase/firestore';
@@ -62,9 +61,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     if (!force && cachedInventory && cachedOrders && cachedReturns && cachedProblematic && cachedConfig && cachedGlobalConfig && cachedTime) {
       const time = parseInt(cachedTime);
       const now = new Date().getTime();
-      // If cache is less than 30 minutes old, use it and skip fetch
-      if (now - time < 30 * 60 * 1000) {
-        console.log('Using fresh cache for DataContext');
+      // Increased cache TTL to 60 minutes for better quota management
+      if (now - time < 60 * 60 * 1000) {
+        console.log('Using fresh cache (60m TTL) for DataContext to save quota');
         setInventory(JSON.parse(cachedInventory));
         setOrders(JSON.parse(cachedOrders));
         setReturns(JSON.parse(cachedReturns));
@@ -73,15 +72,17 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         setGlobalConfig(JSON.parse(cachedGlobalConfig));
         setLastUpdated(new Date(time));
         setLoading(false);
+        setQuotaExceeded(false);
         return; // Skip network fetch
       }
     }
 
     setLoading(true);
     try {
-      // Fetch initial data for returns and config (less frequent changes)
-      const [inventorySnap, returnsSnap, problematicSnap, configSnap, globalConfigSnap] = await Promise.all([
-        getDocs(query(collection(db, 'inventory'), where('userId', '==', user.uid))),
+      // Fetch initial data using getDocs for better control over quota usage
+      const [inventorySnap, ordersSnap, returnsSnap, problematicSnap, configSnap, globalConfigSnap] = await Promise.all([
+        getDocs(query(collection(db, 'inventory'), where('userId', '==', user.uid), limit(300))),
+        getDocs(query(collection(db, 'orders'), where('userId', '==', user.uid), orderBy('processedAt', 'desc'), limit(150))),
         getDocs(query(collection(db, 'returns'), where('userId', '==', user.uid), orderBy('returnedAt', 'desc'), limit(100))),
         getDocs(query(collection(db, 'problematic_orders'), where('userId', '==', user.uid), orderBy('updatedAt', 'desc'), limit(50))),
         getDoc(doc(db, 'profit_configs', user.uid)),
@@ -89,14 +90,16 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       ]);
       
       const newInventory = inventorySnap.docs.map(d => ({ id: d.id, ...d.data() })) as Product[];
+      const newOrders = ordersSnap.docs.map(d => ({ id: d.id, ...d.data() })) as OrderRecord[];
       const newReturns = returnsSnap.docs.map(d => ({ id: d.id, ...d.data() })) as ReturnRecord[];
       const newProblematic = problematicSnap.docs.map(d => ({ id: d.id, ...d.data() })) as ProblematicOrder[];
       const newConfig = configSnap.exists() ? configSnap.data() as ProfitConfig : null;
       const newGlobalConfig = globalConfigSnap.exists() ? globalConfigSnap.data() as any : null;
 
-      console.log(`Initial fetch for user ${user.uid}: ${newInventory.length} products found.`);
+      console.log(`Fetch successful for user ${user.uid}: ${newInventory.length} products, ${newOrders.length} orders.`);
 
       setInventory(newInventory);
+      setOrders(newOrders);
       setReturns(newReturns);
       setProblematicOrders(newProblematic);
       setConfig(newConfig);
@@ -105,6 +108,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       // Save to cache
       const now = new Date().getTime();
       localStorage.setItem(`cache_inventory_${user.uid}`, JSON.stringify(newInventory));
+      localStorage.setItem(`cache_orders_${user.uid}`, JSON.stringify(newOrders));
       localStorage.setItem(`cache_returns_${user.uid}`, JSON.stringify(newReturns));
       localStorage.setItem(`cache_problematic_${user.uid}`, JSON.stringify(newProblematic));
       localStorage.setItem(`cache_config_${user.uid}`, JSON.stringify(newConfig));
@@ -116,24 +120,17 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       setQuotaExceeded(false);
     } catch (error: any) {
       const classified = classifyError(error, 'Firebase');
-      if (classified.isQuota) {
-        setQuotaExceeded(true);
-        console.warn('Quota exceeded during initial fetch, disabling network to prevent SDK errors.');
-        try {
-          await disableNetwork(db);
-        } catch (e) {
-          console.error('Failed to disable network:', e);
-        }
-      } else {
-        console.error(`Error fetching initial data (${classified.service}):`, classified.message);
-      }
+      console.error('Fetch Data Error:', classified.message);
       
-      // Fallback to cache if available
-      if (cachedInventory) setInventory(JSON.parse(cachedInventory));
-      if (cachedOrders) setOrders(JSON.parse(cachedOrders));
-      if (cachedReturns) setReturns(JSON.parse(cachedReturns));
-      if (cachedProblematic) setProblematicOrders(JSON.parse(cachedProblematic));
-      if (cachedConfig) setConfig(JSON.parse(cachedConfig));
+      if (classified.isQuota || error.message?.includes('INTERNAL ASSERTION FAILED')) {
+        setQuotaExceeded(true);
+        // Fallback to cache if available
+        if (cachedInventory) setInventory(JSON.parse(cachedInventory));
+        if (cachedOrders) setOrders(JSON.parse(cachedOrders));
+        if (cachedReturns) setReturns(JSON.parse(cachedReturns));
+        if (cachedProblematic) setProblematicOrders(JSON.parse(cachedProblematic));
+        if (cachedConfig) setConfig(JSON.parse(cachedConfig));
+      }
       
       setLoading(false);
     }
@@ -153,102 +150,25 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
     fetchData();
 
-    // Set up global config listener
-    const unsubscribeGlobal = onSnapshot(doc(db, 'global_configs', 'settings'), (snapshot) => {
-      if (snapshot.exists()) {
-        const newGlobalConfig = snapshot.data();
-        setGlobalConfig(newGlobalConfig);
-        localStorage.setItem('cache_global_config', JSON.stringify(newGlobalConfig));
-        GeminiService.resetInstance();
+    // Periodic check for global config instead of real-time listener to prevent Watch assertion errors
+    const fetchGlobalOnly = async () => {
+      try {
+        const snapshot = await getDoc(doc(db, 'global_configs', 'settings'));
+        if (snapshot.exists()) {
+          const newGlobalConfig = snapshot.data();
+          setGlobalConfig(newGlobalConfig);
+          localStorage.setItem('cache_global_config', JSON.stringify(newGlobalConfig));
+          GeminiService.resetInstance();
+        }
+      } catch (err) {
+        // Silent error for periodic background check
       }
-    });
+    };
 
-    // Set up real-time listeners for inventory and orders
-    const inventoryQuery = query(collection(db, 'inventory'), where('userId', '==', user.uid), limit(300));
-    const ordersQuery = query(collection(db, 'orders'), where('userId', '==', user.uid), orderBy('processedAt', 'desc'), limit(150));
-
-    const unsubscribeInventory = onSnapshot(inventoryQuery, (snapshot) => {
-      const newInventory = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as Product[];
-      setInventory(newInventory);
-      localStorage.setItem(`cache_inventory_${user.uid}`, JSON.stringify(newInventory));
-      localStorage.setItem(`cache_time_${user.uid}`, new Date().getTime().toString());
-      setLastUpdated(new Date());
-    }, (error) => {
-      const classified = classifyError(error, 'Firebase');
-      if (classified.isQuota) {
-        setQuotaExceeded(true);
-        disableNetwork(db).catch(console.error);
-      } else {
-        console.error('Inventory listener error:', classified.message);
-      }
-    });
-
-    const unsubscribeOrders = onSnapshot(ordersQuery, (snapshot) => {
-      const newOrders = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as OrderRecord[];
-      setOrders(newOrders);
-      localStorage.setItem(`cache_orders_${user.uid}`, JSON.stringify(newOrders));
-    }, (error) => {
-      const classified = classifyError(error, 'Firebase');
-      if (classified.isQuota) {
-        setQuotaExceeded(true);
-        disableNetwork(db).catch(console.error);
-      } else {
-        console.error('Orders listener error:', classified.message);
-      }
-    });
-
-    const returnsQuery = query(
-      collection(db, 'returns'),
-      where('userId', '==', user.uid),
-      orderBy('returnedAt', 'desc'),
-      limit(100)
-    );
-
-    const unsubscribeReturns = onSnapshot(returnsQuery, (snapshot) => {
-      const newReturns = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as ReturnRecord[];
-      setReturns(newReturns);
-      localStorage.setItem(`cache_returns_${user.uid}`, JSON.stringify(newReturns));
-    }, (error) => {
-      const classified = classifyError(error, 'Firebase');
-      if (classified.isQuota) {
-        setQuotaExceeded(true);
-        disableNetwork(db).catch(console.error);
-      } else {
-        console.error('Returns listener error:', classified.message);
-      }
-    });
-
-    const problematicQuery = query(
-      collection(db, 'problematic_orders'),
-      where('userId', '==', user.uid),
-      orderBy('updatedAt', 'desc'),
-      limit(50)
-    );
-
-    const unsubscribeProblematic = onSnapshot(problematicQuery, (snapshot) => {
-      const newProblematic = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as ProblematicOrder[];
-      setProblematicOrders(newProblematic);
-      localStorage.setItem(`cache_problematic_${user.uid}`, JSON.stringify(newProblematic));
-    }, (error) => {
-      const classified = classifyError(error, 'Firebase');
-      if (classified.isQuota) {
-        setQuotaExceeded(true);
-        disableNetwork(db).catch(console.error);
-      } else {
-        console.error('Problematic orders listener error:', classified.message);
-      }
-    });
+    const interval = setInterval(fetchGlobalOnly, 10 * 60 * 1000); // 10 minutes
 
     return () => {
-      try {
-        unsubscribeInventory();
-        unsubscribeOrders();
-        unsubscribeReturns();
-        unsubscribeProblematic();
-        unsubscribeGlobal();
-      } catch (err) {
-        console.warn('Error during listener cleanup:', err);
-      }
+      clearInterval(interval);
     };
   }, [user]);
 
