@@ -214,33 +214,22 @@ export class PDFService {
     ---
     NHIỆM VỤ: Trích xuất danh sách các đơn hàng chính xác.
     
-    LƯU Ý QUAN TRỌNG VỀ CẤU TRÚC DỮ LIỆU:
-    - Dữ liệu có thể bị XEN KẼ (interleaved) giữa các nhãn dán nếu chúng nằm cạnh nhau trên cùng một trang PDF.
-    - Ký hiệu [GAP] cho thấy có một khoảng cách lớn theo chiều ngang, thường là ranh giới giữa 2 nhãn dán nằm cạnh nhau.
-    - Hãy sử dụng Mã vận đơn (Tracking Code) làm "neo" để nhóm các sản phẩm thuộc cùng một đơn hàng.
+    YÊU CẦU QUAN TRỌNG VỀ SỐ LƯỢNG (QUANTITY):
+    - TUYỆT ĐỐI KHÔNG để quantity > 1 trong kết quả trả về.
+    - Nếu một mã vận đơn có tổng SL là 2 (ví dụ: 2 Cốc 336), bạn PHẢI tạo ra 2 đối tượng item riêng biệt trong mảng items, mỗi dòng có quantity = 1.
+    - Nếu đơn có 2 mẫu khác nhau (ví dụ: 1 Cốc Hồng, 1 Cốc Be), cũng PHẢI tạo 2 dòng riêng biệt với quantity = 1.
+    - Điều này giúp hệ thống trừ kho chính xác từng sản phẩm.
     
-    HƯỚNG DẪN CHI TIẾT ĐỂ TRÁNH NHẦM LẪN:
-    1. Mã vận đơn (Tracking Code): Thường là chuỗi dài bắt đầu bằng SPXVN..., VN..., hoặc các mã vạch lớn.
-    2. Mã SKU: 
-       - Đây là mã định danh sản phẩm quan trọng nhất. 
-       - ƯU TIÊN các mã số ngắn hoặc mã ký tự đặc thù (ví dụ: 330, 315, 338, BGN-01).
-       - NẾU có mã dạng "MBA-18-09-I" xuất hiện lặp lại ở nhiều đơn khác nhau, đó có thể là mã lô hàng hoặc mã shop, KHÔNG PHẢI SKU sản phẩm. Hãy tìm mã cụ thể hơn đi kèm.
-       - Nếu mã SKU nằm chung với tên màu (ví dụ: "330 Màu Xanh"), hãy tách "330" làm SKU và "Màu Xanh" làm Color.
-    3. Màu sắc/Phân loại (Color/Variant): 
-       - Trích xuất các mô tả như: Màu sắc, Kích thước, Chất liệu.
-       - KHÔNG bao gồm số lượng (SL: 1) vào trường này.
-    4. Số lượng (Quantity): Chỉ lấy con số (ví dụ: 1, 2).
-       - QUAN TRỌNG: TUYỆT ĐỐI KHÔNG gộp các sản phẩm khác nhau vào cùng một đối tượng item.
-       - Nếu một đơn hàng có nhiều sản phẩm (ví dụ: 1 Cốc 339 và 1 Cốc 336), bạn PHẢI tạo 2 đối tượng item riêng biệt, mỗi đối tượng có SKU và Color tương ứng, với quantity là 1.
-       - Nếu nhãn dán ghi tổng số lượng là 2 nhưng liệt kê 2 màu khác nhau bên dưới (ví dụ: "315 - Lót Sứ Màu Tím" và "315 - Lót Sứ Màu Đỏ"), bạn PHẢI tạo 2 item riêng biệt, mỗi item có số lượng 1.
-       - Chỉ để quantity > 1 nếu đó là CÙNG MỘT SKU và CÙNG MỘT MÀU SẮC (ví dụ: 2 Cốc 339 Màu Đen).
-    5. Thông tin người nhận: Trích xuất Tên, SĐT, Địa chỉ nếu có.
+    HƯỚNG DẪN CHI TIẾT:
+    1. Mã vận đơn (Tracking Code):SPXVN..., VN..., dùng làm neo để nhóm sản phẩm.
+    2. Mã SKU: Mã định danh quan trọng nhất (330, 315, BGN-01). Ưu tiên mã ngắn.
+    3. Màu sắc/Phân loại (Color/Variant): Mô tả màu sắc, kích thước. KHÔNG kèm số lượng vào đây.
+    4. Thông tin người nhận: Tên, SĐT, Địa chỉ.
     
     YÊU CẦU ĐỊA PHƯƠNG HÓA:
-    - Đây là vận đơn Shopee/TikTok/Lazada tại Việt Nam.
-    - Hãy cực kỳ cẩn thận với việc phân tách SKU và Tên phân loại. SKU thường là phần mã code ngắn, Variant là phần chữ mô tả.
+    - Vận đơn Shopee/TikTok/Lazada Việt Nam. SKU là mã code, Variant là chữ mô tả.
     
-    Trả về kết quả dưới dạng mảng JSON các đối tượng ExtractedOrder.`;
+    Trả về mảng JSON các đối tượng ExtractedOrder.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -281,17 +270,17 @@ export class PDFService {
     const result = JSON.parse(response.text || "[]") as ExtractedOrder[];
     
     // Split items with quantity > 1 into multiple items with quantity 1
-    // as requested: "khi đơn sl 2 thì chia ra mỗi sku màu sl 1 rồi trừ kho"
-    // This ensures each item can be reviewed and matched individually in the UI.
+    // as requested: "hệ thống phải tạo ra 2 dòng thực thi trừ kho riêng biệt, mỗi dòng có SL = 1"
     const splitResult = result.map(order => ({
       ...order,
       items: order.items.flatMap(item => {
-        if (item.quantity > 1) {
+        const qty = Number(item.quantity || 1);
+        if (qty > 1) {
           // If the color field contains multiple variants (e.g. "Tím, Đỏ"), 
           // we try to split them if possible, otherwise we clone.
           const parts = item.color ? item.color.split(/[,&/+\n;]| và /).map(c => c.trim()).filter(Boolean) : [];
           
-          if (parts.length === item.quantity) {
+          if (parts.length === qty) {
             return parts.map(p => {
               // Try to detect if there's a new SKU in the part (e.g. "336 - Màu Hồng")
               const skuMatch = p.match(/\b(BGN\d*|315|330|336|338|\d{3,10})\b/i);
@@ -304,9 +293,9 @@ export class PDFService {
             });
           }
           
-          return Array(item.quantity).fill(null).map(() => ({ ...item, quantity: 1 }));
+          return Array(qty).fill(null).map(() => ({ ...item, quantity: 1 }));
         }
-        return [item];
+        return [{ ...item, quantity: qty }];
       })
     }));
 
@@ -715,6 +704,8 @@ export class PDFService {
         return { ...item, matchedProduct };
       }));
 
+      const finalizedItems: any[] = [];
+
       await runTransaction(db, async (transaction) => {
         // A. ALL READS FIRST
         
@@ -784,7 +775,7 @@ export class PDFService {
             });
 
             productNames.push(newProductData.name);
-            processedItems.push({
+            const newItem = {
               sku: sku,
               variant: color || 'Mặc định',
               quantity,
@@ -793,7 +784,9 @@ export class PDFService {
               category: 'General',
               costPrice: Number(extCost || 0),
               sellingPrice: Number(extSell || 0)
-            });
+            };
+            processedItems.push(newItem);
+            finalizedItems.push(newItem);
 
             continue;
           }
@@ -843,7 +836,7 @@ export class PDFService {
 
           productNames.push(matchedProduct.name);
           
-          processedItems.push({
+          const processedItem = {
             sku: matchedProduct.sku,
             variant: matchedProduct.variant || '',
             quantity,
@@ -852,7 +845,9 @@ export class PDFService {
             category: matchedProduct.category || '',
             costPrice: Number(extCost || matchedProduct.costPrice || 0),
             sellingPrice: Number(extSell || matchedProduct.sellingPrice || 0)
-          });
+          };
+          processedItems.push(processedItem);
+          finalizedItems.push(processedItem);
         }
 
         // Save order record
@@ -924,12 +919,11 @@ export class PDFService {
         });
       });
 
-      // 3. Save to Supabase print_history as requested by user
-      // Note: Full image-based reprint history is handled by generateAndUploadImages
-      // which is triggered in PDFUpload.tsx. This block is for raw data backup if needed.
+      // 3. Save to Supabase
       try {
         const supabase = getSupabase();
         if (supabase) {
+          // A. Update print_history
           const supabaseData = order.items.map(item => ({
             tracking_number: trackingCode,
             product_name: `${item.sku}${item.color ? ` (${item.color})` : ''}`.trim(),
@@ -945,14 +939,45 @@ export class PDFService {
             .upsert(supabaseData, { onConflict: 'tracking_number,product_name' });
 
           if (supabaseError) {
-            console.error('[PDFService] Supabase print_history insertion error:', supabaseError);
-            if (supabaseError.message?.includes('Forbidden use of secret API key')) {
-              console.error('[PDFService] CRITICAL: You are using a Service Role Key in the browser. Please switch to the Anon Key in Settings.');
+            console.error('[PDFService] Supabase print_history error:', supabaseError.message);
+          }
+
+          // B. Update products table stock (New requirement)
+          // "Hệ thống phải thực hiện lệnh UPDATE vào bảng products trong Supabase dựa trên đúng SKU_ID của từng phân loại."
+          for (const item of finalizedItems) {
+            try {
+              // First check if SKU exists in products table
+              const { data: currentProd, error: fetchError } = await supabase
+                .from('products')
+                .select('stock_quantity, id')
+                .eq('sku_id', item.sku)
+                .maybeSingle();
+
+              if (fetchError) {
+                console.error(`[PDFService] Supabase fetch products error for ${item.sku}:`, fetchError.message);
+              } else if (currentProd) {
+                const newSupaStock = Number(currentProd.stock_quantity || 0) - Number(item.quantity);
+                const { error: updateError } = await supabase
+                  .from('products')
+                  .update({ 
+                    stock_quantity: newSupaStock,
+                    updated_at: new Date().toISOString()
+                  })
+                  .eq('sku_id', item.sku);
+                
+                if (updateError) {
+                  console.error(`[PDFService] Supabase update products stock error for ${item.sku}:`, updateError.message);
+                } else {
+                  console.log(`[PDFService] Supabase products stock updated for ${item.sku}: ${currentProd.stock_quantity} -> ${newSupaStock}`);
+                }
+              }
+            } catch (supaErr) {
+              console.error(`[PDFService] Fatal error updating Supabase products for ${item.sku}:`, supaErr);
             }
           }
         }
       } catch (err) {
-        console.error('[PDFService] Supabase fatal error:', err);
+        console.error('[PDFService] Supabase operations fatal error:', err);
       }
 
       console.log(`[PDFService] Order ${trackingCode} processed successfully.`);

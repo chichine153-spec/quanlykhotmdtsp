@@ -929,12 +929,14 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
                     </thead>
                     <tbody className="divide-y divide-surface-container">
                       {currentFileOrders.map((order, idx) => (
-                        <tr key={idx} className="hover:bg-surface-container-low/30 transition-colors">
-                          <td className="px-4 py-3 font-mono text-[11px] text-on-surface">{order.trackingCode}</td>
-                          <td className="px-4 py-3">
-                            <div className="space-y-2">
-                              {Array.isArray(order.items) && order.items.map((item, iIdx) => (
-                                <div key={iIdx} className="flex flex-col">
+                        <React.Fragment key={idx}>
+                          {Array.isArray(order.items) && order.items.map((item, iIdx) => (
+                            <tr key={`${idx}-${iIdx}`} className="hover:bg-surface-container-low/30 transition-colors border-b border-surface-container last:border-b-0">
+                              <td className="px-4 py-3 font-mono text-[11px] text-on-surface">
+                                {iIdx === 0 ? order.trackingCode : ""}
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="flex flex-col">
                                   <div className="text-[11px] font-bold text-secondary">
                                     {item.sku} {item.color ? ` - ${item.color}` : ''}
                                   </div>
@@ -944,49 +946,53 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
                                     </div>
                                   )}
                                 </div>
-                              ))}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-center font-black text-primary text-xs">
-                            {order.items.reduce((acc, i) => acc + i.quantity, 0)}
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              {order.status === 'pending' && <span className="text-[10px] font-bold text-secondary uppercase tracking-widest">Chờ...</span>}
-                              {order.status === 'processing' && (
-                                <div className="flex items-center gap-1.5 text-primary">
-                                  <Loader2 className="animate-spin" size={12} />
-                                  <span className="text-[10px] font-bold uppercase tracking-widest">Đang xử lý</span>
-                                </div>
-                              )}
-                              {order.status === 'success' && (
-                                <div className="flex items-center gap-1.5 text-green-600">
-                                  <CheckCircle2 size={12} />
-                                  <span className="text-[10px] font-bold uppercase tracking-widest">Thành công</span>
-                                </div>
-                              )}
-                              {order.status === 'error' && (
-                                <div className="flex flex-col items-end">
-                                  <div className="flex items-center gap-1.5 text-error">
-                                    <AlertCircle size={12} />
-                                    <span className="text-[10px] font-bold uppercase tracking-widest">Lỗi</span>
+                              </td>
+                              <td className="px-4 py-3 text-center font-black text-primary text-xs">
+                                {item.quantity}
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                {iIdx === 0 && (
+                                  <div className="flex items-center justify-end gap-2">
+                                    {order.status === 'pending' && <span className="text-[10px] font-bold text-secondary uppercase tracking-widest">Chờ...</span>}
+                                    {order.status === 'processing' && (
+                                      <div className="flex items-center gap-1.5 text-primary">
+                                        <Loader2 className="animate-spin" size={12} />
+                                        <span className="text-[10px] font-bold uppercase tracking-widest">Đang xử lý</span>
+                                      </div>
+                                    )}
+                                    {order.status === 'success' && (
+                                      <div className="flex items-center gap-1.5 text-green-600">
+                                        <CheckCircle2 size={12} />
+                                        <span className="text-[10px] font-bold uppercase tracking-widest">Thành công</span>
+                                      </div>
+                                    )}
+                                    {order.status === 'error' && (
+                                      <div className="flex flex-col items-end">
+                                        <div className="flex items-center gap-1.5 text-error">
+                                          <AlertCircle size={12} />
+                                          <span className="text-[10px] font-bold uppercase tracking-widest">Lỗi</span>
+                                        </div>
+                                        <span className="text-[8px] text-error/70 max-w-[150px] truncate" title={order.error}>{order.error}</span>
+                                      </div>
+                                    )}
                                   </div>
-                                  <span className="text-[8px] text-error/70 max-w-[150px] truncate" title={order.error}>{order.error}</span>
-                                </div>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <button 
-                              onClick={() => handleDeleteCurrentFileOrder(idx)}
-                              disabled={order.status === 'processing'}
-                              className="p-2 text-error hover:bg-error/10 rounded-xl transition-all disabled:opacity-30"
-                              title="Xóa đơn này khỏi danh sách"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </td>
-                        </tr>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                {iIdx === 0 && (
+                                  <button 
+                                    onClick={() => handleDeleteCurrentFileOrder(idx)}
+                                    disabled={order.status === 'processing'}
+                                    className="p-2 text-error hover:bg-error/10 rounded-xl transition-all disabled:opacity-30"
+                                    title="Xóa đơn này khỏi danh sách"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </React.Fragment>
                       ))}
                     </tbody>
                   </table>
