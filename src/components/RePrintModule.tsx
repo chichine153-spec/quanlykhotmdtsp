@@ -598,18 +598,21 @@ export function ThermalLabel({ order }: { order: any }) {
   const timeStr = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 
   const items = Array.isArray(order.items) ? order.items : [];
-  const totalQty = items.length > 0 
-    ? items.reduce((acc: number, i: any) => acc + (i.quantity || 0), 0)
-    : (order.quantity || 1);
+  
+  // Format phone number to avoid "null"
+  const displayPhone = (order.recipientPhone && order.recipientPhone !== 'null') 
+    ? order.recipientPhone 
+    : '';
 
   return (
     <div className="thermal-label text-black font-sans bg-white" style={{ 
       width: '100mm', 
       height: '150mm', 
-      padding: '5mm',
+      padding: '4mm',
       boxSizing: 'border-box',
       display: 'flex',
-      flexDirection: 'column'
+      flexDirection: 'column',
+      fontSize: '12pt'
     }}>
       <style>
         {`
@@ -620,57 +623,101 @@ export function ThermalLabel({ order }: { order: any }) {
             }
             body {
               margin: 0;
+              padding: 0;
               -webkit-print-color-adjust: exact;
             }
             .thermal-label {
               width: 100mm !important;
               height: 150mm !important;
-              padding: 5mm !important;
+              padding: 4mm !important;
             }
+          }
+          .thermal-label table td {
+             border-top: 1px solid black;
           }
         `}
       </style>
-      {/* Header */}
-      <div className="flex justify-between items-start border-b-2 border-black pb-2 mb-2">
-        <div className="text-3xl font-black italic tracking-tighter">Shopee</div>
-        <div className="text-right">
-          <div className="text-[10px] font-bold uppercase">Ngày đặt hàng: {dateStr}</div>
-          <div className="text-sm font-black">{order.region || 'HCM-7'}</div>
+      
+      {/* Top Header */}
+      <div className="flex justify-between items-start mb-1">
+        <div className="text-[10px] font-bold">Vận đơn: {order.trackingCode}</div>
+        <div className="text-[10px] font-bold">{timeStr} {dateStr}</div>
+      </div>
+
+      {/* Main Header */}
+      <div className="flex justify-between items-center border-b-2 border-black pb-1 mb-2">
+        <div className="text-4xl font-black italic tracking-tighter">Shopee</div>
+        <div className="text-right flex flex-col items-end">
+          <div className="text-[10px] font-bold uppercase leading-tight">Ngày đặt: {dateStr}</div>
+          <div className="text-2xl font-black leading-none">{order.region || 'HCM-7'}</div>
         </div>
       </div>
 
       {/* Barcode Section */}
-      <div className="flex flex-col items-center py-4 border-b-2 border-black">
+      <div className="flex flex-col items-center py-2 border-b-2 border-black">
         <Barcode 
           value={order.trackingCode} 
-          width={2} 
-          height={70} 
+          width={2.2} 
+          height={60} 
           fontSize={16} 
           margin={0}
           displayValue={true}
         />
       </div>
 
-      {/* QR and Info */}
-      <div className="grid grid-cols-3 gap-4 py-4 border-b-2 border-black">
+      {/* QR and Recipient Info */}
+      <div className="grid grid-cols-4 gap-4 py-2 border-b-2 border-black">
         <div className="col-span-1 flex items-center justify-center">
-          <QRCodeSVG value={order.trackingCode} size={100} />
+          <QRCodeSVG value={order.trackingCode} size={90} />
         </div>
-        <div className="col-span-2 space-y-1">
+        <div className="col-span-3 space-y-1">
           <div className="text-[10px] font-black uppercase">Người nhận:</div>
-          <div className="text-sm font-bold leading-tight">
-            {order.recipientName || 'KHÁCH HÀNG'} {order.recipientPhone ? `(${order.recipientPhone})` : ''}
+          <div className="text-sm font-black leading-tight uppercase">
+            {order.recipientName || 'KHÁCH HÀNG'} {displayPhone ? `(${displayPhone})` : ''}
           </div>
-          <div className="text-[10px] leading-tight">
+          <div className="text-[11px] leading-tight font-medium">
             {order.recipientAddress || 'Vui lòng xem địa chỉ chi tiết trên vận đơn gốc'}
           </div>
         </div>
       </div>
 
+      {/* Item List Section */}
+      <div className="mt-2 flex-grow overflow-hidden">
+        <div className="text-[10px] font-black uppercase mb-1 flex justify-between">
+          <span>Sản phẩm</span>
+          <span>Số lượng</span>
+        </div>
+        <table className="w-full border-collapse">
+          <tbody>
+            {items.map((item: any, idx: number) => (
+              <tr key={idx} className="border-t border-black/20">
+                <td className="py-1 pr-2 align-top text-[11px]">
+                  <div className="font-bold">{item.sku}</div>
+                  <div className="text-[10px] opacity-80">{item.variant || ''}</div>
+                </td>
+                <td className="py-1 text-center align-top font-black text-sm w-12 border-l border-black/20">
+                  {item.quantity}
+                </td>
+              </tr>
+            ))}
+            {items.length === 0 && (
+              <tr className="border-t border-black/20">
+                <td colSpan={2} className="py-2 text-[11px] italic text-center">
+                  Xem chi tiết trên ứng dụng Shopee
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
       {/* Footer */}
-      <div className="mt-auto pt-4 border-t-2 border-black flex justify-between items-end">
-        <div className="text-[9px] italic">In bởi Zenith OMS lúc {timeStr} {dateStr}</div>
-        <div className="text-sm font-black border-2 border-black px-3 py-1">SPX</div>
+      <div className="mt-auto pt-2 border-t-2 border-black flex justify-between items-center bg-white">
+        <div className="text-[8px] italic opacity-60">Generated by Zenith OMS</div>
+        <div className="flex items-center gap-2">
+           <div className="text-[10px] font-bold">SPX Express</div>
+           <div className="text-lg font-black border-2 border-black px-4 py-1">SPX</div>
+        </div>
       </div>
     </div>
   );
