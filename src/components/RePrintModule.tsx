@@ -92,30 +92,62 @@ export default function RePrintModule() {
 
     const fetchHistory = async () => {
       const supabase = getSupabase();
-      if (!supabase) {
-        setLoading(false);
-        return;
-      }
-
+      
       setLoading(true);
       setError(null);
+      
       try {
-        const { data, error: sbError } = await supabase
-          .from('print_history')
-          .select('*')
-          .eq('user_id', user.uid)
-          .order('created_at', { ascending: false })
-          .limit(100);
+        let historyData: PrintHistoryRecord[] = [];
+        
+        if (supabase) {
+          const { data, error: sbError } = await supabase
+            .from('print_history')
+            .select('*')
+            .eq('user_id', user.uid)
+            .order('created_at', { ascending: false })
+            .limit(100);
 
-        if (sbError) throw sbError;
-        setLabels(data || []);
-      } catch (err: any) {
-        console.error('[RePrintModule] Supabase fetch error:', err);
-        if (err.message?.includes('Forbidden use of secret API key') || err.status === 401) {
-          setError('Lỗi kết nối: Sai mã Anon Key hoặc Supabase URL không khớp với dự án. Vui lòng kiểm tra lại cả 2 thông tin trong phần Cấu hình.');
-        } else {
-          setError('Không thể tải lịch sử in. Vui lòng kiểm tra kết nối Supabase.');
+          if (!sbError) {
+            historyData = data || [];
+          } else {
+            console.warn('[RePrintModule] Supabase fetch error, falling back to Firestore:', sbError);
+          }
         }
+
+        // If Supabase failed or returned empty, try fetching from Firestore as fallback
+        if (historyData.length === 0) {
+          console.log('[RePrintModule] Fetching history from Firestore fallback...');
+          const ordersRef = collection(db, 'orders');
+          const q = query(
+            ordersRef,
+            where('userId', '==', user.uid),
+            orderBy('processedAt', 'desc'),
+            limit(50)
+          );
+          
+          const querySnap = await getDocs(q);
+          const firestoreOrders = querySnap.docs.map(doc => {
+            const data = doc.data();
+            return {
+              id: doc.id,
+              tracking_number: data.trackingCode,
+              product_name: Array.isArray(data.items) 
+                ? data.items.map((i: any) => `${i.sku} (${i.quantity})`).join(', ')
+                : 'Đơn hàng (Bóc tách)',
+              image_url: data.pdfUrl || '',
+              is_cup: false,
+              created_at: data.processedAt,
+              user_id: user.uid
+            } as PrintHistoryRecord;
+          });
+          
+          historyData = firestoreOrders;
+        }
+
+        setLabels(historyData);
+      } catch (err: any) {
+        console.error('[RePrintModule] History fetch error:', err);
+        setError('Không thể tải lịch sử in. Vui lòng kiểm tra kết nối.');
       } finally {
         setLoading(false);
       }
@@ -159,26 +191,54 @@ export default function RePrintModule() {
     if (!searchQuery.trim() || !user) return;
 
     const queryStr = searchQuery.trim();
-    const supabase = getSupabase();
-    if (!supabase) {
-      alert('Supabase chưa được cấu hình.');
-      return;
-    }
-
     setLoading(true);
+    
     try {
-      const { data, error } = await supabase
-        .from('print_history')
-        .select('*')
-        .eq('user_id', user.uid)
-        .eq('tracking_number', queryStr)
-        .limit(1);
+      const supabase = getSupabase();
+      let foundLabel: PrintHistoryRecord | null = null;
 
-      if (error) throw error;
-      if (data && data.length > 0) {
-        handleQuickPrint(data[0]);
+      // 1. Try Supabase Search first
+      if (supabase) {
+        const { data, error } = await supabase
+          .from('print_history')
+          .select('*')
+          .eq('user_id', user.uid)
+          .eq('tracking_number', queryStr)
+          .limit(1);
+
+        if (!error && data && data.length > 0) {
+          foundLabel = data[0];
+        }
+      }
+
+      // 2. If not found in Supabase, try Firestore Search
+      if (!foundLabel) {
+        console.log('[RePrintModule] Tracking not found in Supabase, searching in Firestore...');
+        const orderRef = doc(db, 'orders', queryStr);
+        const orderSnap = await getDoc(orderRef);
+        
+        if (orderSnap.exists()) {
+          const data = orderSnap.data();
+          if (data.userId === user.uid) {
+            foundLabel = {
+              id: orderSnap.id,
+              tracking_number: data.trackingCode,
+              product_name: Array.isArray(data.items) 
+                ? data.items.map((i: any) => `${i.sku} (${i.quantity})`).join(', ')
+                : 'Đơn hàng',
+              image_url: data.pdfUrl || '',
+              is_cup: false,
+              created_at: data.processedAt,
+              user_id: user.uid
+            } as PrintHistoryRecord;
+          }
+        }
+      }
+
+      if (foundLabel) {
+        handleQuickPrint(foundLabel);
       } else {
-        alert('Không tìm thấy đơn hàng trong lịch sử in.');
+        alert('Không tìm thấy đơn hàng này trong hệ thống.');
       }
     } catch (error) {
       console.error('Search error:', error);
@@ -191,7 +251,15 @@ export default function RePrintModule() {
   const handleQuickPrint = async (label: PrintHistoryRecord) => {
     console.log('[RePrintModule] Quick print for:', label);
     
-    if (label.image_url) {
+    const isImageUrl = label.image_url && (
+      label.image_url.toLowerCase().includes('.jpg') || 
+      label.image_url.toLowerCase().includes('.jpeg') || 
+      label.image_url.toLowerCase().includes('.png') ||
+      label.image_url.toLowerCase().includes('.webp') ||
+      label.image_url.includes('supabase.co/storage/v1/object/public/shipping-labels/') // Likely our images
+    ) && !label.image_url.toLowerCase().includes('.pdf');
+
+    if (isImageUrl) {
       // Clean up URL in case it's corrupted with JSON fragments
       let cleanUrl = label.image_url;
       if (typeof cleanUrl === 'string') {
