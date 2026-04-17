@@ -103,9 +103,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       setReturns(newReturns);
       setProblematicOrders(newProblematic);
       setConfig(newConfig);
-      setGlobalConfig(newGlobalConfig);
-      
-      // Save to cache
+
+      // Save to cache BEFORE setting globalConfig to ensure consistency
       const now = new Date().getTime();
       localStorage.setItem(`cache_inventory_${user.uid}`, JSON.stringify(newInventory));
       localStorage.setItem(`cache_orders_${user.uid}`, JSON.stringify(newOrders));
@@ -114,6 +113,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem(`cache_config_${user.uid}`, JSON.stringify(newConfig));
       localStorage.setItem('cache_global_config', JSON.stringify(newGlobalConfig));
       localStorage.setItem(`cache_time_${user.uid}`, now.toString());
+
+      setGlobalConfig(newGlobalConfig);
+      GeminiService.resetInstance();
       
       setLastUpdated(new Date(now));
       setLoading(false);

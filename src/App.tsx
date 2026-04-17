@@ -73,7 +73,7 @@ export default function App() {
       case 'intransit':
         return <InTransitManagement />;
       case 'upload':
-        return <PDFUpload />;
+        return <PDFUpload onScreenChange={setActiveScreen} />;
       case 'inventory':
         return <Inventory onScreenChange={setActiveScreen} />;
       case 'profit':

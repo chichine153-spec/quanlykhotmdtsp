@@ -44,7 +44,7 @@ const PACKAGES = [
 
 export default function AccountManagement() {
   const { user: currentUser, role } = useAuth();
-  const { globalConfig } = useData();
+  const { globalConfig, refreshData } = useData();
   const [users, setUsers] = React.useState<UserProfile[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [searchTerm, setSearchTerm] = React.useState('');
@@ -140,6 +140,7 @@ export default function AccountManagement() {
       }, { merge: true });
       
       GeminiService.resetInstance();
+      await refreshData();
       toast.success('Đã lưu API Key hệ thống');
     } catch (error) {
       console.error('Save Gemini Key error:', error);
@@ -161,7 +162,7 @@ export default function AccountManagement() {
       if (!ai) throw new Error('Không thể khởi tạo Gemini instance');
       
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-1.5-flash",
         contents: "Hello, are you active? Reply with OK only.",
       });
       

@@ -24,13 +24,19 @@ import { useData } from './contexts/DataContext';
 import { collection, query, limit, getDocs, where, doc, getDoc, orderBy } from 'firebase/firestore';
 import { db, storage } from './firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { GeminiService } from './services/gemini';
 import { ThermalLabel } from './components/RePrintModule';
 import { OrderRecord } from './services/inventoryService';
 import { Printer, X } from 'lucide-react';
+import { Screen } from './types';
 
-export default function PDFUpload() {
+interface PDFUploadProps {
+  onScreenChange?: (screen: Screen) => void;
+}
+
+export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
   const { user, login, role } = useAuth();
-  const { inventory, config: dataConfig, orders: allOrders, loading: dataLoading } = useData();
+  const { inventory, config: dataConfig, globalConfig, orders: allOrders, loading: dataLoading } = useData();
   const [isUploading, setIsUploading] = React.useState(false);
   const [progress, setProgress] = React.useState(0);
   const progressRef = React.useRef(0);
@@ -179,6 +185,13 @@ export default function PDFUpload() {
       </div>
     );
   }
+
+  React.useEffect(() => {
+    if (globalConfig?.geminiApiKey && error?.includes('API Key')) {
+      setError(null);
+      setStatus('idle');
+    }
+  }, [globalConfig, error]);
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -580,6 +593,25 @@ export default function PDFUpload() {
             </button>
           </div>
 
+          {(!globalConfig?.geminiApiKey && !GeminiService.hasApiKey()) && !dataLoading && (
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-4 bg-error-container text-on-error-container rounded-2xl flex items-center justify-between gap-3 border border-error/20"
+            >
+              <div className="flex items-center gap-3">
+                <AlertCircle size={20} className="flex-shrink-0 text-error" />
+                <span className="text-sm font-bold">Hệ thống chưa được cấu hình API Key. Admin vui lòng cài đặt trong Quản lý tài khoản.</span>
+              </div>
+              <button 
+                onClick={() => onScreenChange ? onScreenChange('accounts') : (window as any).location.hash = '#accounts'}
+                className="text-xs font-black uppercase tracking-widest bg-error text-white px-4 py-2 rounded-xl hover:scale-105 active:scale-95 transition-all shadow-lg shadow-error/20 flex-shrink-0"
+              >
+                Cài đặt ngay
+              </button>
+            </motion.div>
+          )}
+
           {/* Status Feedback */}
           <AnimatePresence>
             {status === 'error' && (
@@ -597,7 +629,7 @@ export default function PDFUpload() {
                   
                   {user && (error?.includes('API Key') || error?.includes('Quota')) && (
                     <button 
-                      onClick={() => (window as any).location.hash = '#accounts'}
+                      onClick={() => onScreenChange ? onScreenChange('accounts') : (window as any).location.hash = '#accounts'}
                       className="text-xs font-black uppercase tracking-widest bg-error text-white px-4 py-2 rounded-xl hover:scale-105 active:scale-95 transition-all shadow-lg shadow-error/20 flex-shrink-0"
                     >
                       Cài đặt ngay

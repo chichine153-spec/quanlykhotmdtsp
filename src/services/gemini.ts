@@ -14,42 +14,56 @@ export class GeminiService {
    * @returns The GoogleGenAI instance or null if no API key is set.
    */
   static getInstance(customKey?: string): GoogleGenAI | null {
+    // If not a custom key check and we have an instance, use it
     if (!customKey && this.instance) return this.instance;
 
-    // Get shared key from global config (synced via DataContext)
-    let sharedKey = '';
-    try {
-      const cachedGlobal = localStorage.getItem('cache_global_config');
-      if (cachedGlobal) {
-        const parsed = JSON.parse(cachedGlobal);
-        sharedKey = parsed.geminiApiKey || '';
+    // Resolve which key to use
+    let apiKey = '';
+
+    if (customKey) {
+      apiKey = customKey;
+    } else {
+      // 1. Check direct localStorage
+      apiKey = localStorage.getItem('gemini_api_key') || '';
+      
+      // 2. Check global config cache from DataContext
+      if (!apiKey) {
+        try {
+          const cachedGlobal = localStorage.getItem('cache_global_config');
+          if (cachedGlobal) {
+            const parsed = JSON.parse(cachedGlobal);
+            apiKey = parsed.geminiApiKey || '';
+          }
+        } catch (e) {}
       }
-    } catch (e) {
-      console.error('[GeminiService] Error reading global config cache:', e);
+
+      // 3. Fallback to other possible names or env
+      if (!apiKey) {
+        apiKey = localStorage.getItem('global_gemini_key') || GEMINI_API_KEY;
+      }
     }
 
-    const apiKey = customKey ||
-                   localStorage.getItem('gemini_api_key') || 
-                   sharedKey ||
-                   localStorage.getItem('global_gemini_key') || 
-                   GEMINI_API_KEY;
     if (!apiKey) {
       console.warn('[GeminiService] No API Key found.');
       return null;
     }
 
     if (customKey) {
-      // Don't cache the test instance
+      // Return a fresh instance for testing, don't cache
       return new GoogleGenAI({ apiKey });
     }
 
-    if (this.instance) return this.instance;
+    // Cache the standard instance
+    console.log('[GeminiService] Initializing new instance with key source:', customKey ? 'custom' : 'stored');
+    this.instance = new GoogleGenAI({ apiKey });
+    return this.instance;
   }
 
   /**
    * Resets the instance (useful when API key changes).
    */
   static resetInstance() {
+    console.log('[GeminiService] Instance reset requested.');
     this.instance = null;
   }
 
@@ -57,18 +71,6 @@ export class GeminiService {
    * Checks if an API key is configured.
    */
   static hasApiKey(): boolean {
-    let sharedKey = '';
-    try {
-      const cachedGlobal = localStorage.getItem('cache_global_config');
-      if (cachedGlobal) {
-        const parsed = JSON.parse(cachedGlobal);
-        sharedKey = parsed.geminiApiKey || '';
-      }
-    } catch (e) {}
-
-    return !!(localStorage.getItem('gemini_api_key') || 
-              sharedKey ||
-              localStorage.getItem('global_gemini_key') || 
-              GEMINI_API_KEY);
+    return this.getInstance() !== null;
   }
 }
