@@ -9,14 +9,22 @@ import {
   createUserWithEmailAndPassword,
   sendPasswordResetEmail
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, disableNetwork } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
+import { logErrorToSupabase, FRIENDLY_ERROR_MESSAGE } from '../lib/error-logging';
+import { UsageService } from '../services/usageService';
 
 interface AuthContextType {
   user: User | null;
-  role: 'admin' | 'user' | null;
+  role: 'super_admin' | 'admin' | 'user' | null;
   status: 'active' | 'inactive' | null;
   paymentStatus: 'none' | 'pending' | 'completed' | null;
+  planType: 'free' | 'pro' | 'enterprise' | null;
+  geminiApiKey: string | null;
+  fallbackGeminiApiKey: string | null;
+  failoverEnabled: boolean;
+  dailyOrderCount: number;
+  orderLimit: number;
   expiryDate: string | null;
   phone: string | null;
   loading: boolean;
@@ -28,15 +36,23 @@ interface AuthContextType {
   logout: () => Promise<void>;
   clearError: () => void;
   isSubscriptionValid: () => boolean;
+  refreshUsage: () => Promise<void>;
+  incrementDailyCount: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [role, setRole] = useState<'admin' | 'user' | null>(null);
+  const [role, setRole] = useState<'super_admin' | 'admin' | 'user' | null>(null);
   const [status, setStatus] = useState<'active' | 'inactive' | null>(null);
   const [paymentStatus, setPaymentStatus] = useState<'none' | 'pending' | 'completed' | null>(null);
+  const [planType, setPlanType] = useState<'free' | 'pro' | 'enterprise' | null>(null);
+  const [geminiApiKey, setGeminiApiKey] = useState<string | null>(null);
+  const [fallbackGeminiApiKey, setFallbackGeminiApiKey] = useState<string | null>(null);
+  const [failoverEnabled, setFailoverEnabled] = useState(false);
+  const [dailyOrderCount, setDailyOrderCount] = useState(0);
+  const [orderLimit, setOrderLimit] = useState(10);
   const [expiryDate, setExpiryDate] = useState<string | null>(null);
   const [phone, setPhone] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,6 +83,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const configDoc = await getDoc(doc(db, 'global_configs', 'settings'));
           if (configDoc.exists()) {
             const configData = configDoc.data();
+            setFallbackGeminiApiKey(configData.fallbackGeminiApiKey || configData.geminiApiKey || null);
             // Sync to localStorage as fallback for services that don't use context
             if (configData.geminiApiKey) localStorage.setItem('global_gemini_key', configData.geminiApiKey);
             if (configData.supabase_url) localStorage.setItem('global_supabase_url', configData.supabase_url);
@@ -83,7 +100,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setRole(data.role);
             setStatus(data.status);
             setPaymentStatus(data.paymentStatus || 'none');
+            setPlanType(data.planType || (data.role === 'admin' ? 'pro' : 'free'));
+            setGeminiApiKey(data.geminiApiKey || null);
+            setFailoverEnabled(data.failoverEnabled || false);
             setExpiryDate(data.expiryDate);
+            
+            // Sync Daily usage
+            try {
+              const dbUsage = await UsageService.getDailyUsage(user.uid);
+              setDailyOrderCount(dbUsage);
+              setOrderLimit(data.orderLimit || 100); 
+            } catch (err) {
+              setDailyOrderCount(data.dailyOrderCount || 0);
+              setOrderLimit(data.orderLimit || (data.planType === 'pro' ? 1000 : 10));
+            }
             setPhone(data.phone || null);
 
             // Update cache
@@ -94,20 +124,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             if (data.phone) localStorage.setItem(`auth_phone_${user.uid}`, data.phone);
           } else {
             // Create new profile for first-time login
-            const isDefaultAdmin = user.email === 'chichine153@gmail.com';
+            const isSuperAdmin = user.email === 'chichine153@gmail.com';
             const newProfile = {
               uid: user.uid,
               email: user.email,
-              role: isDefaultAdmin ? 'admin' : 'user',
-              status: isDefaultAdmin ? 'active' : 'inactive',
-              paymentStatus: isDefaultAdmin ? 'completed' : 'none',
-              expiryDate: isDefaultAdmin ? new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000).toISOString() : null,
+              role: isSuperAdmin ? 'super_admin' : 'user',
+              status: isSuperAdmin ? 'active' : 'inactive',
+              paymentStatus: isSuperAdmin ? 'completed' : 'none',
+              planType: isSuperAdmin ? 'enterprise' : 'free',
+              dailyOrderCount: 0,
+              orderLimit: isSuperAdmin ? 999999 : 10,
+              expiryDate: isSuperAdmin ? new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000).toISOString() : null,
               createdAt: new Date().toISOString()
             };
             await setDoc(userDocRef, newProfile);
             setRole(newProfile.role as any);
             setStatus(newProfile.status as any);
             setPaymentStatus(newProfile.paymentStatus as any);
+            setPlanType(newProfile.planType as any);
+            setDailyOrderCount(0);
+            setOrderLimit(newProfile.orderLimit);
             setExpiryDate(newProfile.expiryDate);
           }
         } catch (err: any) {
@@ -142,10 +178,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const isSubscriptionValid = () => {
-    if (role === 'admin') return true;
+    if (role === 'super_admin' || role === 'admin') return true;
     if (status !== 'active') return false;
     if (!expiryDate) return false;
     return new Date(expiryDate) > new Date();
+  };
+
+  const refreshUsage = async () => {
+    if (!user) return;
+    try {
+      const [usage, limit] = await Promise.all([
+        UsageService.getDailyUsage(user.uid),
+        UsageService.getShopLimit(user.uid)
+      ]);
+      setDailyOrderCount(usage);
+      setOrderLimit(prev => limit || prev);
+    } catch (e) {
+      console.warn("Usage refresh failed");
+    }
+  };
+
+  const incrementDailyCount = async () => {
+    if (!user) return;
+    try {
+      await UsageService.incrementUsage(user.uid);
+      setDailyOrderCount(prev => prev + 1);
+      
+      // Also potentially update Firestore for backup/listing
+      const userRef = doc(db, 'users', user.uid);
+      await updateDoc(userRef, {
+        dailyOrderCount: dailyOrderCount + 1
+      });
+    } catch (e) {
+      console.error("Increment failed", e);
+    }
   };
 
   const login = async () => {
@@ -155,10 +221,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await signInWithPopup(auth, provider);
     } catch (err: any) {
       console.error('Login failed:', err);
+      logErrorToSupabase(err, 'auth_google', user?.uid);
       if (err.code === 'auth/unauthorized-domain') {
         setError('Tên miền này chưa được ủy quyền trong Firebase Console. Vui lòng thêm tên miền vào danh sách "Authorized domains".');
       } else {
-        setError(err.message || 'Đăng nhập thất bại. Vui lòng thử lại.');
+        setError(FRIENDLY_ERROR_MESSAGE);
       }
     }
   };
@@ -169,12 +236,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await signInWithEmailAndPassword(auth, email, pass);
     } catch (err: any) {
       console.error('Email login failed:', err);
+      logErrorToSupabase(err, 'auth_email', user?.uid);
       if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found') {
         setError('Email hoặc mật khẩu không chính xác.');
       } else if (err.code === 'auth/too-many-requests') {
         setError('Tài khoản đã bị tạm khóa do nhập sai nhiều lần. Vui lòng thử lại sau.');
       } else {
-        setError(err.message || 'Đăng nhập thất bại.');
+        setError(FRIENDLY_ERROR_MESSAGE);
       }
       throw err;
     }
@@ -224,8 +292,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider value={{ 
-      user, role, status, paymentStatus, expiryDate, phone, loading, error, 
-      login, loginWithEmail, signupWithEmail, resetPassword, logout, clearError, isSubscriptionValid 
+      user, role, status, paymentStatus, planType, geminiApiKey, fallbackGeminiApiKey, 
+      failoverEnabled, dailyOrderCount, orderLimit, expiryDate, phone, loading, error, 
+      login, loginWithEmail, signupWithEmail, resetPassword, logout, clearError, isSubscriptionValid,
+      refreshUsage, incrementDailyCount
     }}>
       {!loading && children}
     </AuthContext.Provider>

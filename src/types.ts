@@ -1,12 +1,16 @@
-export type Screen = 'dashboard' | 'upload' | 'inventory' | 'returns' | 'stockin' | 'intransit' | 'profit' | 'success' | 'reprint' | 'accounts' | 'upgrade' | 'settings';
+export type Screen = 'dashboard' | 'upload' | 'inventory' | 'returns' | 'stockin' | 'intransit' | 'profit' | 'success' | 'reprint' | 'accounts' | 'upgrade' | 'settings' | 'admin-master';
 
 export interface UserProfile {
   uid: string;
   email: string;
   phone?: string;
-  role: 'admin' | 'user';
+  role: 'super_admin' | 'admin' | 'user';
   status: 'active' | 'inactive';
   paymentStatus: 'none' | 'pending' | 'completed';
+  planType?: 'free' | 'pro' | 'enterprise';
+  geminiApiKey?: string;
+  dailyOrderCount?: number;
+  orderLimit?: number;
   expiryDate: string | null;
   createdAt: string;
 }

@@ -37,6 +37,7 @@ import { ProfitService } from './services/profitService';
 import { InventoryService } from './services/inventoryService';
 import { useAuth } from './contexts/AuthContext';
 import { useData } from './contexts/DataContext';
+import { logErrorToSupabase, FRIENDLY_ERROR_MESSAGE } from './lib/error-logging';
 import * as XLSX from 'xlsx';
 import { handleFirestoreError, OperationType } from './lib/firestore-errors';
 import { Screen } from './types';
@@ -276,7 +277,8 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
       if (forecastData) setForecastCount(forecastData.length);
     } catch (error: any) {
       console.error('Sync Error:', error);
-      if (!silent) addToast(`Lỗi đồng bộ: ${error.message}`, 'error');
+      logErrorToSupabase(error, 'inventory_sync', user.uid);
+      if (!silent) addToast(FRIENDLY_ERROR_MESSAGE, 'error');
     } finally {
       if (!silent) setIsSyncing(false);
     }
@@ -1254,7 +1256,7 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
       {/* Clear Inventory Confirmation Modal */}
       <AnimatePresence>
         {showClearConfirm && (
-          <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm no-print">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -1293,7 +1295,7 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
       {/* History Modal */}
       <AnimatePresence>
         {showHistory && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm no-print">
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -1378,7 +1380,7 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
       {/* Add/Edit Product Modal */}
       <AnimatePresence>
         {(editingProduct || isAddingNew) && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm no-print">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -1598,7 +1600,7 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
       {/* Product Delete Confirmation Modal */}
       <AnimatePresence>
         {confirmingDeleteId && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm no-print">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}

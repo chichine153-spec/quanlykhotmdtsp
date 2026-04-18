@@ -15,6 +15,7 @@ import {
   ChevronLeft,
   Search,
   ArrowRight,
+  ArrowRightCircle,
   Star,
   BarChart3,
   PieChart,
@@ -37,7 +38,7 @@ interface DashboardProps {
 
 export default function Dashboard({ onScreenChange }: DashboardProps) {
   const { user, login, error, clearError, role, expiryDate, isSubscriptionValid } = useAuth();
-  const { inventory, orders, problematicOrders, loading: dataLoading, refreshData } = useData();
+  const { inventory, orders, problematicOrders, loading: dataLoading, refreshData, quotaExceeded } = useData();
   const [loading, setLoading] = React.useState(false);
   const [selectedOrder, setSelectedOrder] = React.useState<OrderRecord | null>(null);
   const [showTrackingModal, setShowTrackingModal] = React.useState(false);
@@ -181,6 +182,28 @@ export default function Dashboard({ onScreenChange }: DashboardProps) {
         </div>
       </header>
 
+      {quotaExceeded && (
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="p-4 bg-amber-50 border border-amber-200 rounded-3xl flex items-center gap-3 text-amber-800"
+        >
+          <div className="p-2 bg-amber-100 rounded-xl">
+            <AlertCircle size={20} />
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-black uppercase tracking-tight">Hạn mức hệ thống tạm thời hết lượt</p>
+            <p className="text-[10px] font-bold opacity-80">Firebase Quota đã đạt giới hạn miễn phí hôm nay. Bạn vẫn có thể xem dữ liệu cũ từ bộ nhớ đệm.</p>
+          </div>
+          <button 
+            onClick={refreshData}
+            className="px-4 py-2 bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-amber-700 transition-all"
+          >
+            Thử tải lại
+          </button>
+        </motion.div>
+      )}
+
       {/* Date Selector for 10-Day Report */}
       <div className="flex items-center gap-4 overflow-x-auto pb-2 custom-scrollbar no-scrollbar">
         <div className="flex items-center gap-2 bg-white/50 p-1 rounded-2xl border border-surface-container shadow-sm">
@@ -297,8 +320,20 @@ export default function Dashboard({ onScreenChange }: DashboardProps) {
                 <p className="text-xs font-bold text-primary uppercase tracking-widest mb-1">Top 1 {topSellersTimeframe === 'today' ? 'Hôm nay' : topSellersTimeframe === '7days' ? '7 Ngày' : '30 Ngày'}</p>
                 <h4 className="text-lg font-black text-on-surface leading-tight">{bestSeller.name}</h4>
                 <p className="text-sm text-secondary font-medium mt-1">{bestSeller.variant}</p>
-                <div className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-full font-bold text-sm">
-                  <span>{bestSeller.count} đơn hàng</span>
+                <div className="mt-4 flex flex-col gap-2 w-full">
+                  <div className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-full font-bold text-sm">
+                    <span>{bestSeller.count} đơn hàng</span>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      const element = document.getElementById('forecast-section');
+                      element?.scrollIntoView({ behavior: 'smooth' });
+                    }}
+                    className="flex items-center justify-center gap-2 w-full py-2 bg-primary text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-lg shadow-primary/20"
+                  >
+                    <TrendingUp size={14} />
+                    Xem chi tiết dự báo
+                  </button>
                 </div>
                 <p className="text-[10px] text-secondary mt-2 font-mono">SKU: {bestSeller.sku}</p>
               </div>
@@ -360,9 +395,19 @@ export default function Dashboard({ onScreenChange }: DashboardProps) {
           className={`${role === 'admin' ? 'md:col-span-2' : 'md:col-span-1 lg:col-span-2'} glass-morphism rounded-3xl p-8 shadow-sm border border-white/10 min-h-[350px] flex flex-col`}
         >
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-            <div>
+            <div className="flex flex-col">
               <h3 className="text-lg font-bold text-on-surface">Phân tích danh mục kinh doanh</h3>
               <p className="text-xs text-secondary mt-1">Dữ liệu bán ra ngày {new Date(selectedDate).toLocaleDateString('vi-VN')}</p>
+              <button 
+                onClick={() => {
+                  const el = document.getElementById('forecast-section');
+                  el?.scrollIntoView({ behavior: 'smooth' });
+                }}
+                className="mt-3 flex items-center gap-2 text-xs font-black text-primary uppercase tracking-widest hover:translate-x-1 transition-all group w-fit"
+              >
+                Xem chi tiết dự báo
+                <ArrowRightCircle size={14} className="group-hover:rotate-45 transition-transform" />
+              </button>
             </div>
             <div className="flex flex-wrap gap-2">
               <div className="flex items-center gap-2 px-3 py-1.5 bg-tertiary/10 text-tertiary rounded-full text-[10px] font-bold">
@@ -432,14 +477,14 @@ export default function Dashboard({ onScreenChange }: DashboardProps) {
       </div>
 
       {/* Smart Restock Forecast Section */}
-      <motion.div variants={item}>
+      <motion.div variants={item} id="forecast-section">
         <LowStockPanel onScreenChange={onScreenChange} />
       </motion.div>
 
       {/* Order Details Modal */}
       <AnimatePresence>
         {showOrderDetails && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-8">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-8 no-print">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -526,7 +571,7 @@ export default function Dashboard({ onScreenChange }: DashboardProps) {
       {/* Problematic Orders Modal */}
       <AnimatePresence>
         {showProblematicModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-8">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-8 no-print">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -612,7 +657,7 @@ export default function Dashboard({ onScreenChange }: DashboardProps) {
       {/* Tracking Details Modal */}
       <AnimatePresence>
         {showTrackingModal && selectedOrder && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 no-print">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -673,7 +718,7 @@ export default function Dashboard({ onScreenChange }: DashboardProps) {
       {/* Top Sellers Modal */}
       <AnimatePresence>
         {showTopSellersModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-8">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-8 no-print">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -744,9 +789,23 @@ export default function Dashboard({ onScreenChange }: DashboardProps) {
                           <h4 className="font-bold text-on-surface leading-tight">{product.name} - {product.sku} - {product.variant}</h4>
                           <p className="text-xs text-secondary mt-0.5">Mã SKU: {product.sku} • Màu: {product.variant}</p>
                         </div>
-                        <div className="text-right">
-                          <div className="text-lg font-black text-primary">{product.count}</div>
-                          <div className="text-[10px] font-bold text-secondary uppercase tracking-widest">Đơn hàng</div>
+                        <div className="text-right flex flex-col items-end gap-2">
+                          <div>
+                            <div className="text-lg font-black text-primary">{product.count}</div>
+                            <div className="text-[10px] font-bold text-secondary uppercase tracking-widest">Đơn hàng</div>
+                          </div>
+                          <button 
+                            onClick={() => {
+                              setShowTopSellersModal(false);
+                              setTimeout(() => {
+                                const element = document.getElementById('forecast-section');
+                                element?.scrollIntoView({ behavior: 'smooth' });
+                              }, 300);
+                            }}
+                            className="px-3 py-1 bg-primary text-white rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-primary-dark transition-all"
+                          >
+                            Dự báo nhập
+                          </button>
                         </div>
                       </div>
                     ))}

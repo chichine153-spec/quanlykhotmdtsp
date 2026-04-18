@@ -12,6 +12,8 @@ import ScanSuccess from './ScanSuccess';
 import Returns from './Returns';
 import AccountManagement from './AccountManagement';
 import UpgradeAccount from './UpgradeAccount';
+import SuperAdminDashboard from './SuperAdminDashboard';
+import ErrorBoundary from './components/ErrorBoundary';
 import { Screen } from './types';
 import { PDFService } from './services/pdfService';
 import { useAuth } from './contexts/AuthContext';
@@ -88,20 +90,24 @@ export default function App() {
         return <AccountManagement />;
       case 'upgrade':
         return <UpgradeAccount />;
+      case 'admin-master':
+        return <SuperAdminDashboard />;
       default:
         return <Dashboard />;
     }
   };
 
   return (
-    <Layout 
-      activeScreen={activeScreen} 
-      onScreenChange={setActiveScreen}
-    >
-      <Toaster position="top-right" reverseOrder={false} />
-      <div className="relative">
-        {renderScreen()}
-      </div>
-    </Layout>
+    <ErrorBoundary>
+      <Layout 
+        activeScreen={activeScreen} 
+        onScreenChange={setActiveScreen}
+      >
+        <Toaster position="top-right" reverseOrder={false} />
+        <div className="relative">
+          {renderScreen()}
+        </div>
+      </Layout>
+    </ErrorBoundary>
   );
 }

@@ -99,8 +99,12 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
     { id: 'profit', label: 'Báo cáo lợi nhuận', icon: TrendingUp },
   ];
 
-  if (role === 'admin') {
+  if (role === 'admin' || role === 'super_admin') {
     navItems.push({ id: 'accounts', label: 'Quản lý tài khoản', icon: Users });
+  }
+
+  if (role === 'super_admin') {
+    navItems.push({ id: 'admin-master', label: 'Super Admin Dash', icon: ShieldCheck });
   }
 
   const isExpired = expiryDate ? new Date(expiryDate) < new Date() : true;
@@ -149,7 +153,7 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
       </AnimatePresence>
 
       {/* Top Bar */}
-      <header className={`fixed top-0 w-full z-50 bg-white/60 backdrop-blur-xl border-b border-surface-container flex justify-between items-center px-4 md:px-8 h-16 transition-all ${quotaExceeded ? 'mt-16' : ''}`}>
+      <header className={`fixed top-0 w-full z-50 bg-white/60 backdrop-blur-xl border-b border-surface-container flex justify-between items-center px-4 md:px-8 h-16 transition-all no-print ${quotaExceeded ? 'mt-16' : ''}`}>
         <div className="flex items-center gap-3">
           <button 
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -206,9 +210,11 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
                   <p className="text-xs font-bold text-on-surface">{user.displayName}</p>
                   <div className="flex items-center justify-end gap-1">
                     <span className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${
+                      role === 'super_admin' ? 'bg-on-surface text-surface' : 
                       role === 'admin' ? 'bg-primary text-white' : 'bg-secondary/10 text-secondary'
                     }`}>
-                      {role === 'admin' ? 'Admin' : 'User'}
+                      {role === 'super_admin' ? 'Super Admin' : 
+                       role === 'admin' ? 'Admin' : 'User'}
                     </span>
                     {role !== 'admin' && (
                       <span className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${
@@ -244,7 +250,7 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
       <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
 
       {/* Desktop Sidebar */}
-      <aside className="hidden lg:flex fixed left-0 top-0 z-[60] w-72 p-4 flex-col gap-6 bg-white/60 backdrop-blur-2xl rounded-r-3xl h-[calc(100vh-2rem)] my-4 ml-4 shadow-2xl shadow-slate-200/50">
+      <aside className="hidden lg:flex fixed left-0 top-0 z-[60] w-72 p-4 flex-col gap-6 bg-white/60 backdrop-blur-2xl rounded-r-3xl h-[calc(100vh-2rem)] my-4 ml-4 shadow-2xl shadow-slate-200/50 no-print">
         <div className="px-4 py-6 border-b border-surface-container">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-xl bg-primary-container flex items-center justify-center text-white shadow-lg">
@@ -311,14 +317,14 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsSidebarOpen(false)}
-              className="fixed inset-0 bg-black/20 backdrop-blur-sm z-[70] lg:hidden"
+              className="fixed inset-0 bg-black/20 backdrop-blur-sm z-[70] lg:hidden no-print"
             />
             <motion.aside 
               initial={{ x: '-100%' }}
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}
               transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className="fixed left-0 top-0 bottom-0 w-72 bg-white z-[80] lg:hidden p-4 flex flex-col gap-6"
+              className="fixed left-0 top-0 bottom-0 w-72 bg-white z-[80] lg:hidden p-4 flex flex-col gap-6 no-print"
             >
               <div className="flex justify-between items-center px-2">
                 <span className="text-lg font-black text-primary">Zenith OMS</span>
@@ -358,7 +364,7 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
       </main>
 
       {/* Mobile Bottom Nav */}
-      <nav className="lg:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center h-20 px-6 pb-2 bg-white/60 backdrop-blur-xl rounded-t-3xl shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
+      <nav className="lg:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center h-20 px-6 pb-2 bg-white/60 backdrop-blur-xl rounded-t-3xl shadow-[0_-4px_20px_rgba(0,0,0,0.05)] no-print">
         {filteredNavItems.slice(0, 5).map((item) => (
           <button
             key={item.id}
@@ -376,7 +382,7 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
       </nav>
 
       {/* Footer */}
-      <footer className="hidden lg:flex flex-col items-center gap-2 mt-auto w-full py-8 lg:ml-40">
+      <footer className="hidden lg:flex flex-col items-center gap-2 mt-auto w-full py-8 lg:ml-40 no-print">
         <p className="text-xs tracking-tighter opacity-50 text-secondary">© 2024 Zenith OMS - Hệ thống quản lý kho chuyên nghiệp</p>
         <div className="flex gap-6">
           <a href="#" className="text-xs text-secondary hover:opacity-100 transition-opacity">Support</a>

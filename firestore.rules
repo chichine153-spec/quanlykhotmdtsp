@@ -274,6 +274,14 @@ service cloud.firestore {
       allow delete: if isDocOwner();
     }
 
+    match /usage_records/{recordId} {
+      allow read: if isDocOwner();
+      allow list: if isAdmin();
+      allow create: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || isAdmin());
+      allow update: if isDocOwner() || isAdmin();
+      allow delete: if isAdmin();
+    }
+
     match /in_transit_logs/{logId} {
       allow read: if isDocOwner();
       allow list: if isAuthenticated();

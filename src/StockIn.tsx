@@ -30,6 +30,7 @@ import { db } from './firebase';
 import { useAuth } from './contexts/AuthContext';
 import { useData } from './contexts/DataContext';
 import { Product, InventoryLog } from './types';
+import { logErrorToSupabase, FRIENDLY_ERROR_MESSAGE } from './lib/error-logging';
 import { handleFirestoreError, OperationType } from './lib/firestore-errors';
 import { classifyError } from './lib/errorUtils';
 
@@ -180,7 +181,8 @@ export default function StockIn() {
       setTimeout(() => setSuccessMessage(null), 5000);
     } catch (err: any) {
       console.error('Stock In Error:', err);
-      setError(err.message || 'Lỗi khi cập nhật kho hàng.');
+      logErrorToSupabase(err, 'stock_in', user?.uid);
+      setError(FRIENDLY_ERROR_MESSAGE);
     } finally {
       setIsSubmitting(false);
     }

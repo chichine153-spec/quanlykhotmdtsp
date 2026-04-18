@@ -29,6 +29,7 @@ import { db } from './firebase';
 import { useAuth } from './contexts/AuthContext';
 import { useData } from './contexts/DataContext';
 import { Product, InTransitLog } from './types';
+import { logErrorToSupabase, FRIENDLY_ERROR_MESSAGE } from './lib/error-logging';
 import { InventoryService } from './services/inventoryService';
 import { classifyError } from './lib/errorUtils';
 
@@ -144,7 +145,8 @@ export default function InTransitManagement() {
       setTimeout(() => setSuccessMessage(null), 5000);
     } catch (err: any) {
       console.error('Add In-Transit Error:', err);
-      setError(err.message || 'Lỗi khi ghi nhận hàng đang về.');
+      logErrorToSupabase(err, 'in_transit_add', user?.uid);
+      setError(FRIENDLY_ERROR_MESSAGE);
     } finally {
       setIsSubmitting(false);
     }
@@ -164,6 +166,7 @@ export default function InTransitManagement() {
       await InventoryService.toggleInTransitStatus(log, newStatus);
     } catch (err) {
       console.error('Toggle Status Error:', err);
+      logErrorToSupabase(err, 'in_transit_toggle', user?.uid);
     }
   };
 

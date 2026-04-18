@@ -202,7 +202,13 @@ export default function LowStockPanel({ onScreenChange }: LowStockPanelProps) {
                             <div className="flex items-center gap-2">
                               <h4 className="text-xs font-black text-on-surface uppercase tracking-tight truncate">{item.productName}</h4>
                               {item.currentStock === 0 && (
-                                <AlertCircle size={14} className="text-error animate-bounce" />
+                                <motion.div
+                                  animate={{ scale: [1, 1.2, 1], opacity: [1, 0.5, 1] }}
+                                  transition={{ repeat: Infinity, duration: 0.8 }}
+                                  className="flex items-center justify-center p-1 bg-error rounded-full text-white shadow-lg shadow-error/40"
+                                >
+                                  <AlertCircle size={10} />
+                                </motion.div>
                               )}
                             </div>
                             <p className="text-[9px] font-bold text-secondary opacity-60">SKU: {item.sku} • {item.variant} • {item.supplier}</p>

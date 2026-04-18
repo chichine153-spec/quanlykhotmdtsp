@@ -107,7 +107,13 @@ export class PDFService {
   /**
    * Extracts text from a PDF file or URL and parses it for Shopee order data.
    */
-  static async extractOrderData(input: File | string): Promise<ExtractedOrder[]> {
+  static async extractOrderData(
+    input: File | string, 
+    userId: string,
+    shopKey: string | null,
+    fallbackKey: string | null,
+    shopPlan: string
+  ): Promise<ExtractedOrder[]> {
     let arrayBuffer: ArrayBuffer;
     
     if (typeof input === 'string') {
@@ -164,7 +170,13 @@ export class PDFService {
 
     // Gửi dữ liệu thô sang Gemini bóc tách
     try {
-      const extractedOrders = await this.parseWithGemini(fullText);
+      const extractedOrders = await this.parseWithGemini(
+        fullText, 
+        userId, 
+        shopKey, 
+        fallbackKey, 
+        shopPlan
+      );
       
       // Check for "Cốc giữ nhiệt" category
       const cupKeywords = ['cốc', 'ly', 'giữ nhiệt', 'costa', 'tumbler', 'cup', 'bình'];
@@ -204,10 +216,13 @@ export class PDFService {
     }
   }
 
-  private static async parseWithGemini(text: string): Promise<ExtractedOrder[]> {
-    const ai = GeminiService.getInstance();
-    if (!ai) throw new Error('MISSING_API_KEY');
-
+  private static async parseWithGemini(
+    text: string,
+    userId: string,
+    shopKey: string | null,
+    fallbackKey: string | null,
+    shopPlan: string
+  ): Promise<ExtractedOrder[]> {
     const prompt = `DƯỚI ĐÂY LÀ NỘI DUNG VĂN BẢN TRÍCH XUẤT TỪ FILE VẬN ĐƠN (SHIPPING LABEL) HOẶC HÓA ĐƠN:
     ---
     ${text}
@@ -231,43 +246,46 @@ export class PDFService {
     
     Trả về mảng JSON các đối tượng ExtractedOrder.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              trackingCode: { type: Type.STRING },
-              region: { type: Type.STRING },
-              recipientName: { type: Type.STRING },
-              recipientPhone: { type: Type.STRING },
-              recipientAddress: { type: Type.STRING },
+    const textResponse = await GeminiService.handleAIRequest({
+      prompt,
+      systemInstruction: "Bạn là chuyên gia bóc tách dữ liệu vận đơn Shopee. Luôn trả về JSON chính xác theo schema.",
+      shopKey,
+      fallbackKey,
+      shopPlan,
+      userId,
+      feature: "pdf_extraction",
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            trackingCode: { type: Type.STRING },
+            region: { type: Type.STRING },
+            recipientName: { type: Type.STRING },
+            recipientPhone: { type: Type.STRING },
+            recipientAddress: { type: Type.STRING },
+            items: {
+              type: Type.ARRAY,
               items: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    sku: { type: Type.STRING },
-                    color: { type: Type.STRING },
-                    quantity: { type: Type.NUMBER },
-                    costPrice: { type: Type.NUMBER },
-                    sellingPrice: { type: Type.NUMBER }
-                  },
-                  required: ["sku", "quantity"]
-                }
+                type: Type.OBJECT,
+                properties: {
+                  sku: { type: Type.STRING },
+                  color: { type: Type.STRING },
+                  quantity: { type: Type.NUMBER },
+                  costPrice: { type: Type.NUMBER },
+                  sellingPrice: { type: Type.NUMBER }
+                },
+                required: ["sku", "quantity"]
               }
-            },
-            required: ["trackingCode", "items"]
-          }
+            }
+          },
+          required: ["trackingCode", "items"]
         }
       }
     });
 
-    const rawResult = JSON.parse(response.text || "[]") as ExtractedOrder[];
+    const rawResult = JSON.parse(textResponse || "[]") as ExtractedOrder[];
     
     // Sanitize results: convert strings like "null" or "undefined" to empty strings
     const result = rawResult.map(order => ({

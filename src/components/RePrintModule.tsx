@@ -10,7 +10,8 @@ import {
   Package,
   Calendar,
   X,
-  ExternalLink
+  ExternalLink,
+  Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../contexts/AuthContext';
@@ -18,7 +19,6 @@ import { collection, query, where, orderBy, limit } from 'firebase/firestore';
 import { db } from '../firebase';
 import Barcode from 'react-barcode';
 import { QRCodeSVG } from 'qrcode.react';
-import { useReactToPrint } from 'react-to-print';
 import { GeminiService } from '../services/gemini';
 import { getDoc, doc, getDocs } from 'firebase/firestore';
 
@@ -46,47 +46,53 @@ export default function RePrintModule() {
   const [error, setError] = React.useState<string | null>(null);
   const [refreshKey, setRefreshKey] = React.useState(0);
   const [orderToPrint, setOrderToPrint] = React.useState<any>(null);
-  const [imageToPrint, setImageToPrint] = React.useState<string | null>(null);
+  const [showPrintTemplate, setShowPrintTemplate] = React.useState(false);
   const [deleteConfirm, setDeleteConfirm] = React.useState<string | null>(null);
   const [isIframe, setIsIframe] = React.useState(false);
   const printRef = React.useRef<HTMLDivElement>(null);
-  const imagePrintRef = React.useRef<HTMLDivElement>(null);
+
+  const [isPrinting, setIsPrinting] = React.useState(false);
+
+  const handleThermalPrint = () => {
+    setIsPrinting(true);
+    window.focus();
+    setTimeout(() => {
+      try {
+        window.print();
+      } catch (err) {
+        console.error("[RePrintModule] Print failed", err);
+      } finally {
+        setIsPrinting(false);
+      }
+    }, 150);
+  };
 
   React.useEffect(() => {
     setIsIframe(window.self !== window.top);
   }, []);
 
-  const handlePrint = useReactToPrint({
-    contentRef: printRef,
-    documentTitle: `Vận đơn ${orderToPrint?.trackingCode || ''}`,
-    onAfterPrint: () => setOrderToPrint(null),
-  });
-
-  const handleImagePrint = useReactToPrint({
-    contentRef: imagePrintRef,
-    documentTitle: `Vận đơn Hình ảnh`,
-    onAfterPrint: () => setImageToPrint(null),
-  });
-
+  // Auto-refresh when printing modal opens to catch background image_url updates
   React.useEffect(() => {
-    if (orderToPrint) {
-      const timer = setTimeout(() => {
-        console.log('[RePrintModule] Triggering thermal print...');
-        handlePrint();
-      }, 800);
-      return () => clearTimeout(timer);
+    if (showPrintTemplate && orderToPrint && user) {
+      const refetch = async () => {
+        try {
+          const docRef = doc(db, 'orders', orderToPrint.trackingCode || orderToPrint.id);
+          const snap = await getDoc(docRef);
+          if (snap.exists()) {
+            const data = snap.data();
+            setOrderToPrint((prev: any) => ({
+              ...prev,
+              ...data,
+              image_url: data.image_url || prev.image_url // Ensure we don't lose image_url if doc doesn't have it yet
+            }));
+          }
+        } catch (e) {
+          console.error("[RePrintModule] Refetch for print failed", e);
+        }
+      };
+      refetch();
     }
-  }, [orderToPrint, handlePrint]);
-
-  React.useEffect(() => {
-    if (imageToPrint) {
-      const timer = setTimeout(() => {
-        console.log('[RePrintModule] Triggering image print...');
-        handleImagePrint();
-      }, 1000); // Increased delay for image loading
-      return () => clearTimeout(timer);
-    }
-  }, [imageToPrint, handleImagePrint]);
+  }, [showPrintTemplate]);
 
   React.useEffect(() => {
     if (!user) return;
@@ -282,7 +288,11 @@ export default function RePrintModule() {
       }
 
       if (foundLabel) {
-        handleQuickPrint(foundLabel);
+        setOrderToPrint({
+          ...foundLabel,
+          trackingCode: foundLabel.tracking_number
+        });
+        setShowPrintTemplate(true);
       } else {
         alert('Không tìm thấy đơn hàng này trong hệ thống.');
       }
@@ -297,55 +307,31 @@ export default function RePrintModule() {
   const handleQuickPrint = async (label: PrintHistoryRecord) => {
     console.log('[RePrintModule] Quick print for:', label);
     
-    const isImageUrl = label.image_url && (
-      label.image_url.toLowerCase().includes('.jpg') || 
-      label.image_url.toLowerCase().includes('.jpeg') || 
-      label.image_url.toLowerCase().includes('.png') ||
-      label.image_url.toLowerCase().includes('.webp') ||
-      label.image_url.includes('supabase.co/storage/v1/object/public/shipping-labels/') // Likely our images
-    ) && !label.image_url.toLowerCase().includes('.pdf');
-
-    if (isImageUrl) {
-      // Clean up URL in case it's corrupted with JSON fragments
-      let cleanUrl = label.image_url;
-      if (typeof cleanUrl === 'string') {
-        // Remove any trailing JSON-like fragments (e.g., ?is_cup":1)
-        cleanUrl = cleanUrl.split('?')[0].split('"')[0].split('}')[0].trim();
-        
-        // Ensure it's an absolute URL
-        if (cleanUrl.startsWith('/') && !cleanUrl.startsWith('//')) {
-          const supabaseUrl = localStorage.getItem('supabase_url');
-          if (supabaseUrl) {
-            const baseUrl = supabaseUrl.endsWith('/') ? supabaseUrl.slice(0, -1) : supabaseUrl;
-            cleanUrl = `${baseUrl}/storage/v1/object/public/shipping-labels/${cleanUrl.startsWith('/') ? cleanUrl.slice(1) : cleanUrl}`;
-          }
-        }
-      }
-      
-      console.log('[RePrintModule] Final Image URL:', cleanUrl);
-      setImageToPrint(cleanUrl);
-      return;
-    }
-
     setLoading(true);
     try {
       const orderSnap = await getDoc(doc(db, 'orders', label.tracking_number));
       
+      let finalOrder: any;
       if (orderSnap.exists()) {
         const orderData = orderSnap.data();
-        setOrderToPrint({
+        finalOrder = {
           ...orderData,
-          trackingCode: label.tracking_number
-        });
+          trackingCode: label.tracking_number,
+          image_url: orderData.image_url || label.image_url // Preserve image_url from history if missing in doc
+        };
       } else {
-        setOrderToPrint({
+        finalOrder = {
           trackingCode: label.tracking_number,
           region: 'N/A',
           items: label.product_name,
+          image_url: label.image_url,
           destination: 'Chưa xác định',
           uploadDate: label.created_at
-        });
+        };
       }
+      
+      setOrderToPrint(finalOrder);
+      setShowPrintTemplate(true);
     } catch (error) {
       console.error('Print error:', error);
       alert('Lỗi khi tải dữ liệu in.');
@@ -517,32 +503,17 @@ export default function RePrintModule() {
                     <td className="px-6 py-4">
                       <div className="flex flex-col">
                         <span className="font-mono font-bold text-[#FF4500]">{label.tracking_number}</span>
+                        {label.image_url && (
+                          <span className="text-[9px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded border border-green-200 w-fit mt-1">
+                            GỐC (IMG)
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex justify-end gap-2">
                         <button 
-                          onClick={() => {
-                            if (label.image_url) {
-                              // Clean up URL in case it's corrupted with JSON fragments
-                              let cleanUrl = label.image_url;
-                              if (typeof cleanUrl === 'string') {
-                                cleanUrl = cleanUrl.split('?')[0].split('"')[0].split('}')[0].trim();
-                                
-                                // Ensure it's an absolute URL
-                                if (cleanUrl.startsWith('/') && !cleanUrl.startsWith('//')) {
-                                  const supabaseUrl = localStorage.getItem('supabase_url');
-                                  if (supabaseUrl) {
-                                    const baseUrl = supabaseUrl.endsWith('/') ? supabaseUrl.slice(0, -1) : supabaseUrl;
-                                    cleanUrl = `${baseUrl}/storage/v1/object/public/shipping-labels/${cleanUrl.startsWith('/') ? cleanUrl.slice(1) : cleanUrl}`;
-                                  }
-                                }
-                              }
-                              window.open(cleanUrl, '_blank');
-                            } else {
-                              handleQuickPrint(label);
-                            }
-                          }}
+                          onClick={() => handleQuickPrint(label)}
                           className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl font-bold text-xs shadow-lg hover:scale-105 active:scale-95 transition-all"
                         >
                           <Printer size={14} />
@@ -576,31 +547,12 @@ export default function RePrintModule() {
           </table>
         </div>
       </div>
-      {/* Hidden Print Container */}
-      <div style={{ position: 'absolute', left: '-9999px', top: '-9999px' }}>
-        <div ref={printRef}>
-          {orderToPrint && <ThermalLabel order={orderToPrint} />}
-        </div>
-        <div ref={imagePrintRef}>
-          {imageToPrint && (
-            <div className="w-full h-full flex items-center justify-center bg-white p-4">
-              <img 
-                src={imageToPrint} 
-                alt="Shipping Label" 
-                className="max-w-full max-h-full object-contain"
-                style={{ width: '100mm', height: '150mm' }}
-                referrerPolicy="no-referrer"
-                crossOrigin="anonymous"
-              />
-            </div>
-          )}
-        </div>
-      </div>
+      {/* Hidden Print Container removed - using window.print() in modal */}
 
       {/* Delete Confirmation Modal */}
       <AnimatePresence>
         {deleteConfirm && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -634,24 +586,93 @@ export default function RePrintModule() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Print Template Modal - Integrated from PDFUpload for consistency */}
+      <AnimatePresence>
+        {showPrintTemplate && orderToPrint && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            {/* Modal Backdrop - Specifically no-print */}
+            <div 
+              className="absolute inset-0 bg-black/60 backdrop-blur-md no-print" 
+              onClick={() => setShowPrintTemplate(false)}
+            />
+            
+            <motion.div 
+               initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-2xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] no-print"
+            >
+              <div className="p-6 border-b border-surface-container flex justify-between items-center">
+                <h3 className="text-xl font-black text-on-surface tracking-tight">Xem trước bản in nhiệt</h3>
+                <button 
+                  onClick={() => setShowPrintTemplate(false)}
+                  className="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center text-secondary hover:bg-error hover:text-white transition-all"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="flex-grow overflow-y-auto p-8 bg-surface-container-low flex justify-center">
+                <div 
+                  ref={printRef}
+                  className="bg-white p-4 shadow-lg border border-surface-container" 
+                  style={{ width: '100mm', minHeight: '150mm' }}
+                >
+                  <ThermalLabel order={orderToPrint} />
+                </div>
+              </div>
+
+              <div className="p-6 border-t border-surface-container flex gap-4">
+                <button 
+                  onClick={() => setShowPrintTemplate(false)}
+                  className="flex-1 py-4 rounded-2xl font-bold text-secondary hover:bg-surface-container transition-all"
+                >
+                  Đóng
+                </button>
+                <button 
+                  onClick={handleThermalPrint}
+                  disabled={isPrinting}
+                  className="flex-1 py-4 bg-primary text-white rounded-2xl font-black shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isPrinting ? <Loader2 className="animate-spin" size={20} /> : <Printer size={20} />}
+                  {isPrinting ? 'ĐANG CHUẨN BỊ...' : 'IN NHIỆT NGAY'}
+                </button>
+              </div>
+            </motion.div>
+
+            {/* Persistent Hidden Printable Area - Outside modal space */}
+            <div className="print-only fixed inset-0 bg-white z-[9999]">
+              {orderToPrint && <ThermalLabel order={orderToPrint} />}
+            </div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
 export function ThermalLabel({ order }: { order: any }) {
+  const [imageError, setImageError] = React.useState(false);
   const now = new Date();
   const dateStr = now.toLocaleDateString('vi-VN');
   const timeStr = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 
   // If there's an original image scan, use it!
   const imageSource = order.image_url || order.pdfUrl;
-  const isImage = imageSource && (
+  const isImageString = typeof imageSource === 'string' && imageSource.length > 10;
+  
+  // Check if it's a valid URL or data URI
+  const isImage = isImageString && (
     imageSource.match(/\.(jpeg|jpg|gif|png|webp)/i) || 
     imageSource.includes('supabase.co/storage/v1/object/public') ||
-    imageSource.startsWith('data:image/')
+    imageSource.startsWith('data:image/') ||
+    imageSource.includes('firebasestorage.googleapis.com')
   );
   
-  if (isImage) {
+  console.log('[ThermalLabel] order:', order.trackingCode || order.tracking_number, 'isImage:', isImage, 'source:', imageSource);
+
+  if (isImage && !imageError) {
     return (
       <div className="thermal-label-container bg-white flex items-center justify-center p-0 overflow-hidden" style={{ width: '100mm', height: '150mm' }}>
         <img 
@@ -660,7 +681,8 @@ export function ThermalLabel({ order }: { order: any }) {
           className="w-[100%] h-[100%] object-contain"
           referrerPolicy="no-referrer"
           onError={(e) => {
-            console.error('Image load error in ThermalLabel');
+            console.error('Image load error in ThermalLabel for:', imageSource);
+            setImageError(true);
           }}
         />
         <style>
@@ -702,7 +724,7 @@ export function ThermalLabel({ order }: { order: any }) {
     <div className="thermal-label text-black font-sans bg-white" style={{ 
       width: '100mm', 
       height: '150mm', 
-      padding: '4mm',
+      padding: '6mm',
       boxSizing: 'border-box',
       display: 'flex',
       flexDirection: 'column',
@@ -723,8 +745,10 @@ export function ThermalLabel({ order }: { order: any }) {
             .thermal-label {
               width: 100mm !important;
               height: 150mm !important;
-              padding: 4mm !important;
+              padding: 6mm !important;
             }
+            /* Hide browser default header/footer if possible */
+            header, footer { display: none !important; }
           }
           .thermal-label table td {
              border-top: 1px solid black;
@@ -733,70 +757,80 @@ export function ThermalLabel({ order }: { order: any }) {
       </style>
       
       {/* Top Header */}
-      <div className="flex justify-between items-start mb-1">
-        <div className="text-[10px] font-bold">Vận đơn: {order.trackingCode}</div>
-        <div className="text-[10px] font-bold">{timeStr} {dateStr}</div>
+      <div className="flex justify-between items-start mb-0.5">
+        <div className="text-[9px] font-bold">Vận đơn: {order.trackingCode || order.tracking_number}</div>
+        <div className="text-[10px] font-black">{timeStr} {dateStr}</div>
       </div>
 
-      {/* Main Header */}
-      <div className="flex justify-between items-center border-b-2 border-black pb-1 mb-2">
-        <div className="text-4xl font-black italic tracking-tighter">Shopee</div>
-        <div className="text-right flex flex-col items-end">
-          <div className="text-[10px] font-bold uppercase leading-tight">Ngày đặt: {dateStr}</div>
-          <div className="text-2xl font-black leading-none">{order.region || 'HCM-7'}</div>
+      <div className="flex justify-between items-end mb-1">
+        <div>
+          <div className="text-xl font-black tracking-tight leading-none">Shopee</div>
+          <div className="text-[9px] font-bold mt-0.5">Ngày đặt: {dateStr}</div>
+        </div>
+        <div className="text-2xl font-black border-2 border-black px-3 py-1 bg-white">
+          {order.region || 'Đồng Nai'}
         </div>
       </div>
 
       {/* Barcode Section */}
-      <div className="flex flex-col items-center py-2 border-b-2 border-black">
-        <Barcode 
-          value={order.trackingCode} 
-          width={2.2} 
-          height={60} 
-          fontSize={16} 
-          margin={0}
-          displayValue={true}
-        />
+      <div className="flex flex-col items-center py-3 border-y-2 border-black mb-2 overflow-hidden">
+        <div className="scale-x-[1.3] scale-y-[1.4] origin-center -my-1">
+          <Barcode 
+            value={order.trackingCode || order.tracking_number || ''} 
+            width={1.6} 
+            height={45} 
+            fontSize={12} 
+            margin={0}
+            displayValue={false}
+          />
+        </div>
+        <div className="text-sm font-black tracking-[0.2em] mt-2">
+          {order.trackingCode || order.tracking_number}
+        </div>
       </div>
 
-      {/* QR and Recipient Info */}
-      <div className="grid grid-cols-4 gap-4 py-2 border-b-2 border-black">
-        <div className="col-span-1 flex items-center justify-center">
-          <QRCodeSVG value={order.trackingCode} size={90} />
-        </div>
-        <div className="col-span-3 space-y-1">
-          <div className="text-[10px] font-black uppercase">Người nhận:</div>
-          <div className="text-sm font-black leading-tight uppercase">
-            {order.recipientName || 'KHÁCH HÀNG'} {displayPhone ? `(${displayPhone})` : ''}
-          </div>
-          <div className="text-[11px] leading-tight font-medium">
-            {order.recipientAddress || 'Vui lòng xem địa chỉ chi tiết trên vận đơn gốc'}
-          </div>
+      {/* QR Code */}
+      <div className="flex justify-center mb-3">
+        <QRCodeSVG value={order.trackingCode || order.tracking_number} size={120} />
+      </div>
+
+      {/* Recipient Info */}
+      <div className="border-t-2 border-black pt-2 mb-2">
+        <div className="text-[10px] font-black uppercase opacity-60 mb-1">Người nhận:</div>
+        <div className="text-lg font-black mb-0.5 leading-tight">{order.recipientName || 'KHÁCH HÀNG'}</div>
+        {displayPhone && <div className="text-sm font-bold mb-1">{displayPhone}</div>}
+        <div className="text-xs font-medium leading-tight mt-1 max-h-[3em] overflow-hidden">
+          {order.recipientAddress || 'Vui lòng xem địa chỉ chi tiết trên vận đơn gốc'}
         </div>
       </div>
 
       {/* Item List Section */}
-      <div className="mt-2 flex-grow overflow-hidden">
+      <div className="mt-1 flex-grow overflow-hidden border-t border-black pt-1">
         <div className="text-[10px] font-black uppercase mb-1 flex justify-between">
           <span>Sản phẩm</span>
-          <span>Số lượng</span>
+          <span>SL</span>
         </div>
         <table className="w-full border-collapse">
           <tbody>
-            {items.map((item: any, idx: number) => (
-              <tr key={idx} className="border-t border-black/20">
+            {items.slice(0, 5).map((item: any, idx: number) => (
+              <tr key={idx} className="border-t border-black/10">
                 <td className="py-1 pr-2 align-top text-[11px]">
-                  <div className="font-bold">{item.sku}</div>
-                  <div className="text-[10px] opacity-80">{item.variant || ''}</div>
+                  <div className="font-bold truncate max-w-[200px]">{item.sku}</div>
+                  <div className="text-[10px] opacity-70 italic truncate max-w-[200px]">{item.variant || ''}</div>
                 </td>
-                <td className="py-1 text-center align-top font-black text-sm w-12 border-l border-black/20">
+                <td className="py-1 text-right align-top font-black text-sm w-8">
                   {item.quantity}
                 </td>
               </tr>
             ))}
+            {items.length > 5 && (
+              <tr>
+                <td colSpan={2} className="text-[9px] italic pt-1">...và {items.length - 5} sản phẩm khác</td>
+              </tr>
+            )}
             {items.length === 0 && (
               <tr className="border-t border-black/20">
-                <td colSpan={2} className="py-2 text-[11px] italic text-center">
+                <td colSpan={2} className="py-2 text-[10px] italic text-center">
                   Xem chi tiết trên ứng dụng Shopee
                 </td>
               </tr>
@@ -806,11 +840,11 @@ export function ThermalLabel({ order }: { order: any }) {
       </div>
 
       {/* Footer */}
-      <div className="mt-auto pt-2 border-t-2 border-black flex justify-between items-center bg-white">
-        <div className="text-[8px] italic opacity-60">Generated by Zenith OMS</div>
-        <div className="flex items-center gap-2">
-           <div className="text-[10px] font-bold">SPX Express</div>
-           <div className="text-lg font-black border-2 border-black px-4 py-1">SPX</div>
+      <div className="mt-auto pt-2 border-t border-black/50 flex justify-between items-center opacity-60">
+        <div className="text-[7px]">Generated by Zenith OMS</div>
+        <div className="flex items-center gap-1">
+           <div className="text-[8px] font-bold">SPX Express</div>
+           <div className="text-xs font-black border border-black px-2 py-0.5">SPX</div>
         </div>
       </div>
     </div>

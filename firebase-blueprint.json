@@ -8,9 +8,14 @@
         "uid": { "type": "string" },
         "email": { "type": "string", "format": "email" },
         "phone": { "type": "string" },
-        "role": { "type": "string", "enum": ["admin", "user"] },
+        "role": { "type": "string", "enum": ["super_admin", "admin", "user"] },
+        "planType": { "type": "string", "enum": ["free", "pro", "enterprise"] },
+        "dailyOrderCount": { "type": "integer" },
+        "orderLimit": { "type": "integer" },
         "status": { "type": "string", "enum": ["active", "inactive"] },
         "paymentStatus": { "type": "string", "enum": ["none", "pending", "completed"] },
+        "geminiApiKey": { "type": "string" },
+        "failoverEnabled": { "type": "boolean" },
         "expiryDate": { "type": "string", "format": "date-time" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
@@ -124,12 +129,25 @@
       },
       "required": ["userId", "productId", "productName", "sku", "quantity", "expectedArrival", "status", "timestamp"]
     },
-    "GlobalConfig": {
-      "title": "Global Settings",
-      "description": "System-wide configurations managed by Admin.",
+    "UsageRecord": {
+      "title": "Usage Record",
+      "description": "Tracks daily order counts for limit enforcement.",
       "type": "object",
       "properties": {
-        "geminiApiKey": { "type": "string" },
+        "userId": { "type": "string" },
+        "date": { "type": "string", "description": "YYYY-MM-DD" },
+        "count": { "type": "integer" }
+      },
+      "required": ["userId", "date", "count"]
+    },
+    "GlobalConfig": {
+      "title": "Global Settings",
+      "description": "System-wide configurations managed by Super Admin.",
+      "type": "object",
+      "properties": {
+        "fallbackGeminiApiKey": { "type": "string" },
+        "defaultSalesVelocity": { "type": "number" },
+        "defaultFloorFee": { "type": "number" },
         "updatedAt": { "type": "string", "format": "date-time" },
         "updatedBy": { "type": "string" }
       }
@@ -175,6 +193,10 @@
     "/in_transit_logs/{logId}": {
       "schema": "InTransitLog",
       "description": "Logs for tracking shipments from factory."
+    },
+    "/usage_records/{recordId}": {
+      "schema": "UsageRecord",
+      "description": "Daily usage statistics."
     },
     "/global_configs/{configId}": {
       "schema": "GlobalConfig",

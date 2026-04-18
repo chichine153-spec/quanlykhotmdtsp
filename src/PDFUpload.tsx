@@ -27,6 +27,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { GeminiService } from './services/gemini';
 import { ThermalLabel } from './components/RePrintModule';
 import { OrderRecord } from './services/inventoryService';
+import { logErrorToSupabase, FRIENDLY_ERROR_MESSAGE } from './lib/error-logging';
 import { Printer, X } from 'lucide-react';
 import { Screen } from './types';
 
@@ -35,8 +36,25 @@ interface PDFUploadProps {
 }
 
 export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
-  const { user, login, role } = useAuth();
-  const { inventory, config: dataConfig, globalConfig, orders: allOrders, loading: dataLoading, refreshData } = useData();
+  const { 
+    user, 
+    login, 
+    role, 
+    geminiApiKey, 
+    fallbackGeminiApiKey, 
+    planType,
+    dailyOrderCount,
+    orderLimit,
+    incrementDailyCount
+  } = useAuth();
+  const { 
+    inventory, 
+    config: dataConfig, 
+    globalConfig, 
+    orders: allOrders, 
+    loading: dataLoading, 
+    refreshData 
+  } = useData();
   const [isUploading, setIsUploading] = React.useState(false);
   const [progress, setProgress] = React.useState(0);
   const progressRef = React.useRef(0);
@@ -65,6 +83,8 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
   const [isReverting, setIsReverting] = React.useState(false);
   const [selectedOrderToPrint, setSelectedOrderToPrint] = React.useState<OrderRecord | null>(null);
   const [showPrintTemplate, setShowPrintTemplate] = React.useState(false);
+  const printRef = React.useRef<HTMLDivElement>(null);
+  
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [isInventoryEmpty, setIsInventoryEmpty] = React.useState(false);
 
@@ -226,8 +246,10 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
       setError(null);
       setIsUploading(true);
       updateProgress(0);
-      
-      // Helper for smooth progress
+
+      const shopKey = geminiApiKey; 
+      const shopPlanStr = planType || 'free';
+
       const animateProgress = (target: number, duration: number) => {
         return new Promise<void>((resolve) => {
           const startValue = progressRef.current;
@@ -261,7 +283,13 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
       // 1. Extract all orders from PDF
       await animateProgress(15, 800);
       
-      const orders = await PDFService.extractOrderData(file);
+      const orders = await PDFService.extractOrderData(
+        file, 
+        user.uid, 
+        shopKey || null, 
+        fallbackGeminiApiKey || null, 
+        shopPlanStr
+      );
 
       setTotalOrders(orders.length);
       await animateProgress(25, 1000);
@@ -325,7 +353,9 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
       setStatus('idle'); 
     } catch (err: any) {
       console.error('Processing Error:', err);
-      let errMsg = 'Đã xảy ra lỗi khi xử lý file.';
+      logErrorToSupabase(err, 'pdf_extraction', user?.uid);
+      
+      let errMsg = FRIENDLY_ERROR_MESSAGE;
       
       const errorStr = err.message || JSON.stringify(err);
       
@@ -333,15 +363,6 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
         errMsg = 'Hạn mức AI đã hết (Quota Exceeded). Admin vui lòng cập nhật API Key mới hoặc quay lại sau.';
       } else if (errorStr.includes('MISSING_API_KEY')) {
         errMsg = 'Hệ thống chưa được cấu hình API Key. Admin vui lòng cài đặt trong Quản lý tài khoản.';
-      } else if (errorStr.includes('GEMINI_ERROR')) {
-        errMsg = `Lỗi từ AI: ${err.message.replace('GEMINI_ERROR: ', '')}`;
-      } else {
-        try {
-          const parsed = JSON.parse(err.message);
-          errMsg = parsed.userFriendlyMessage || parsed.error || err.message;
-        } catch {
-          errMsg = err.message || 'Đã xảy ra lỗi khi xử lý file.';
-        }
       }
       
       setError(errMsg);
@@ -488,6 +509,14 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
         }
 
         const order = ordersToProcess[i];
+        
+        // LIMIT CHECK
+        if (role !== 'super_admin' && (dailyOrderCount + successCount) >= orderLimit) {
+          setError(`Bạn đã sử dụng hết hạn mức ${orderLimit} đơn vị/ngày của gói hiện tại. Vui lòng liên hệ với Quản trị viên để nâng cấp hoặc chờ ngày mai.`);
+          setStatus('error');
+          break;
+        }
+
         setCurrentFileOrders(prev => prev.map((o, idx) => idx === i ? { ...o, status: 'processing' } : o));
         
         try {
@@ -511,6 +540,9 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
             PDFService.processOrder(currentFile!, order, inventory, profitConfig, preUploadedUrl),
             timeoutPromise
           ]);
+
+          // Increment usage stat
+          await incrementDailyCount();
 
           clearInterval(progressInterval);
           updateProgress(nextBaseProgress);
@@ -564,7 +596,8 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
       }, 5000);
     } catch (err: any) {
       console.error('Batch processing fatal error:', err);
-      setError(`Lỗi hệ thống: ${err.message}`);
+      logErrorToSupabase(err, 'pdf_batch_process', user?.uid);
+      setError(FRIENDLY_ERROR_MESSAGE);
       setStatus('error');
     } finally {
       setIsProcessingConfirmed(false);
@@ -574,6 +607,26 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
 
   const triggerFileInput = () => {
     fileInputRef.current?.click();
+  };
+
+  const [isPrinting, setIsPrinting] = React.useState(false);
+
+  const handlePrint = () => {
+    setIsPrinting(true);
+    // Ensure focus is on the document
+    window.focus();
+    
+    // Tiny delay to allow state changes if any
+    setTimeout(() => {
+      try {
+        window.print();
+      } catch (err) {
+        console.error("[PDFUpload] Print failed", err);
+        addToast("Không thể mở hộp thoại in. Vui lòng thử lại hoặc mở tab mới.", "error");
+      } finally {
+        setIsPrinting(false);
+      }
+    }, 150);
   };
 
   return (
@@ -1074,6 +1127,26 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
                   </div>
                 </div>
               </div>
+
+              {/* My Limit Progress Bar */}
+              <div className="p-4 bg-primary/5 rounded-xl space-y-3">
+                <div className="flex justify-between items-center text-[10px] uppercase tracking-widest font-black text-primary">
+                  <span>HẠN MỨC CỦA TÔI</span>
+                  <span>{dailyOrderCount}/{orderLimit} ĐƠN</span>
+                </div>
+                <div className="h-2 w-full bg-primary/10 rounded-full overflow-hidden">
+                  <motion.div 
+                    initial={{ width: 0 }}
+                    animate={{ width: `${Math.min((dailyOrderCount / orderLimit) * 100, 100)}%` }}
+                    className="h-full bg-primary shadow-[0_0_8px_rgba(255,77,0,0.3)]"
+                  />
+                </div>
+                {dailyOrderCount >= orderLimit && (
+                  <p className="text-[9px] text-error font-bold flex items-center gap-1">
+                    <AlertTriangle size={10} /> ĐÃ HẾT HẠN MỨC NGÀY
+                  </p>
+                )}
+              </div>
             </div>
 
             {/* Recent Activity */}
@@ -1153,7 +1226,7 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
         {/* Confirmation Modal */}
         <AnimatePresence>
           {showNegativeStockWarning && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm no-print">
               <motion.div 
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
@@ -1186,7 +1259,7 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
           )}
 
           {confirmingRevert && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm no-print">
               <motion.div 
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
@@ -1221,7 +1294,7 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
           )}
 
           {showClearAllConfirm && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm no-print">
               <motion.div 
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
@@ -1282,7 +1355,11 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
                 </div>
 
                 <div className="flex-grow overflow-y-auto p-8 bg-surface-container-low flex justify-center">
-                  <div className="bg-white p-4 shadow-lg border border-surface-container" style={{ width: '100mm', minHeight: '150mm' }}>
+                  <div 
+                    ref={printRef}
+                    className="bg-white p-4 shadow-lg border border-surface-container" 
+                    style={{ width: '100mm', minHeight: '150mm' }}
+                  >
                     <ThermalLabel order={selectedOrderToPrint} />
                   </div>
                 </div>
@@ -1295,22 +1372,23 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
                     Đóng
                   </button>
                   <button 
-                    onClick={() => window.print()}
-                    className="flex-1 py-4 bg-primary text-white rounded-2xl font-black shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+                    onClick={handlePrint}
+                    disabled={isPrinting}
+                    className="flex-1 py-4 bg-primary text-white rounded-2xl font-black shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                   >
-                    <Printer size={20} />
-                    IN NHIỆT NGAY
+                    {isPrinting ? <Loader2 className="animate-spin" size={20} /> : <Printer size={20} />}
+                    {isPrinting ? 'ĐANG CHUẨN BỊ...' : 'IN NHIỆT NGAY'}
                   </button>
                 </div>
               </motion.div>
-
-              {/* Hidden Printable Area */}
-              <div className="print-only fixed inset-0 bg-white z-[200]">
-                <ThermalLabel order={selectedOrderToPrint} />
-              </div>
             </div>
           )}
         </AnimatePresence>
+
+        {/* Persistent Hidden Printable Area - Outside modal to ensure it's in DOM */}
+        <div className="print-only fixed inset-0 bg-white z-[9999]">
+          {selectedOrderToPrint && <ThermalLabel order={selectedOrderToPrint} />}
+        </div>
 
         {/* Toast Notifications */}
       <div className="fixed bottom-6 right-6 z-[200] flex flex-col gap-3 pointer-events-none">

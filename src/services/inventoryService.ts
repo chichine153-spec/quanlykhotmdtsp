@@ -279,13 +279,8 @@ export class InventoryService {
       const avgDailySales = sold10Days / 10;
       const targetStock = avgDailySales * 15;
       const totalAvailable = product.stock + inTransit;
-      let restockQty = Math.max(0, Math.ceil(targetStock - totalAvailable));
+      const restockQty = Math.max(0, Math.ceil(targetStock - totalAvailable));
       
-      // Rounding logic: Round up to the nearest multiple of 5 to optimize shipping
-      if (restockQty > 0) {
-        restockQty = Math.ceil(restockQty / 5) * 5;
-      }
-
       // Calculate Days of Inventory (DOI)
       const doi = avgDailySales > 0 ? product.stock / avgDailySales : (product.stock > 0 ? 999 : 0);
 
