@@ -35,7 +35,8 @@ interface DataContextType {
 const DataContext = createContext<DataContextType | undefined>(undefined);
 
 export function DataProvider({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
+  const { user, role } = useAuth();
+  const isAdmin = role === 'admin';
   const [inventory, setInventory] = useState<Product[]>([]);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [returns, setReturns] = useState<ReturnRecord[]>([]);
@@ -80,11 +81,27 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     try {
       // Fetch initial data using getDocs for better control over quota usage
+      const inventoryQuery = isAdmin 
+        ? query(collection(db, 'inventory'), limit(500)) 
+        : query(collection(db, 'inventory'), where('userId', '==', user.uid), limit(300));
+        
+      const ordersQuery = isAdmin
+        ? query(collection(db, 'orders'), orderBy('processedAt', 'desc'), limit(200))
+        : query(collection(db, 'orders'), where('userId', '==', user.uid), orderBy('processedAt', 'desc'), limit(150));
+        
+      const returnsQuery = isAdmin
+        ? query(collection(db, 'returns'), orderBy('returnedAt', 'desc'), limit(100))
+        : query(collection(db, 'returns'), where('userId', '==', user.uid), orderBy('returnedAt', 'desc'), limit(100));
+        
+      const problematicQuery = isAdmin
+        ? query(collection(db, 'problematic_orders'), orderBy('updatedAt', 'desc'), limit(50))
+        : query(collection(db, 'problematic_orders'), where('userId', '==', user.uid), orderBy('updatedAt', 'desc'), limit(50));
+
       const [inventorySnap, ordersSnap, returnsSnap, problematicSnap, configSnap, globalConfigSnap] = await Promise.all([
-        getDocs(query(collection(db, 'inventory'), where('userId', '==', user.uid), limit(300))),
-        getDocs(query(collection(db, 'orders'), where('userId', '==', user.uid), orderBy('processedAt', 'desc'), limit(150))),
-        getDocs(query(collection(db, 'returns'), where('userId', '==', user.uid), orderBy('returnedAt', 'desc'), limit(100))),
-        getDocs(query(collection(db, 'problematic_orders'), where('userId', '==', user.uid), orderBy('updatedAt', 'desc'), limit(50))),
+        getDocs(inventoryQuery),
+        getDocs(ordersQuery),
+        getDocs(returnsQuery),
+        getDocs(problematicQuery),
         getDoc(doc(db, 'profit_configs', user.uid)),
         getDoc(doc(db, 'global_configs', 'settings'))
       ]);

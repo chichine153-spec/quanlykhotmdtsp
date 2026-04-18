@@ -143,17 +143,17 @@ export default function RePrintModule() {
           
           const querySnap = await getDocs(fsQuery);
           const firestoreOrders = querySnap.docs.map(doc => {
-            const data = doc.data();
+            const data = doc.data() as any;
             return {
               id: doc.id,
               tracking_number: data.trackingCode,
               product_name: Array.isArray(data.items) 
                 ? data.items.map((i: any) => `${i.sku} (${i.quantity})`).join(', ')
                 : 'Đơn hàng (Bóc tách)',
-              image_url: data.pdfUrl || '',
+              image_url: data.image_url || data.pdfUrl || '',
               is_cup: false,
               created_at: data.processedAt,
-              user_id: user.uid
+              user_id: data.userId || user.uid
             } as PrintHistoryRecord;
           });
           
@@ -644,20 +644,23 @@ export function ThermalLabel({ order }: { order: any }) {
   const timeStr = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 
   // If there's an original image scan, use it!
-  const hasImage = order.image_url || order.pdfUrl;
+  const imageSource = order.image_url || order.pdfUrl;
+  const isImage = imageSource && (
+    imageSource.match(/\.(jpeg|jpg|gif|png|webp)/i) || 
+    imageSource.includes('supabase.co/storage/v1/object/public') ||
+    imageSource.startsWith('data:image/')
+  );
   
-  if (hasImage) {
-    const imageUrl = order.image_url || order.pdfUrl;
+  if (isImage) {
     return (
-      <div className="thermal-label-container bg-white flex items-center justify-center" style={{ width: '100mm', height: '150mm' }}>
+      <div className="thermal-label-container bg-white flex items-center justify-center p-0 overflow-hidden" style={{ width: '100mm', height: '150mm' }}>
         <img 
-          src={imageUrl} 
+          src={imageSource} 
           alt="Original Shipping Label" 
-          className="w-[98%] h-[98%] object-contain"
+          className="w-[100%] h-[100%] object-contain"
           referrerPolicy="no-referrer"
           onError={(e) => {
             console.error('Image load error in ThermalLabel');
-            // We can't really fall back here easily without state, but logging helps
           }}
         />
         <style>
@@ -671,10 +674,12 @@ export function ThermalLabel({ order }: { order: any }) {
                 display: flex !important;
                 align-items: center !important;
                 justify-content: center !important;
+                padding: 0 !important;
+                margin: 0 !important;
               }
               img { 
-                width: 98% !important; 
-                height: 98% !important; 
+                width: 100% !important; 
+                height: 100% !important; 
                 display: block !important; 
                 object-fit: contain !important;
               }

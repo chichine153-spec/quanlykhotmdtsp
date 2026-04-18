@@ -36,7 +36,7 @@ interface PDFUploadProps {
 
 export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
   const { user, login, role } = useAuth();
-  const { inventory, config: dataConfig, globalConfig, orders: allOrders, loading: dataLoading } = useData();
+  const { inventory, config: dataConfig, globalConfig, orders: allOrders, loading: dataLoading, refreshData } = useData();
   const [isUploading, setIsUploading] = React.useState(false);
   const [progress, setProgress] = React.useState(0);
   const progressRef = React.useRef(0);
@@ -67,6 +67,24 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
   const [showPrintTemplate, setShowPrintTemplate] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [isInventoryEmpty, setIsInventoryEmpty] = React.useState(false);
+
+  // Auto-refresh when printing modal opens to catch background image_url updates
+  React.useEffect(() => {
+    if (showPrintTemplate && selectedOrderToPrint) {
+      const refetch = async () => {
+        try {
+          const docRef = doc(db, 'orders', selectedOrderToPrint.trackingCode || selectedOrderToPrint.id);
+          const snap = await getDoc(docRef);
+          if (snap.exists()) {
+            setSelectedOrderToPrint({ id: snap.id, ...snap.data() } as OrderRecord);
+          }
+        } catch (e) {
+          console.error("[PDFUpload] Refetch for print failed", e);
+        }
+      };
+      refetch();
+    }
+  }, [showPrintTemplate]);
   const [profitConfig, setProfitConfig] = React.useState<any>(null);
   const [toasts, setToasts] = React.useState<{ id: string, message: string, type: 'success' | 'error' | 'info' }[]>([]);
   const abortControllerRef = React.useRef<boolean>(false);
@@ -539,6 +557,11 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
       } else {
         setStatus('success');
       }
+      
+      // Auto-refresh data to get image_urls from background tasks
+      setTimeout(() => {
+        refreshData();
+      }, 5000);
     } catch (err: any) {
       console.error('Batch processing fatal error:', err);
       setError(`Lỗi hệ thống: ${err.message}`);

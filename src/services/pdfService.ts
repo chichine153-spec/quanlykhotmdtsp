@@ -456,16 +456,24 @@ export class PDFService {
             // 4. ALSO update the main Firestore 'orders' collection if possible
             // This ensures "Tra cứu" via Firestore fallback also gets the image_url
             try {
-              const ordersQuery = query(
-                collection(db, 'orders'), 
-                where('userId', '==', userId),
-                where('trackingCode', '==', matchingOrder.trackingCode)
-              );
-              const orderDocs = await getDocs(ordersQuery);
-              if (!orderDocs.empty) {
-                const orderRef = doc(db, 'orders', orderDocs.docs[0].id);
+              const orderRef = doc(db, 'orders', matchingOrder.trackingCode);
+              const orderDoc = await getDoc(orderRef);
+              
+              if (orderDoc.exists()) {
                 await updateDoc(orderRef, { image_url: publicUrl });
                 console.log(`[PDFService] Updated Firestore order ${matchingOrder.trackingCode} with image_url.`);
+              } else {
+                // Try searching by trackingCode field if ID is different
+                const ordersQuery = query(
+                  collection(db, 'orders'), 
+                  where('trackingCode', '==', matchingOrder.trackingCode)
+                );
+                const orderDocs = await getDocs(ordersQuery);
+                if (!orderDocs.empty) {
+                  const firstDocRef = doc(db, 'orders', orderDocs.docs[0].id);
+                  await updateDoc(firstDocRef, { image_url: publicUrl });
+                  console.log(`[PDFService] Updated Firestore order ${matchingOrder.trackingCode} (via query) with image_url.`);
+                }
               }
             } catch (fsErr) {
               console.error(`[PDFService] Failed to update Firestore order with image_url:`, fsErr);
