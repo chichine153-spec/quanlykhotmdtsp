@@ -28,6 +28,13 @@ export default function App() {
 
   const isValid = isSubscriptionValid();
   
+  // Force upgrade screen if not valid and not admin
+  React.useEffect(() => {
+    if (user && !isValid && role !== 'admin') {
+      setActiveScreen('upgrade');
+    }
+  }, [user, isValid, role]);
+
   // Automatic cleanup of expired data on app load - only once per session
   React.useEffect(() => {
     if (!user) return;
