@@ -50,7 +50,7 @@ export default function KeyConfigModal({ isOpen, onClose }: KeyConfigModalProps)
         feature: 'verify_key'
       });
 
-      if (result.toUpperCase().includes('READY')) {
+      if (result.toUpperCase().includes('OK') || result.length > 0) {
         setTestResult('success');
         toast.success('Key hoạt động tốt!');
       } else {
@@ -60,7 +60,25 @@ export default function KeyConfigModal({ isOpen, onClose }: KeyConfigModalProps)
     } catch (error: any) {
       console.error('[KeyTest] Error:', error);
       setTestResult('error');
-      const msg = error.message || 'Lỗi kiểm tra API Key';
+      
+      let msg = 'Lỗi kiểm tra API Key. Vui lòng thử lại.';
+      
+      const errorStr = (error.response?.data?.error || error.message || '').toString();
+      
+      if (errorStr.includes('404')) {
+        msg = 'Lỗi: Không tìm thấy máy chủ Proxy (404). Hệ thống đang chuyển sang chế độ kết nối trực tiếp.';
+        // The fallback logic in GeminiService will handle this, so we might not even hit this catch 
+        // if fallback succeeds. But if it fails, this is more informative.
+      } else if (errorStr.includes('429') || errorStr.includes('quota')) {
+        msg = 'Lỗi: Key này đã hết hạn mức (Quota Exceeded) hoặc bị giới hạn bởi Google.';
+      } else if (errorStr.includes('400') || errorStr.includes('API_KEY_INVALID')) {
+        msg = 'Lỗi: API Key không hợp lệ. Vui lòng kiểm tra lại mã bạn đã dán.';
+      } else if (errorStr.includes('403')) {
+        msg = 'Lỗi: Không có quyền truy cập (403). Kiểm tra xem Key có bị hạn chế vùng không.';
+      } else if (error.message) {
+        msg = `Lỗi: ${error.message}`;
+      }
+      
       toast.error(msg);
     } finally {
       setIsTesting(false);

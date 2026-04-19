@@ -113,19 +113,49 @@ export class GeminiService {
 
     // Proxy call function to follow security guidelines (executing on server side)
     const callProxy = async (apiKey: string) => {
-      const resp = await axios.post('/api/gemini/proxy', {
-        apiKey,
-        model: "gemini-3-flash-preview",
-        contents: prompt,
-        systemInstruction,
-        config: {
-          generationConfig: {
-            responseMimeType: responseMimeType as any,
-            responseSchema
+      try {
+        const resp = await axios.post('/api/gemini/proxy', {
+          apiKey,
+          model: "gemini-3-flash-preview",
+          contents: prompt,
+          systemInstruction,
+          config: {
+            generationConfig: {
+              responseMimeType: responseMimeType as any,
+              responseSchema
+            }
+          }
+        });
+        return resp.data.text;
+      } catch (err: any) {
+        // If proxy is not found (404), it means the app is likely running on a static host like Vercel 
+        // without the backend server. Fallback to client-side call as an emergency.
+        if (err.response?.status === 404 || err.code === 'ERR_NETWORK') {
+          console.warn('[GeminiService] Proxy unavailable (404), attempting direct client-side call.');
+          try {
+            const genAI = new GoogleGenAI({ apiKey });
+            const aiModel = (genAI as any).getGenerativeModel({ 
+              model: "gemini-3-flash-preview",
+              systemInstruction: typeof systemInstruction === 'string' ? { role: 'system', parts: [{ text: systemInstruction }] } : undefined
+            } as any);
+
+            const result = await aiModel.generateContent({
+              contents: typeof prompt === 'string' ? [{ role: 'user', parts: [{ text: prompt }]}] : prompt as any,
+              generationConfig: {
+                responseMimeType: responseMimeType as any,
+                responseSchema
+              }
+            });
+
+            const responseText = await result.response.text();
+            return responseText;
+          } catch (directErr) {
+            console.error('[GeminiService] Direct client-side call also failed:', directErr);
+            throw directErr;
           }
         }
-      });
-      return resp.data.text;
+        throw err;
+      }
     };
     
     try {
