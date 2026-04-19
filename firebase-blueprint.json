@@ -151,6 +151,22 @@
         "updatedAt": { "type": "string", "format": "date-time" },
         "updatedBy": { "type": "string" }
       }
+    },
+    "Reconciliation": {
+      "title": "Reconciliation",
+      "description": "A record matching carrier payment with system order.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "trackingCode": { "type": "string" },
+        "carrierAmount": { "type": "number" },
+        "systemAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["matched", "discrepancy", "pending_cod", "late_payment"] },
+        "carrier": { "type": "string" },
+        "reconciledAt": { "type": "string", "format": "date-time" },
+        "deliveredAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "trackingCode", "status", "reconciledAt"]
     }
   },
   "firestore": {
@@ -201,6 +217,10 @@
     "/global_configs/{configId}": {
       "schema": "GlobalConfig",
       "description": "Shared system settings managed by Admin."
+    },
+    "/reconciliations/{reconciliationId}": {
+      "schema": "Reconciliation",
+      "description": "COD reconciliation records."
     }
   }
 }

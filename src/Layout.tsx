@@ -17,7 +17,12 @@ import {
   Users,
   ShieldCheck,
   ArrowDownCircle,
-  Key
+  Key,
+  ArrowRightLeft,
+  Sparkles,
+  Truck,
+  ChevronDown,
+  ChevronRight as ChevronRightIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -44,6 +49,7 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = React.useState(false);
   const [isKeyModalOpen, setIsKeyModalOpen] = React.useState(false);
+  const [expandedMenus, setExpandedMenus] = React.useState<string[]>(['logistics']);
   const { user, login, logout, error, clearError, role, status, expiryDate, isSubscriptionValid } = useAuth();
   const { refreshData, lastUpdated, loading, quotaExceeded: dataQuotaExceeded } = useData();
   const [isRefreshing, setIsRefreshing] = React.useState(false);
@@ -95,9 +101,18 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
     { id: 'dashboard', label: 'Bảng điều khiển', icon: LayoutDashboard },
     { id: 'upload', label: 'Tải lên PDF', icon: UploadCloud },
     { id: 'inventory', label: 'Kho hàng', icon: Package },
-    { id: 'intransit', label: 'Hàng đang về', icon: ArrowDownCircle },
-    { id: 'stockin', label: 'Nhập kho hàng về', icon: Search },
+    { 
+      id: 'logistics', 
+      label: 'Quản lý nhập hàng', 
+      icon: Truck,
+      children: [
+        { id: 'intransit', label: 'Hàng đang về', icon: ArrowDownCircle },
+        { id: 'stockin', label: 'Nhập kho hàng về', icon: Search },
+      ]
+    },
     { id: 'returns', label: 'Hàng Hoàn', icon: RotateCcw },
+    { id: 'reconciliation', label: 'Đối soát COD', icon: ArrowRightLeft },
+    { id: 'ai-marketing', label: 'AI Marketing', icon: Sparkles },
     { id: 'reprint', label: 'In lại đơn hàng', icon: RotateCcw },
     { id: 'profit', label: 'Báo cáo lợi nhuận', icon: TrendingUp },
   ];
@@ -274,28 +289,83 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
           </div>
         </div>
 
-        <nav className="flex flex-col gap-2 flex-grow">
-          {filteredNavItems.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => onScreenChange(item.id as Screen)}
-              className={`flex items-center justify-between px-4 py-3 rounded-xl transition-all font-medium text-sm tracking-tight ${
-                activeScreen === item.id 
-                  ? 'bg-primary text-white shadow-lg shadow-primary/20' 
-                  : 'text-secondary hover:bg-surface-container hover:translate-x-1'
-              }`}
-            >
-              <div className="flex items-center gap-4">
-                <item.icon size={20} />
-                <span>{item.label}</span>
+        <nav className="flex flex-col gap-1 flex-grow overflow-y-auto pr-2 custom-scrollbar">
+          {filteredNavItems.map((item: any) => {
+            const hasChildren = item.children && item.children.length > 0;
+            const isExpanded = expandedMenus.includes(item.id);
+            const isChildActive = hasChildren && item.children.some((c: any) => c.id === activeScreen);
+            const isActive = activeScreen === item.id || isChildActive;
+
+            return (
+              <div key={item.id} className="flex flex-col gap-1">
+                <button
+                  onClick={() => {
+                    if (hasChildren) {
+                      setExpandedMenus(prev => 
+                        prev.includes(item.id) 
+                          ? prev.filter(id => id !== item.id) 
+                          : [...prev, item.id]
+                      );
+                    } else {
+                      onScreenChange(item.id as Screen);
+                    }
+                  }}
+                  className={`flex items-center justify-between px-4 py-3 rounded-xl transition-all font-medium text-sm tracking-tight ${
+                    isActive 
+                      ? 'bg-primary text-white shadow-lg shadow-primary/20' 
+                      : 'text-secondary hover:bg-surface-container hover:translate-x-1'
+                  }`}
+                >
+                  <div className="flex items-center gap-4">
+                    <item.icon size={20} />
+                    <span>{item.label}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {item.id === 'accounts' && pendingPayments > 0 && (
+                      <span className="flex h-5 w-5 rounded-full bg-error text-[10px] text-white items-center justify-center animate-pulse">
+                        {pendingPayments}
+                      </span>
+                    )}
+                    {hasChildren && (
+                      <motion.div
+                        animate={{ rotate: isExpanded ? 180 : 0 }}
+                        transition={{ duration: 0.2 }}
+                      >
+                        <ChevronDown size={16} />
+                      </motion.div>
+                    )}
+                  </div>
+                </button>
+
+                {/* Submenu */}
+                <AnimatePresence>
+                  {hasChildren && isExpanded && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden flex flex-col gap-1 pl-12"
+                    >
+                      {item.children.map((child: any) => (
+                        <button
+                          key={child.id}
+                          onClick={() => onScreenChange(child.id as Screen)}
+                          className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all text-xs font-bold ${
+                            activeScreen === child.id
+                              ? 'text-primary bg-primary/10'
+                              : 'text-secondary hover:bg-surface-container'
+                          }`}
+                        >
+                          <child.icon size={16} />
+                          <span>{child.label}</span>
+                        </button>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
-              {item.id === 'accounts' && pendingPayments > 0 && (
-                <span className="flex h-5 w-5 rounded-full bg-error text-[10px] text-white items-center justify-center animate-pulse">
-                  {pendingPayments}
-                </span>
-              )}
-            </button>
-          ))}
+            );
+          })}
         </nav>
 
         <div className="mt-auto pt-6 border-t border-surface-container">
@@ -343,24 +413,80 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
                   <X size={20} />
                 </button>
               </div>
-              <nav className="flex flex-col gap-2">
-                {filteredNavItems.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => {
-                      onScreenChange(item.id as Screen);
-                      setIsSidebarOpen(false);
-                    }}
-                    className={`flex items-center gap-4 px-4 py-3 rounded-xl transition-all font-medium text-sm ${
-                      activeScreen === item.id 
-                        ? 'bg-primary text-white shadow-lg' 
-                        : 'text-secondary hover:bg-surface-container'
-                    }`}
-                  >
-                    <item.icon size={20} />
-                    <span>{item.label}</span>
-                  </button>
-                ))}
+              <nav className="flex flex-col gap-1 overflow-y-auto">
+                {filteredNavItems.map((item: any) => {
+                  const hasChildren = item.children && item.children.length > 0;
+                  const isExpanded = expandedMenus.includes(item.id);
+                  const isChildActive = hasChildren && item.children.some((c: any) => c.id === activeScreen);
+                  const isActive = activeScreen === item.id || isChildActive;
+
+                  return (
+                    <div key={item.id} className="flex flex-col gap-1">
+                      <button
+                        onClick={() => {
+                          if (hasChildren) {
+                            setExpandedMenus(prev => 
+                              prev.includes(item.id) 
+                                ? prev.filter(id => id !== item.id) 
+                                : [...prev, item.id]
+                            );
+                          } else {
+                            onScreenChange(item.id as Screen);
+                            setIsSidebarOpen(false);
+                          }
+                        }}
+                        className={`flex items-center justify-between px-4 py-3 rounded-xl transition-all font-medium text-sm ${
+                          isActive 
+                            ? 'bg-primary text-white shadow-lg' 
+                            : 'text-secondary hover:bg-surface-container'
+                        }`}
+                      >
+                        <div className="flex items-center gap-4">
+                          <item.icon size={20} />
+                          <span>{item.label}</span>
+                        </div>
+                        {hasChildren && (
+                          <motion.div
+                            animate={{ rotate: isExpanded ? 180 : 0 }}
+                            transition={{ duration: 0.2 }}
+                          >
+                            <ChevronDown size={16} />
+                          </motion.div>
+                        )}
+                      </button>
+
+                      {/* Submenu */}
+                      <AnimatePresence>
+                        {hasChildren && isExpanded && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="overflow-hidden flex flex-col gap-1 pl-10"
+                          >
+                            {item.children.map((child: any) => (
+                              <button
+                                key={child.id}
+                                onClick={() => {
+                                  onScreenChange(child.id as Screen);
+                                  setIsSidebarOpen(false);
+                                }}
+                                className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all text-xs font-bold ${
+                                  activeScreen === child.id
+                                    ? 'text-primary bg-primary/10'
+                                    : 'text-secondary hover:bg-surface-container'
+                                }`}
+                              >
+                                <child.icon size={16} />
+                                <span>{child.label}</span>
+                              </button>
+                            ))}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  );
+                })}
               </nav>
             </motion.aside>
           </>
@@ -376,20 +502,38 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
 
       {/* Mobile Bottom Nav */}
       <nav className="lg:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center h-20 px-6 pb-2 bg-white/60 backdrop-blur-xl rounded-t-3xl shadow-[0_-4px_20px_rgba(0,0,0,0.05)] no-print">
-        {filteredNavItems.slice(0, 5).map((item) => (
-          <button
-            key={item.id}
-            onClick={() => onScreenChange(item.id as Screen)}
-            className={`flex flex-col items-center justify-center transition-all active:scale-90 ${
-              activeScreen === item.id ? 'text-primary' : 'text-secondary'
-            }`}
-          >
-            <item.icon size={20} />
-            <span className="text-[10px] font-bold uppercase tracking-widest mt-1">
-              {item.id === 'returns' ? 'Trả hàng' : item.id === 'stockin' ? 'Nhập kho' : item.id === 'upload' ? 'Upload' : item.id === 'inventory' ? 'Kho' : item.id === 'profit' ? 'Lợi nhuận' : item.id === 'upgrade' ? 'Nâng cấp' : 'Home'}
-            </span>
-          </button>
-        ))}
+        {filteredNavItems.slice(0, 5).map((item: any) => {
+          const hasChildren = item.children && item.children.length > 0;
+          const isChildActive = hasChildren && item.children.some((c: any) => c.id === activeScreen);
+          const isActive = activeScreen === item.id || isChildActive;
+
+          return (
+            <button
+              key={item.id}
+              onClick={() => {
+                if (hasChildren) {
+                  // If it has children, just toggle sidebar or go to first child
+                  onScreenChange(item.children[0].id as Screen);
+                } else {
+                  onScreenChange(item.id as Screen);
+                }
+              }}
+              className={`flex flex-col items-center justify-center transition-all active:scale-90 ${
+                isActive ? 'text-primary' : 'text-secondary'
+              }`}
+            >
+              <item.icon size={20} />
+              <span className="text-[10px] font-bold uppercase tracking-widest mt-1">
+                {item.id === 'returns' ? 'Trả hàng' : 
+                 item.id === 'logistics' ? 'Nhập hàng' : 
+                 item.id === 'upload' ? 'Upload' : 
+                 item.id === 'inventory' ? 'Kho' : 
+                 item.id === 'profit' ? 'Lợi nhuận' : 
+                 item.id === 'upgrade' ? 'Nâng cấp' : 'Home'}
+              </span>
+            </button>
+          );
+        })}
       </nav>
 
       {/* Footer */}

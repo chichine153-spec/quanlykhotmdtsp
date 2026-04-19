@@ -4,6 +4,7 @@ import {
   where, 
   getDocs, 
   addDoc, 
+  setDoc,
   serverTimestamp, 
   doc, 
   updateDoc, 
@@ -71,14 +72,24 @@ export class ReturnService {
         variant: item.variant || '',
         quantity: item.quantity,
         productName: item.productName || '',
-        productId: item.productId || ''
+        productId: item.productId || '',
+        sellingPrice: item.sellingPrice || 0,
+        costPrice: item.costPrice || 0
       }))
     };
 
     await runTransaction(db, async (transaction) => {
       // 1. ALL READS FIRST
-      const orderRef = doc(db, 'orders', order.trackingCode);
-      const orderSnap = await transaction.get(orderRef);
+      // Try orderRef by trackingCode ID
+      let orderRef = doc(db, 'orders', order.trackingCode);
+      let orderSnap = await transaction.get(orderRef);
+
+      // If not found by ID (sometimes it might be a random ID), search via query but in transaction we must use doc refs
+      // To keep it simple, we expect order.id to be the doc ID if searchOrder found it
+      if (order.id && order.id !== order.trackingCode) {
+        orderRef = doc(db, 'orders', order.id);
+        orderSnap = await transaction.get(orderRef);
+      }
 
       const productSnaps: Record<string, any> = {};
       for (const item of order.items) {
@@ -96,23 +107,39 @@ export class ReturnService {
         createdAt: serverTimestamp()
       });
 
-      // Update inventory for each item
+      // Update inventory and log for each item
       for (const item of order.items) {
         if (item.productId) {
           const snap = productSnaps[item.productId];
           if (snap && snap.exists()) {
             transaction.update(snap.ref, {
-              stock: increment(item.quantity)
+              stock: increment(item.quantity),
+              updatedAt: new Date().toISOString()
+            });
+
+            // Log the return entry
+            const logRef = doc(collection(db, 'inventory_logs'));
+            transaction.set(logRef, {
+              userId,
+              sku: item.sku,
+              productName: item.productName || 'Hàng hoàn',
+              variant: item.variant || '',
+              change: item.quantity,
+              type: 'addition',
+              trackingCode: order.trackingCode,
+              timestamp: serverTimestamp(),
+              details: `Nhập hàng hoàn từ mã ${order.trackingCode}`
             });
           }
         }
       }
 
-      // Update order status to "Đã hoàn về kho"
+      // Update order status to "Returned"
       if (orderSnap.exists()) {
         transaction.update(orderRef, {
           status: 'returned',
-          returnStatus: 'Đã hoàn về kho'
+          returnStatus: 'Đã hoàn về kho',
+          updatedAt: new Date().toISOString()
         });
       }
     });
@@ -252,6 +279,37 @@ export class ReturnService {
     } catch (error) {
       console.error('Clear All Returns Error:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Submit a dispute for a returned order
+   */
+  static async submitDispute(data: {
+    userId: string;
+    trackingCode: string;
+    description: string;
+    images: string[];
+    orderId?: string;
+  }) {
+    const disputeRef = doc(collection(db, 'disputes'));
+    await setDoc(disputeRef, {
+      ...data,
+      status: 'pending',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+
+    // Update order or return record if needed
+    if (data.trackingCode) {
+      const q = query(collection(db, 'returns'), where('trackingCode', '==', data.trackingCode), limit(1));
+      const res = await getDocs(q);
+      if (!res.empty) {
+        await updateDoc(res.docs[0].ref, {
+          hasDispute: true,
+          updatedAt: serverTimestamp()
+        });
+      }
     }
   }
 }

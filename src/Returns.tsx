@@ -38,6 +38,9 @@ export default function Returns() {
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
   const [showClearAllConfirm, setShowClearAllConfirm] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
+  const [isDisputeModalOpen, setIsDisputeModalOpen] = React.useState(false);
+  const [disputeData, setDisputeData] = React.useState({ description: '', images: [] as string[] });
+  const [isSubmittingDispute, setIsSubmittingDispute] = React.useState(false);
 
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -57,7 +60,7 @@ export default function Returns() {
       const order = await ReturnService.searchOrder(code, user.uid);
       
       if (!order) {
-        addToast('Không tìm thấy đơn hàng này trong hệ thống.', 'error');
+        addToast('Mã vận đơn không tồn tại trong hệ thống, vui lòng kiểm tra lại.', 'error');
         setCurrentOrder(null);
       } else {
         addToast('Đã tìm thấy đơn hàng!', 'success');
@@ -86,6 +89,39 @@ export default function Returns() {
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const handleDisputeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentOrder || !user) return;
+
+    setIsSubmittingDispute(true);
+    try {
+      await ReturnService.submitDispute({
+        userId: user.uid,
+        trackingCode: currentOrder.trackingCode,
+        description: disputeData.description,
+        images: disputeData.images,
+        orderId: currentOrder.id
+      });
+      addToast('Đã gửi khiếu nại thành công!', 'success');
+      setIsDisputeModalOpen(false);
+      setDisputeData({ description: '', images: [] });
+    } catch (error) {
+      console.error('Dispute Error:', error);
+      addToast('Lỗi khi gửi khiếu nại.', 'error');
+    } finally {
+      setIsSubmittingDispute(false);
+    }
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    // For demo, we just create object URLs
+    const newImages = Array.from(files).map(file => URL.createObjectURL(file));
+    setDisputeData(prev => ({ ...prev, images: [...prev.images, ...newImages] }));
   };
 
   const handleDeleteReturn = async () => {
@@ -196,8 +232,10 @@ export default function Returns() {
               <p className="text-2xl font-black text-tertiary">{returnsHistory.length}</p>
             </div>
             <div className="bg-surface-container-high/40 rounded-2xl p-4 text-center">
-              <p className="text-[10px] text-secondary font-bold uppercase mb-1">Chờ duyệt</p>
-              <p className="text-2xl font-black text-primary">0</p>
+              <p className="text-[10px] text-secondary font-bold uppercase mb-1">Khiếu nại</p>
+              <p className="text-2xl font-black text-primary">
+                {returnsHistory.filter(r => r.hasDispute).length}
+              </p>
             </div>
           </div>
         </section>
@@ -271,7 +309,11 @@ export default function Returns() {
 
           {/* Secondary Actions */}
           <div className="grid grid-cols-2 gap-4">
-            <button className="bg-surface-container-lowest py-4 rounded-2xl text-secondary font-bold text-xs uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-slate-100 transition-colors border border-surface-container">
+            <button 
+              onClick={() => setIsDisputeModalOpen(true)}
+              disabled={!currentOrder}
+              className="bg-surface-container-lowest py-4 rounded-2xl text-secondary font-bold text-xs uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-slate-100 transition-colors border border-surface-container disabled:opacity-50"
+            >
               <AlertCircle size={16} /> Khiếu nại
             </button>
             <button className="bg-surface-container-lowest py-4 rounded-2xl text-secondary font-bold text-xs uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-slate-100 transition-colors border border-surface-container">
@@ -354,13 +396,18 @@ export default function Returns() {
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <button 
-                        onClick={() => setConfirmDeleteId(record.id)}
-                        className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition-all"
-                        title="Xoá bản ghi"
-                      >
-                        <Trash2 size={18} />
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        {record.hasDispute && (
+                          <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-1 rounded-full uppercase">Đang khiếu nại</span>
+                        )}
+                        <button 
+                          onClick={() => setConfirmDeleteId(record.id)}
+                          className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                          title="Xoá bản ghi"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -465,6 +512,84 @@ export default function Returns() {
                   {isDeleting ? <Loader2 className="animate-spin" size={18} /> : 'Xác nhận xoá tất cả'}
                 </button>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Dispute Modal */}
+      <AnimatePresence>
+        {isDisputeModalOpen && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm no-print">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl border border-surface-container"
+            >
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-black text-on-surface uppercase tracking-tight font-headline">Khiếu nại hàng hoàn</h3>
+                <button onClick={() => setIsDisputeModalOpen(false)} className="text-secondary hover:text-on-surface">
+                  <PlusCircle className="rotate-45" size={24} />
+                </button>
+              </div>
+
+              <form onSubmit={handleDisputeSubmit} className="space-y-6">
+                <div>
+                  <label className="text-[10px] font-bold text-secondary uppercase tracking-widest block mb-2">Đơn hàng</label>
+                  <p className="font-mono font-bold text-primary">#{currentOrder?.trackingCode}</p>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-secondary uppercase tracking-widest block mb-2">Lý do & Mô tả hư hỏng</label>
+                  <textarea 
+                    required
+                    value={disputeData.description}
+                    onChange={(e) => setDisputeData(prev => ({ ...prev, description: e.target.value }))}
+                    className="w-full bg-surface-container-low border-none rounded-2xl p-4 text-sm focus:ring-2 ring-primary min-h-[120px]"
+                    placeholder="Mô tả chi tiết tình trạng sản phẩm khi nhận lại..."
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-secondary uppercase tracking-widest block mb-2">Hình ảnh bằng chứng</label>
+                  <div className="grid grid-cols-4 gap-2 mb-3">
+                    {disputeData.images.map((src, i) => (
+                      <div key={i} className="aspect-square rounded-lg bg-surface-container-high overflow-hidden border border-surface-container relative">
+                        <img src={src} alt="Evidence" className="w-full h-full object-cover" />
+                        <button 
+                          type="button"
+                          onClick={() => setDisputeData(prev => ({ ...prev, images: prev.images.filter((_, idx) => idx !== i) }))}
+                          className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-1"
+                        >
+                          <PlusCircle className="rotate-45" size={12} />
+                        </button>
+                      </div>
+                    ))}
+                    <label className="aspect-square rounded-lg bg-surface-container-low border-2 border-dashed border-surface-container flex items-center justify-center text-secondary cursor-pointer hover:border-primary transition-colors">
+                      <PlusCircle size={20} />
+                      <input type="file" multiple accept="image/*" onChange={handleImageUpload} className="hidden" />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <button 
+                    type="button"
+                    onClick={() => setIsDisputeModalOpen(false)}
+                    className="flex-1 px-4 py-4 rounded-2xl font-bold text-secondary hover:bg-surface-container transition-all"
+                  >
+                    Hủy
+                  </button>
+                  <button 
+                    type="submit"
+                    disabled={isSubmittingDispute}
+                    className="flex-2 px-8 py-4 rounded-2xl font-bold bg-amber-500 text-white hover:bg-amber-600 transition-all flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 disabled:opacity-50"
+                  >
+                    {isSubmittingDispute ? <Loader2 className="animate-spin" size={24} /> : 'Gửi khiếu nại'}
+                  </button>
+                </div>
+              </form>
             </motion.div>
           </div>
         )}

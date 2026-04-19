@@ -262,8 +262,19 @@ export class ProfitService {
     });
     
     filteredReturns.forEach(ret => {
-      const returnRevenue = ret.items.reduce((sum, item) => sum + (item.sellingPrice * item.quantity), 0);
+      const returnRevenue = ret.items.reduce((sum, item) => sum + ((item.sellingPrice || 0) * (item.quantity || 0)), 0);
+      const returnCost = ret.items.reduce((sum, item) => sum + ((item.costPrice || 0) * (item.quantity || 0)), 0);
+      
       revenue -= returnRevenue;
+      costOfGoods -= returnCost;
+
+      // Adjust fees if possible (assuming similar fee structure)
+      ret.items.forEach(item => {
+        const feePercent = this.getPlatformFeePercent(item.sku, item.productName || '', config);
+        const taxPercent = config?.taxPercent || 1.5;
+        platformFees -= (item.sellingPrice * (feePercent / 100)) * item.quantity;
+        taxFees -= (item.sellingPrice * (taxPercent / 100)) * item.quantity;
+      });
     });
 
     const packagingFees = filteredOrders.reduce((sum, o) => {

@@ -1,4 +1,16 @@
-export type Screen = 'dashboard' | 'upload' | 'inventory' | 'returns' | 'stockin' | 'intransit' | 'profit' | 'success' | 'reprint' | 'accounts' | 'upgrade' | 'settings' | 'admin-master';
+export type Screen = 'dashboard' | 'upload' | 'inventory' | 'returns' | 'stockin' | 'intransit' | 'profit' | 'reconciliation' | 'ai-marketing' | 'success' | 'reprint' | 'accounts' | 'upgrade' | 'settings' | 'admin-master';
+
+export interface ReconciliationRecord {
+  id: string;
+  userId: string;
+  trackingCode: string;
+   carrierAmount: number; // Amount reported by carrier
+  systemAmount: number; // Amount in our system
+  status: 'matched' | 'discrepancy' | 'pending_cod' | 'late_payment';
+  carrier: string;
+  reconciledAt: string;
+  deliveredAt?: string;
+}
 
 export interface UserProfile {
   uid: string;
@@ -70,6 +82,8 @@ export interface Order {
   platformFee?: number;
   taxFee?: number;
   packagingFee?: number;
+  processedAt?: string;
+  deliveredAt?: string;
 }
 
 export type TrackingStatus = 'delivered' | 'shipping' | 'returned' | 'problematic' | 'pending';
@@ -104,11 +118,13 @@ export interface ReturnRecord {
   trackingCode: string;
   returnedAt: string;
   reason: string;
+  hasDispute?: boolean;
   items: {
     sku: string;
     variant: string;
     quantity: number;
     sellingPrice?: number;
+    costPrice?: number;
     productName?: string;
     productId?: string;
   }[];
