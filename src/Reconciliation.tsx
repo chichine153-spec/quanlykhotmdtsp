@@ -63,10 +63,26 @@ const Reconciliation: React.FC = () => {
     
     try {
       const jsonData = await ReconciliationService.parseCarrierReport(file);
-      if (jsonData.length === 0) throw new Error("File trống hoặc định dạng không đúng.");
+      if (jsonData.length === 0) throw new Error("File trống hoặc định dạng không đúng. Hãy kiểm tra lại cột tiêu đề (Mã đơn hàng, Số tiền...).");
       
-      const results = await ReconciliationService.reconcile(user.uid, jsonData);
-      toast.success(`Đã đối soát ${results.length} mã vận đơn!`, { id: toastId });
+      const { results, saveError } = await ReconciliationService.reconcile(user.uid, jsonData);
+      
+      if (results.length === 0) {
+        toast.error("Không tìm thấy dòng dữ liệu hợp lệ trong file.", { id: toastId });
+        return;
+      }
+
+      setHistory(prev => [...results, ...prev]);
+      
+      if (saveError) {
+        toast.success(`Đã hiển thị ${results.length} mã, nhưng KHÔNG THỂ LƯU vào lịch sử do hệ thống hết hạn mức (Quota Exceeded).`, { 
+          id: toastId,
+          duration: 6000 
+        });
+      } else {
+        toast.success(`Đã đối soát ${results.length} mã vận đơn!`, { id: toastId });
+      }
+      
       loadData();
     } catch (error: any) {
       console.error("Upload Recon Error:", error);

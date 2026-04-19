@@ -16,7 +16,29 @@ export class ReconciliationService {
           const workbook = XLSX.read(data, { type: 'binary' });
           const firstSheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[firstSheetName];
-          const jsonData = XLSX.utils.sheet_to_json(worksheet);
+          
+          // Convert to 2D array first to find the header row
+          const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+          
+          // Find the row that contains common header keywords
+          let headerRowIndex = 0;
+          const keywords = ['mã vận đơn', 'tracking', 'số tiền', 'chi tiết', 'mã đơn hàng', 'dòng tiền', 'loại giao dịch'];
+          
+          for (let i = 0; i < Math.min(rows.length, 20); i++) {
+            const row = rows[i];
+            if (!row || !Array.isArray(row)) continue;
+            const rowString = row.join(' ').toLowerCase();
+            
+            // A real header row usually matches multiple key terms
+            const matchCount = keywords.filter(k => rowString.includes(k)).length;
+            if (matchCount >= 3) {
+              headerRowIndex = i;
+              break;
+            }
+          }
+
+          // Re-parse from the identified header row
+          const jsonData = XLSX.utils.sheet_to_json(worksheet, { range: headerRowIndex });
           resolve(jsonData);
         } catch (err) {
           reject(err);
@@ -30,7 +52,7 @@ export class ReconciliationService {
   /**
    * Matches report data with system orders and saves results
    */
-  static async reconcile(userId: string, reportData: any[]): Promise<ReconciliationRecord[]> {
+  static async reconcile(userId: string, reportData: any[]): Promise<{ results: ReconciliationRecord[], saveError: boolean }> {
     // 1. Fetch all orders for this user
     const ordersRef = collection(db, 'orders');
     const q = query(ordersRef, where('userId', '==', userId));
@@ -38,23 +60,36 @@ export class ReconciliationService {
     const ordersMap = new Map<string, Order>();
     querySnapshot.forEach(docSnap => {
       const data = docSnap.data() as Order;
+      // Index by both tracking code and order ID if available
       ordersMap.set(data.trackingCode, data);
+      if (data.id) ordersMap.set(data.id, data);
     });
 
     const results: ReconciliationRecord[] = [];
+    let saveError = false;
     
     for (const [index, row] of (reportData as any[]).entries()) {
       // Robust detection of columns
-      const tracking = (row['Mã vận đơn'] || row['Waybill Number'] || row['Waybill'] || row['MVD'] || row['Tracking No'] || row['Tracking Number'] || '').toString().trim();
-      let codInput = row['Tiền thu hộ'] || row['COD'] || row['COD Amount'] || row['Số tiền'] || 0;
+      let tracking = (row['Mã vận đơn'] || row['Waybill Number'] || row['Waybill'] || row['MVD'] || row['Tracking No'] || row['Tracking Number'] || row['Mã đơn hàng'] || '').toString().trim();
+      
+      // Shopee logic: Extract from "Chi tiết" if tracking is empty
+      if (!tracking && row['Chi tiết']) {
+        const detail = row['Chi tiết'].toString();
+        const match = detail.match(/#\s*([A-Za-z0-9]+)/);
+        if (match && match[1]) {
+          tracking = match[1];
+        }
+      }
+
+      let codInput = row['Tiền thu hộ'] || row['COD'] || row['COD Amount'] || row['Số tiền'] || row['Dòng tiền'] || 0;
       
       // Clean COD input (string with commas/dots)
       if (typeof codInput === 'string') {
         codInput = parseFloat(codInput.replace(/[^0-9.-]+/g, ""));
       }
-      const cod = parseFloat(codInput) || 0;
+      const cod = Math.abs(parseFloat(codInput)) || 0;
 
-      const carrier = row['Hãng vận chuyển'] || row['Đơn vị VC'] || row['Carrier'] || 'Chưa xác định';
+      const carrier = row['Hãng vận chuyển'] || row['Đơn vị VC'] || row['Carrier'] || row['Loại giao dịch'] || 'Chưa xác định';
 
       if (!tracking) continue;
 
@@ -64,13 +99,9 @@ export class ReconciliationService {
 
       if (order) {
         systemAmount = order.totalRevenue || 0;
-        // Check if amount matches (within small tolerance for platform oddities)
         if (Math.abs(systemAmount - cod) < 100) { 
           status = 'matched';
         }
-      } else {
-        // We can't match if order isn't in system
-        status = 'discrepancy';
       }
 
       const reconRecord: ReconciliationRecord = {
@@ -85,17 +116,26 @@ export class ReconciliationService {
         deliveredAt: order?.deliveredAt || order?.processedAt
       };
 
-      // Save to Firestore
-      const reconDocRef = doc(db, 'reconciliations', reconRecord.id);
-      await setDoc(reconDocRef, {
-        ...reconRecord,
-        createdAt: serverTimestamp()
-      });
+      // Attempt save but don't block if quota is exceeded
+      try {
+        if (!saveError) {
+          const reconDocRef = doc(db, 'reconciliations', reconRecord.id);
+          await setDoc(reconDocRef, {
+            ...reconRecord,
+            createdAt: serverTimestamp()
+          });
+        }
+      } catch (err: any) {
+        if (err.message && (err.message.includes('Quota') || err.message.includes('permission-denied'))) {
+          saveError = true;
+          console.warn("Firestore save failed during reconciliation, likely quota exceeded. Continuing in memory.");
+        }
+      }
 
       results.push(reconRecord);
     }
 
-    return results;
+    return { results, saveError };
   }
 
   /**
