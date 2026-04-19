@@ -1132,7 +1132,7 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
               <div className="p-4 bg-primary/5 rounded-xl space-y-3">
                 <div className="flex justify-between items-center text-[10px] uppercase tracking-widest font-black text-primary">
                   <span>HẠN MỨC CỦA TÔI</span>
-                  <span>{dailyOrderCount}/{orderLimit} ĐƠN</span>
+                  <span>Đã dùng hôm nay: {dailyOrderCount}/{orderLimit} ĐƠN</span>
                 </div>
                 <div className="h-2 w-full bg-primary/10 rounded-full overflow-hidden">
                   <motion.div 

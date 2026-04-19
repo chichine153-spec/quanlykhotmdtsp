@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import axios from "axios";
 import { logErrorToSupabase } from "../lib/error-logging";
 import { doc, updateDoc, increment } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -110,38 +111,39 @@ export class GeminiService {
       throw new Error('MISSING_API_KEY');
     }
 
-    const ai = new GoogleGenAI({ apiKey: useKey });
-    
-    try {
-      // Logic for request
-      const response = await ai.models.generateContent({
+    // Proxy call function to follow security guidelines (executing on server side)
+    const callProxy = async (apiKey: string) => {
+      const resp = await axios.post('/api/gemini/proxy', {
+        apiKey,
         model: "gemini-3-flash-preview",
         contents: prompt,
+        systemInstruction,
         config: {
-          systemInstruction,
-          responseMimeType: responseMimeType as any,
-          responseSchema
+          generationConfig: {
+            responseMimeType: responseMimeType as any,
+            responseSchema
+          }
         }
       });
+      return resp.data.text;
+    };
+    
+    try {
+      // 1. First Attempt with Primary Key
+      const text = await callProxy(useKey);
 
-      // Increment usage count for the shop
-      const userRef = doc(db, 'users', userId);
-      updateDoc(userRef, {
-        dailyOrderCount: increment(1),
-        lastUsedAt: new Date().toISOString()
-      }).catch(e => console.error('Failed to update usage count:', e));
-
-      return response.text || '';
+      return text || '';
     } catch (err: any) {
-      const errorStr = err.message || '';
+      const errorStr = (err.response?.data?.error || err.message || '').toString();
       const isQuotaError = errorStr.includes('429') || errorStr.includes('Quota') || errorStr.includes('RESOURCE_EXHAUSTED');
-      const isAuthError = errorStr.includes('401') || errorStr.includes('Unauthorized') || errorStr.includes('API_KEY_INVALID');
+      const isAuthError = errorStr.includes('401') || errorStr.includes('Unauthorized') || errorStr.includes('API_KEY_INVALID') || errorStr.includes('INVALID_ARGUMENT');
 
-      if ((isQuotaError || isAuthError) && fallbackKey && shopPlan !== 'free') {
-        console.log(`[GeminiService] Failover triggered for user ${userId} using system fallback key.`);
+      // Failover logic: Trigger fallback only for non-free plans if primary key fails
+      if ((isQuotaError || isAuthError) && fallbackKey && shopPlan !== 'free' && shopKey) {
+        console.log(`[GeminiService] Failover triggered via Proxy for user ${userId}.`);
         
         // Show notification to user
-        toast("Hạn mức cá nhân của bạn đã hết, hệ thống đang tạm thời sử dụng tài nguyên dự phòng của Quản trị viên để xử lý đơn hàng", {
+        toast("Hạn mức cá nhân của bạn đã hết (hoặc lỗi Key), hệ thống đang tạm thời sử dụng tài nguyên dự phòng của Quản trị viên để xử lý", {
           icon: '🛡️',
           duration: 6000,
           style: {
@@ -152,35 +154,21 @@ export class GeminiService {
             fontWeight: 'bold'
           }
         });
-        logErrorToSupabase(
-          new Error(`Failover used: ${isQuotaError ? 'Quota' : 'Auth'} error on shop key.`),
-          feature,
-          userId,
-          'Đã dùng dự phòng' // Custom tag/label
-        );
 
-        const fallbackAi = new GoogleGenAI({ apiKey: fallbackKey });
-        const fallbackResponse = await fallbackAi.models.generateContent({
-          model: "gemini-3-flash-preview",
-          contents: prompt,
-          config: {
-            systemInstruction,
-            responseMimeType: responseMimeType as any,
-            responseSchema
-          }
-        });
+        try {
+          const fallbackText = await callProxy(fallbackKey);
 
-        // Increment usage count even for fallback
-        const userRef = doc(db, 'users', userId);
-        updateDoc(userRef, {
-          dailyOrderCount: increment(1),
-          usedFallback: true
-        }).catch(e => console.error('Failed to update fallback usage:', e));
-
-        return fallbackResponse.text || '';
+          return fallbackText || '';
+        } catch (fallbackErr) {
+          throw fallbackErr;
+        }
       }
 
-      // Re-throw if no failover possible
+      // Specific error message as requested by user if key fails and no failover
+      if (isQuotaError || isAuthError) {
+        throw new Error("API Key của bạn không hợp lệ hoặc hết hạn. Vui lòng kiểm tra lại tại Google AI Studio hoặc nâng cấp gói Foot để sử dụng Key dự phòng của hệ thống");
+      }
+
       throw err;
     }
   }

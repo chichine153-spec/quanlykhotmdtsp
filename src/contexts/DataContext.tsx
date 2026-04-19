@@ -82,20 +82,20 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     try {
       // Fetch initial data using getDocs for better control over quota usage
       const inventoryQuery = isAdmin 
-        ? query(collection(db, 'inventory'), limit(500)) 
-        : query(collection(db, 'inventory'), where('userId', '==', user.uid), limit(300));
+        ? query(collection(db, 'inventory'), limit(300)) 
+        : query(collection(db, 'inventory'), where('userId', '==', user.uid), limit(200));
         
       const ordersQuery = isAdmin
-        ? query(collection(db, 'orders'), orderBy('processedAt', 'desc'), limit(200))
-        : query(collection(db, 'orders'), where('userId', '==', user.uid), orderBy('processedAt', 'desc'), limit(150));
+        ? query(collection(db, 'orders'), orderBy('processedAt', 'desc'), limit(100))
+        : query(collection(db, 'orders'), where('userId', '==', user.uid), orderBy('processedAt', 'desc'), limit(80));
         
       const returnsQuery = isAdmin
-        ? query(collection(db, 'returns'), orderBy('returnedAt', 'desc'), limit(100))
-        : query(collection(db, 'returns'), where('userId', '==', user.uid), orderBy('returnedAt', 'desc'), limit(100));
+        ? query(collection(db, 'returns'), orderBy('returnedAt', 'desc'), limit(50))
+        : query(collection(db, 'returns'), where('userId', '==', user.uid), orderBy('returnedAt', 'desc'), limit(40));
         
       const problematicQuery = isAdmin
-        ? query(collection(db, 'problematic_orders'), orderBy('updatedAt', 'desc'), limit(50))
-        : query(collection(db, 'problematic_orders'), where('userId', '==', user.uid), orderBy('updatedAt', 'desc'), limit(50));
+        ? query(collection(db, 'problematic_orders'), orderBy('updatedAt', 'desc'), limit(30))
+        : query(collection(db, 'problematic_orders'), where('userId', '==', user.uid), orderBy('updatedAt', 'desc'), limit(20));
 
       const [inventorySnap, ordersSnap, returnsSnap, problematicSnap, configSnap, globalConfigSnap] = await Promise.all([
         getDocs(inventoryQuery),

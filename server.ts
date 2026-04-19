@@ -3,11 +3,45 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import axios from "axios";
 
+import { GoogleGenAI } from "@google/genai";
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
   app.use(express.json());
+
+  // API Route to proxy Gemini AI requests (Security feature)
+  app.post("/api/gemini/proxy", async (req, res) => {
+    const { apiKey, model, contents, config, systemInstruction } = req.body;
+
+    if (!apiKey) {
+      return res.status(400).json({ error: "Missing API Key" });
+    }
+
+    try {
+      const genAI = new GoogleGenAI(apiKey) as any;
+      const aiModel = genAI.getGenerativeModel({ 
+        model: model || "gemini-3-flash-preview",
+        systemInstruction: systemInstruction
+      });
+
+      const result = await aiModel.generateContent({
+        contents: typeof contents === 'string' ? [{ role: 'user', parts: [{ text: contents }]}] : contents,
+        ...config
+      });
+
+      const response = await result.response;
+      const text = response.text();
+      res.json({ text });
+    } catch (error: any) {
+      console.error('Gemini Proxy Error:', error.message);
+      res.status(error.response?.status || 500).json({ 
+        error: error.message,
+        details: error.response?.data
+      });
+    }
+  });
 
   // API Route to proxy SPX Tracking (New Free Endpoint)
   app.get("/api/tracking/spx-free", async (req, res) => {

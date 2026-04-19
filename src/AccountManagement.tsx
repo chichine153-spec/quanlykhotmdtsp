@@ -378,11 +378,12 @@ export default function AccountManagement() {
           <div className="p-6 bg-white rounded-3xl border-2 border-primary/5 space-y-4">
             <div className="flex justify-between items-end">
               <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-primary mb-1">Số lượng đã dùng</p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-primary mb-1">Hạn mức của tôi</p>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-5xl font-black text-primary font-headline">{dailyOrderCount}</span>
-                  <span className="text-secondary font-black text-xl">/ {orderLimit}</span>
-                  <span className="text-[10px] text-secondary font-bold uppercase ml-2">đơn hàng hôm nay</span>
+                  <span className="text-secondary font-black text-xs">Đã dùng hôm nay: </span>
+                  <span className="text-2xl font-black text-primary font-headline">{dailyOrderCount}</span>
+                  <span className="text-secondary font-black text-lg">/ {orderLimit}</span>
+                  <span className="text-[10px] text-secondary font-bold uppercase ml-2">đơn hàng</span>
                 </div>
               </div>
               <div className="text-right">

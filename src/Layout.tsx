@@ -16,7 +16,8 @@ import {
   Clock,
   Users,
   ShieldCheck,
-  ArrowDownCircle
+  ArrowDownCircle,
+  Key
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -31,6 +32,7 @@ import { Screen } from './types';
 import { useAuth } from './contexts/AuthContext';
 import { useData } from './contexts/DataContext';
 import AuthModal from './components/AuthModal';
+import KeyConfigModal from './components/KeyConfigModal';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -41,6 +43,7 @@ interface LayoutProps {
 export default function Layout({ children, activeScreen, onScreenChange }: LayoutProps) {
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = React.useState(false);
+  const [isKeyModalOpen, setIsKeyModalOpen] = React.useState(false);
   const { user, login, logout, error, clearError, role, status, expiryDate, isSubscriptionValid } = useAuth();
   const { refreshData, lastUpdated, loading, quotaExceeded: dataQuotaExceeded } = useData();
   const [isRefreshing, setIsRefreshing] = React.useState(false);
@@ -187,6 +190,13 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
               >
                 <RefreshCw size={18} className={isRefreshing || loading ? 'animate-spin' : ''} />
               </button>
+              <button 
+                onClick={() => setIsKeyModalOpen(true)}
+                className="p-2 text-secondary hover:bg-surface-container rounded-xl transition-all"
+                title="Cấu hình Gemini API Key"
+              >
+                <Key size={18} />
+              </button>
             </div>
           )}
 
@@ -248,6 +258,7 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
       </header>
 
       <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
+      <KeyConfigModal isOpen={isKeyModalOpen} onClose={() => setIsKeyModalOpen(false)} />
 
       {/* Desktop Sidebar */}
       <aside className="hidden lg:flex fixed left-0 top-0 z-[60] w-72 p-4 flex-col gap-6 bg-white/60 backdrop-blur-2xl rounded-r-3xl h-[calc(100vh-2rem)] my-4 ml-4 shadow-2xl shadow-slate-200/50 no-print">

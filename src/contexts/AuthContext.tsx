@@ -38,6 +38,7 @@ interface AuthContextType {
   isSubscriptionValid: () => boolean;
   refreshUsage: () => Promise<void>;
   incrementDailyCount: () => Promise<void>;
+  setGeminiApiKey: (key: string | null) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -295,7 +296,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user, role, status, paymentStatus, planType, geminiApiKey, fallbackGeminiApiKey, 
       failoverEnabled, dailyOrderCount, orderLimit, expiryDate, phone, loading, error, 
       login, loginWithEmail, signupWithEmail, resetPassword, logout, clearError, isSubscriptionValid,
-      refreshUsage, incrementDailyCount
+      refreshUsage, incrementDailyCount, setGeminiApiKey
     }}>
       {!loading && children}
     </AuthContext.Provider>
