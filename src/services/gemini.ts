@@ -1,5 +1,4 @@
 import { GoogleGenAI } from "@google/genai";
-import axios from "axios";
 import { logErrorToSupabase } from "../lib/error-logging";
 import { doc, updateDoc, increment } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -111,56 +110,78 @@ export class GeminiService {
       throw new Error('MISSING_API_KEY');
     }
 
-    // Proxy call function to follow security guidelines (executing on server side)
+    // Proxy call function using fetch for better control over error handling (prevents axios global error toasts)
     const callProxy = async (apiKey: string) => {
       try {
-        const resp = await axios.post('/api/gemini/proxy', {
-          apiKey,
-          model: "gemini-3-flash-preview",
-          contents: prompt,
-          systemInstruction,
-          config: {
-            generationConfig: {
-              responseMimeType: responseMimeType as any,
-              responseSchema
-            }
-          }
-        });
-        return resp.data.text;
-      } catch (err: any) {
-        // Safe check for status code or network errors
-        const status = err.response?.status;
-        const isProxyError = status === 404 || status === 502 || status === 503 || status === 504 || err.code === 'ERR_NETWORK' || !status;
-        
-        if (isProxyError) {
-          console.warn(`[GeminiService] Server Proxy error (${status || 'Network'}). Switching to direct client-side call.`);
-          try {
-            const genAI = new GoogleGenAI({ apiKey });
-            
-            const result = await genAI.models.generateContent({
-              model: "gemini-3-flash-preview",
-              contents: typeof prompt === 'string' ? [{ role: 'user', parts: [{ text: prompt }]}] : prompt as any,
-              config: {
-                systemInstruction: typeof systemInstruction === 'string' ? systemInstruction : undefined,
+        const response = await fetch('/api/gemini/proxy', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            apiKey,
+            model: "gemini-3-flash-preview",
+            contents: prompt,
+            systemInstruction,
+            config: {
+              generationConfig: {
                 responseMimeType: responseMimeType as any,
                 responseSchema
               }
-            });
+            }
+          }),
+        });
 
-            return result.text || '';
-          } catch (directErr: any) {
-            console.error('[GeminiService] Direct client-side call also failed:', directErr);
-            // If direct call fails, throw a more meaningful error
-            if (directErr.message?.includes('429') || directErr.message?.includes('Quota')) {
-              throw new Error('GEMINI_QUOTA_EXCEEDED');
-            }
-            if (directErr.message?.includes('API_KEY_INVALID')) {
-              throw new Error('API_KEY_INVALID');
-            }
-            throw directErr;
-          }
+        if (response.ok) {
+          const data = await response.json();
+          return data.text;
+        }
+
+        // Handle specific error codes for fallback
+        if (response.status === 404 || response.status >= 500) {
+          console.warn(`[GeminiService] Server Proxy returned ${response.status}. Switching to direct client-side call.`);
+          return await callDirect(apiKey);
+        }
+
+        // For other errors (like 400 - invalid key), parse the error
+        const errorData = await response.json().catch(() => ({}));
+        const errorMsg = errorData.error || `Proxy error ${response.status}`;
+        throw new Error(errorMsg);
+      } catch (err: any) {
+        // If it was a network error (failed to fetch), try fallback
+        if (err.name === 'TypeError' && err.message === 'Failed to fetch') {
+          console.warn('[GeminiService] Network error to proxy. Switching to direct client-side call.');
+          return await callDirect(apiKey);
         }
         throw err;
+      }
+    };
+
+    // Extract content call logic to reusable function
+    const callDirect = async (apiKey: string) => {
+      try {
+        const genAI = new GoogleGenAI({ apiKey });
+        
+        const result = await genAI.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: typeof prompt === 'string' ? [{ role: 'user', parts: [{ text: prompt }]}] : prompt as any,
+          config: {
+            systemInstruction: typeof systemInstruction === 'string' ? systemInstruction : undefined,
+            responseMimeType: responseMimeType as any,
+            responseSchema
+          }
+        });
+
+        return result.text || '';
+      } catch (directErr: any) {
+        console.error('[GeminiService] Direct client-side call also failed:', directErr);
+        if (directErr.message?.includes('429') || directErr.message?.includes('Quota')) {
+          throw new Error('GEMINI_QUOTA_EXCEEDED');
+        }
+        if (directErr.message?.includes('API_KEY_INVALID')) {
+          throw new Error('API_KEY_INVALID');
+        }
+        throw directErr;
       }
     };
     

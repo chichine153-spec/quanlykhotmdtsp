@@ -279,11 +279,9 @@ export default function AccountManagement() {
       console.error('Test API Key error:', error);
       let errorMsg = error.message || 'Lỗi không xác định';
       if (errorMsg.includes('429') || errorMsg.includes('quota')) {
-        errorMsg = 'API Key này đã HẾT HẠN MỨC (429 Quota Exceeded). Hãy tạo mã mới!';
+        errorMsg = 'API Key này đã HẾT HẠN MỨC (429 Quota Exceeded).';
       } else if (errorMsg.includes('400') || errorMsg.includes('API_KEY_INVALID')) {
         errorMsg = 'API Key KHÔNG HỢP LỆ. Vui lòng kiểm tra lại.';
-      } else if (errorMsg.includes('404')) {
-        errorMsg = 'Lỗi 404: Không tìm thấy Proxy. Hệ thống sẽ tự động thử kết nối trực tiếp.';
       }
       toast.error(`Lỗi: ${errorMsg}`);
     } finally {

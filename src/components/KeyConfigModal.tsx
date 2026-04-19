@@ -61,17 +61,14 @@ export default function KeyConfigModal({ isOpen, onClose }: KeyConfigModalProps)
       setTestResult('error');
       
       let msg = 'Lỗi kết nối AI. Vui lòng kiểm tra lại mã API Key.';
-      
       const errorStr = (error.response?.data?.error || error.message || '').toString();
       
-      if (errorStr.includes('404')) {
-        msg = 'Lỗi 404: Không thể kết nối qua trung tâm Proxy. Đang thử kết nối trực tiếp... (Hãy nhấn lại nút Kiểm Tra)';
-      } else if (errorStr.includes('429') || errorStr.includes('quota')) {
-        msg = 'Hạn mức (Quota) đã hết. Vui lòng tạo API Key mới hoặc đợi hôm sau.';
+      if (errorStr.includes('GEMINI_QUOTA_EXCEEDED') || errorStr.includes('429') || errorStr.includes('quota')) {
+        msg = 'Hạn mức (Quota) của Key này đã hết. Vui lòng tạo API Key mới.';
       } else if (errorStr.includes('API_KEY_INVALID') || errorStr.includes('400')) {
         msg = 'Mã API Key không hợp lệ. Vui lòng kiểm tra lại tại Google AI Studio.';
       } else if (error.message) {
-        msg = `Lỗi: ${error.message}`;
+        msg = error.message;
       }
       
       toast.error(msg);
