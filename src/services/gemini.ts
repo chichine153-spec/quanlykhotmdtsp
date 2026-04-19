@@ -128,29 +128,35 @@ export class GeminiService {
         });
         return resp.data.text;
       } catch (err: any) {
-        // If proxy is not found (404), it means the app is likely running on a static host like Vercel 
-        // without the backend server. Fallback to client-side call as an emergency.
-        if (err.response?.status === 404 || err.code === 'ERR_NETWORK') {
-          console.warn('[GeminiService] Proxy unavailable (404), attempting direct client-side call.');
+        // Safe check for status code or network errors
+        const status = err.response?.status;
+        const isProxyError = status === 404 || status === 502 || status === 503 || status === 504 || err.code === 'ERR_NETWORK' || !status;
+        
+        if (isProxyError) {
+          console.warn(`[GeminiService] Server Proxy error (${status || 'Network'}). Switching to direct client-side call.`);
           try {
             const genAI = new GoogleGenAI({ apiKey });
-            const aiModel = (genAI as any).getGenerativeModel({ 
+            
+            const result = await genAI.models.generateContent({
               model: "gemini-3-flash-preview",
-              systemInstruction: typeof systemInstruction === 'string' ? { role: 'system', parts: [{ text: systemInstruction }] } : undefined
-            } as any);
-
-            const result = await aiModel.generateContent({
               contents: typeof prompt === 'string' ? [{ role: 'user', parts: [{ text: prompt }]}] : prompt as any,
-              generationConfig: {
+              config: {
+                systemInstruction: typeof systemInstruction === 'string' ? systemInstruction : undefined,
                 responseMimeType: responseMimeType as any,
                 responseSchema
               }
             });
 
-            const responseText = await result.response.text();
-            return responseText;
-          } catch (directErr) {
+            return result.text || '';
+          } catch (directErr: any) {
             console.error('[GeminiService] Direct client-side call also failed:', directErr);
+            // If direct call fails, throw a more meaningful error
+            if (directErr.message?.includes('429') || directErr.message?.includes('Quota')) {
+              throw new Error('GEMINI_QUOTA_EXCEEDED');
+            }
+            if (directErr.message?.includes('API_KEY_INVALID')) {
+              throw new Error('API_KEY_INVALID');
+            }
             throw directErr;
           }
         }

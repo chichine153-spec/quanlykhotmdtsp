@@ -37,44 +37,39 @@ export default function KeyConfigModal({ isOpen, onClose }: KeyConfigModalProps)
     
     try {
       // Use the service's handleAIRequest to test the key
-      // or a simpler direct call to getInstance for verification
-      const prompt = "Please respond with exactly one word: 'READY'";
       // We pass the key as shopKey directly to verify it
+      const prompt = "Please respond with exactly one word: 'READY'";
       const result = await GeminiService.handleAIRequest({
         prompt,
-        systemInstruction: "You are a test assistant.",
+        systemInstruction: "You are a test assistant. Always reply with READY.",
         shopKey: apiKey,
         fallbackKey: null,
-        shopPlan: 'pro', // Assume pro for test
+        shopPlan: 'pro',
         userId: user?.uid || 'anonymous',
         feature: 'verify_key'
       });
 
-      if (result.toUpperCase().includes('OK') || result.length > 0) {
+      if (result.toUpperCase().includes('READY') || result.toUpperCase().includes('OK') || result.length > 0) {
         setTestResult('success');
-        toast.success('Key hoạt động tốt!');
+        toast.success('[MÁY CHỦ AI] Kết nối thành công! Key hoạt động tốt.');
       } else {
         setTestResult('error');
-        toast.error('Key không hợp lệ hoặc phản hồi không đúng.');
+        toast.error('Mô hình phản hồi không đúng định dạng. Vui lòng thử lại.');
       }
     } catch (error: any) {
       console.error('[KeyTest] Error:', error);
       setTestResult('error');
       
-      let msg = 'Lỗi kiểm tra API Key. Vui lòng thử lại.';
+      let msg = 'Lỗi kết nối AI. Vui lòng kiểm tra lại mã API Key.';
       
       const errorStr = (error.response?.data?.error || error.message || '').toString();
       
       if (errorStr.includes('404')) {
-        msg = 'Lỗi: Không tìm thấy máy chủ Proxy (404). Hệ thống đang chuyển sang chế độ kết nối trực tiếp.';
-        // The fallback logic in GeminiService will handle this, so we might not even hit this catch 
-        // if fallback succeeds. But if it fails, this is more informative.
+        msg = 'Lỗi 404: Không thể kết nối qua trung tâm Proxy. Đang thử kết nối trực tiếp... (Hãy nhấn lại nút Kiểm Tra)';
       } else if (errorStr.includes('429') || errorStr.includes('quota')) {
-        msg = 'Lỗi: Key này đã hết hạn mức (Quota Exceeded) hoặc bị giới hạn bởi Google.';
-      } else if (errorStr.includes('400') || errorStr.includes('API_KEY_INVALID')) {
-        msg = 'Lỗi: API Key không hợp lệ. Vui lòng kiểm tra lại mã bạn đã dán.';
-      } else if (errorStr.includes('403')) {
-        msg = 'Lỗi: Không có quyền truy cập (403). Kiểm tra xem Key có bị hạn chế vùng không.';
+        msg = 'Hạn mức (Quota) đã hết. Vui lòng tạo API Key mới hoặc đợi hôm sau.';
+      } else if (errorStr.includes('API_KEY_INVALID') || errorStr.includes('400')) {
+        msg = 'Mã API Key không hợp lệ. Vui lòng kiểm tra lại tại Google AI Studio.';
       } else if (error.message) {
         msg = `Lỗi: ${error.message}`;
       }

@@ -210,7 +210,7 @@ service cloud.firestore {
                       (request.resource.data.role == 'user' && request.resource.data.status == 'inactive') ||
                       (request.auth.token.email == "chichine153@gmail.com" && request.resource.data.role == 'admin' && request.resource.data.status == 'active')
                     );
-      allow update: if isAdmin() || (isOwner(userId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['phone', 'paymentStatus']));
+      allow update: if isAdmin() || (isOwner(userId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['phone', 'paymentStatus', 'geminiApiKey', 'updatedAt']));
       allow delete: if isAdmin();
     }
 

@@ -20,20 +20,17 @@ async function startServer() {
     }
 
     try {
-      const genAI = new GoogleGenAI(apiKey) as any;
-      const aiModel = genAI.getGenerativeModel({ 
+      const genAI = new GoogleGenAI({ apiKey });
+      const result = await genAI.models.generateContent({
         model: model || "gemini-3-flash-preview",
-        systemInstruction: systemInstruction
-      });
-
-      const result = await aiModel.generateContent({
         contents: typeof contents === 'string' ? [{ role: 'user', parts: [{ text: contents }]}] : contents,
-        ...config
+        config: {
+          systemInstruction: systemInstruction,
+          ...config?.generationConfig
+        }
       });
 
-      const response = await result.response;
-      const text = response.text();
-      res.json({ text });
+      res.json({ text: result.text });
     } catch (error: any) {
       console.error('Gemini Proxy Error:', error.message);
       res.status(error.response?.status || 500).json({ 

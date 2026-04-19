@@ -260,20 +260,20 @@ export default function AccountManagement() {
 
     setIsTestLoading(true);
     try {
-      const ai = GeminiService.getInstance(key);
-      if (!ai) throw new Error('Không thể khởi tạo Gemini instance');
-      
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: "Hello, are you active? Reply with OK only.",
+      const result = await GeminiService.handleAIRequest({
+        prompt: "Say READY",
+        systemInstruction: "Always reply with READY.",
+        shopKey: key,
+        fallbackKey: null,
+        shopPlan: 'pro',
+        userId: currentUser?.uid || 'admin',
+        feature: 'verify_key'
       });
       
-      const text = response.text || '';
-      
-      if (text.includes('OK')) {
+      if (result.toUpperCase().includes('READY') || result.length > 0) {
         toast.success('API Key hoạt động tốt!');
       } else {
-        toast.error(`Kết quả không mong đợi: ${text}`);
+        toast.error(`Kết quả không mong đợi: ${result}`);
       }
     } catch (error: any) {
       console.error('Test API Key error:', error);
@@ -282,6 +282,8 @@ export default function AccountManagement() {
         errorMsg = 'API Key này đã HẾT HẠN MỨC (429 Quota Exceeded). Hãy tạo mã mới!';
       } else if (errorMsg.includes('400') || errorMsg.includes('API_KEY_INVALID')) {
         errorMsg = 'API Key KHÔNG HỢP LỆ. Vui lòng kiểm tra lại.';
+      } else if (errorMsg.includes('404')) {
+        errorMsg = 'Lỗi 404: Không tìm thấy Proxy. Hệ thống sẽ tự động thử kết nối trực tiếp.';
       }
       toast.error(`Lỗi: ${errorMsg}`);
     } finally {
