@@ -128,10 +128,8 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
   const isExpired = expiryDate ? new Date(expiryDate) < new Date() : true;
   const isValid = isSubscriptionValid();
 
-  // Filter nav items for non-admin invalid users
-  const filteredNavItems = (user && !isValid && role !== 'admin') 
-    ? [{ id: 'upgrade', label: 'Nâng cấp tài khoản', icon: ShieldCheck }]
-    : navItems;
+  // Filter nav items - All features open to all users
+  const filteredNavItems = navItems;
 
   return (
     <div className="min-h-screen bg-surface">
