@@ -1,4 +1,5 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { Type } from "@google/genai";
+import { GeminiService } from "./gemini";
 
 export interface MarketingContent {
   title: string;
@@ -7,8 +8,6 @@ export interface MarketingContent {
 }
 
 export class MarketingService {
-  private static ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
   static async generateMarketingContent(product: { name: string; sku: string; variant?: string; category?: string }): Promise<MarketingContent> {
     const prompt = `
       Bạn là một chuyên gia Marketing thực chiến trên Shopee và TikTok. 
@@ -27,26 +26,32 @@ export class MarketingService {
     `;
 
     try {
-      const response = await this.ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING },
-              description: { type: Type.STRING },
-              tiktokScript: { type: Type.STRING }
-            },
-            required: ["title", "description", "tiktokScript"]
-          }
+      // Use GeminiService to avoid crashes if API key is missing
+      const resultText = await GeminiService.handleAIRequest({
+        prompt,
+        shopKey: null,
+        fallbackKey: null,
+        shopPlan: 'free',
+        userId: 'system',
+        feature: 'marketing',
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            description: { type: Type.STRING },
+            tiktokScript: { type: Type.STRING }
+          },
+          required: ["title", "description", "tiktokScript"]
         }
       });
 
-      return JSON.parse(response.text || '{}');
-    } catch (error) {
+      return JSON.parse(resultText || '{}');
+    } catch (error: any) {
       console.error("Marketing Service Error:", error);
+      if (error.message === 'MISSING_API_KEY') {
+        throw new Error("Chưa cấu hình API Key cho Gemini. Vui lòng kiểm tra mục cài đặt.");
+      }
       throw new Error("Không thể tạo nội dung Marketing lúc này.");
     }
   }
