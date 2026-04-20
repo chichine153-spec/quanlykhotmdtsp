@@ -52,6 +52,122 @@ export class ReconciliationService {
   /**
    * Matches report data with system orders and saves results
    */
+  static async reconcileDualFiles(userId: string, orderData: any[], transactionData: any[]): Promise<{ results: ReconciliationRecord[], saveError: boolean }> {
+    const results: ReconciliationRecord[] = [];
+    let saveError = false;
+
+    // 1. Map Orders from File A
+    // We expect File A to have columns like "Mã đơn hàng", "Tổng số tiền"...
+    const ordersMap = new Map<string, any>();
+    orderData.forEach(row => {
+      const id = (row['Mã đơn hàng'] || row['Order ID'] || row['Order ID #'] || '').toString().trim();
+      if (id) ordersMap.set(id, row);
+    });
+
+    // 2. Map Transactions from File B
+    // We expect File B to have columns like "Mã đơn hàng", "Số tiền"...
+    const transactionsMap = new Map<string, any[]>();
+    transactionData.forEach(row => {
+      const id = (row['Mã đơn hàng'] || row['Order ID'] || row['Chi tiết']?.match(/#\s*([A-Za-z0-9]+)/)?.[1] || '').toString().trim();
+      if (id) {
+        const existing = transactionsMap.get(id) || [];
+        transactionsMap.set(id, [...existing, row]);
+      }
+    });
+
+    // 3. Process all orders from File A (Detecting MATCHED, DISCREPANCY, LATE_PAYMENT)
+    ordersMap.forEach((orderRow, orderId) => {
+      const transRows = transactionsMap.get(orderId);
+      
+      let systemAmount = orderRow['Tổng số tiền'] || orderRow['Giá bán'] || orderRow['Total Amount'] || 0;
+      if (typeof systemAmount === 'string') systemAmount = parseFloat(systemAmount.replace(/[^0-9.-]+/g, ""));
+      
+      // Estimated platform fee (roughly 10% if not specified)
+      const estimatedFee = orderRow['Phí sàn dự tính'] || orderRow['Platform Fee'] || (systemAmount * 0.1);
+      const expectedNet = systemAmount - estimatedFee;
+
+      if (!transRows || transRows.length === 0) {
+        // LATE_PAYMENT: In A but not in B
+        results.push({
+          id: `recon_late_${orderId}_${Date.now()}`,
+          userId,
+          trackingCode: orderId,
+          carrierAmount: 0,
+          systemAmount: expectedNet,
+          status: 'late_payment',
+          carrier: orderRow['Đơn vị VC'] || 'Shopee',
+          reconciledAt: new Date().toISOString()
+        });
+        return;
+      }
+
+      // Calculate total net from B
+      let totalReceived = 0;
+      transRows.forEach(tr => {
+        let amt = tr['Số tiền'] || tr['Dòng tiền'] || tr['Amount'] || 0;
+        if (typeof amt === 'string') amt = parseFloat(amt.replace(/[^0-9.-]+/g, ""));
+        totalReceived += amt; // Correctly sum positive/negative values
+      });
+
+      const discrepancy = Math.abs(expectedNet - totalReceived);
+      const status = discrepancy < 1000 ? 'matched' : 'discrepancy';
+
+      results.push({
+        id: `recon_${orderId}_${Date.now()}`,
+        userId,
+        trackingCode: orderId,
+        carrierAmount: totalReceived,
+        systemAmount: expectedNet,
+        status,
+        carrier: transRows[0]['Loại giao dịch'] || 'Giao dịch Shopee',
+        reconciledAt: new Date().toISOString()
+      });
+    });
+
+    // 4. Process transactions in B that are NOT in A (Detecting OTHER_TRANSACTION)
+    transactionsMap.forEach((transRows, orderId) => {
+      if (!ordersMap.has(orderId)) {
+        let totalReceived = 0;
+        transRows.forEach(tr => {
+          let amt = tr['Số tiền'] || tr['Dòng tiền'] || tr['Amount'] || 0;
+          if (typeof amt === 'string') amt = parseFloat(amt.replace(/[^0-9.-]+/g, ""));
+          totalReceived += amt;
+        });
+
+        results.push({
+          id: `recon_other_${orderId}_${Date.now()}`,
+          userId,
+          trackingCode: orderId,
+          carrierAmount: totalReceived,
+          systemAmount: 0,
+          status: 'other_transaction',
+          carrier: transRows[0]['Loại giao dịch'] || 'Giao dịch khác',
+          reconciledAt: new Date().toISOString()
+        });
+      }
+    });
+
+    // 5. Try to save all records
+    for (const record of results) {
+      try {
+        if (!saveError) {
+          const reconDocRef = doc(db, 'reconciliations', record.id);
+          await setDoc(reconDocRef, {
+            ...record,
+            createdAt: serverTimestamp()
+          });
+        }
+      } catch (err: any) {
+        saveError = true;
+      }
+    }
+
+    return { results, saveError };
+  }
+
+  /**
+   * Matches report data with system orders and saves results
+   */
   static async reconcile(userId: string, reportData: any[]): Promise<{ results: ReconciliationRecord[], saveError: boolean }> {
     // 1. Fetch all orders for this user
     const ordersRef = collection(db, 'orders');

@@ -11,7 +11,6 @@ import ProfitDashboard from './ProfitDashboard';
 import ScanSuccess from './ScanSuccess';
 import Returns from './Returns';
 import Reconciliation from './Reconciliation';
-import AIMarketing from './AIMarketing';
 import AccountManagement from './AccountManagement';
 import UpgradeAccount from './UpgradeAccount';
 import SuperAdminDashboard from './SuperAdminDashboard';
@@ -81,8 +80,6 @@ export default function App() {
         return <Returns />;
       case 'reconciliation':
         return <Reconciliation />;
-      case 'ai-marketing':
-        return <AIMarketing />;
       case 'reprint':
         return <RePrintModule />;
       case 'accounts':

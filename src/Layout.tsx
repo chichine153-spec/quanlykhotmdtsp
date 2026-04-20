@@ -19,7 +19,6 @@ import {
   ArrowDownCircle,
   Key,
   ArrowRightLeft,
-  Sparkles,
   Truck,
   ChevronDown,
   ChevronRight as ChevronRightIcon
@@ -112,7 +111,6 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
     },
     { id: 'returns', label: 'Hàng Hoàn', icon: RotateCcw },
     { id: 'reconciliation', label: 'Đối soát COD', icon: ArrowRightLeft },
-    { id: 'ai-marketing', label: 'AI Marketing', icon: Sparkles },
     { id: 'reprint', label: 'In lại đơn hàng', icon: RotateCcw },
     { id: 'profit', label: 'Báo cáo lợi nhuận', icon: TrendingUp },
   ];

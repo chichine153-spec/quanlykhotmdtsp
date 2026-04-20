@@ -1,4 +1,4 @@
-export type Screen = 'dashboard' | 'upload' | 'inventory' | 'returns' | 'stockin' | 'intransit' | 'profit' | 'reconciliation' | 'ai-marketing' | 'success' | 'reprint' | 'accounts' | 'upgrade' | 'settings' | 'admin-master';
+export type Screen = 'dashboard' | 'upload' | 'inventory' | 'returns' | 'stockin' | 'intransit' | 'profit' | 'reconciliation' | 'success' | 'reprint' | 'accounts' | 'upgrade' | 'settings' | 'admin-master';
 
 export interface ReconciliationRecord {
   id: string;
@@ -6,7 +6,7 @@ export interface ReconciliationRecord {
   trackingCode: string;
    carrierAmount: number; // Amount reported by carrier
   systemAmount: number; // Amount in our system
-  status: 'matched' | 'discrepancy' | 'pending_cod' | 'late_payment';
+  status: 'matched' | 'discrepancy' | 'late_payment' | 'other_transaction';
   carrier: string;
   reconciledAt: string;
   deliveredAt?: string;

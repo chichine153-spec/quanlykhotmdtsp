@@ -31,6 +31,9 @@ const Reconciliation: React.FC = () => {
   const [isUploading, setIsUploading] = React.useState(false);
   const [filterStatus, setFilterStatus] = React.useState<string>('all');
   const [searchTerm, setSearchTerm] = React.useState('');
+  
+  const [ordersFile, setOrdersFile] = React.useState<File | null>(null);
+  const [transactionsFile, setTransactionsFile] = React.useState<File | null>(null);
 
   const loadData = React.useCallback(async () => {
     if (!user) return;
@@ -53,6 +56,55 @@ const Reconciliation: React.FC = () => {
   React.useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const handleDualReconcile = async () => {
+    if (!user || !ordersFile || !transactionsFile) {
+      toast.error("Vui lòng tải lên cả 2 file (Đơn hàng & Tiền về)");
+      return;
+    }
+
+    setIsUploading(true);
+    const toastId = toast.loading('Đang xử lý đối soát chéo...');
+    
+    try {
+      const [orderData, transactionData] = await Promise.all([
+        ReconciliationService.parseCarrierReport(ordersFile),
+        ReconciliationService.parseCarrierReport(transactionsFile)
+      ]);
+
+      if (orderData.length === 0 || transactionData.length === 0) {
+        throw new Error("Một trong 2 file bị trống hoặc không đúng định dạng.");
+      }
+      
+      const { results, saveError } = await ReconciliationService.reconcileDualFiles(user.uid, orderData, transactionData);
+      
+      if (results.length === 0) {
+        toast.error("Không tìm thấy dòng dữ liệu hợp lệ trong file.", { id: toastId });
+        return;
+      }
+
+      setHistory(prev => [...results, ...prev]);
+      
+      if (saveError) {
+        toast.success(`Đã hiển thị ${results.length} mã, nhưng KHÔNG THỂ LƯU do hết Quota.`, { 
+          id: toastId,
+          duration: 6000 
+        });
+      } else {
+        toast.success(`Đã đối soát ${results.length} mã đơn hàng!`, { id: toastId });
+      }
+      
+      // Reset files
+      setOrdersFile(null);
+      setTransactionsFile(null);
+      loadData();
+    } catch (error: any) {
+      console.error("Upload Recon Error:", error);
+      toast.error(error.message || "Lỗi khi xử lý file đối soát.", { id: toastId });
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -118,12 +170,33 @@ const Reconciliation: React.FC = () => {
           <p className="text-secondary text-sm font-medium">Đối soát phí vận chuyển và dòng tiền COD từ đơn vị vận chuyển</p>
         </div>
 
-        <div className="flex items-center gap-3 no-print">
-          <label className="flex items-center gap-2 bg-primary text-on-primary px-6 py-3 rounded-2xl font-bold cursor-pointer hover:bg-primary/90 transition-all shadow-lg shadow-primary/20 active:scale-95">
-            {isUploading ? <Loader2 className="animate-spin" size={20} /> : <Upload size={20} />}
-            <span>Tải bảng đối soát</span>
-            <input type="file" onChange={handleFileUpload} accept=".xlsx, .xls, .csv" className="hidden" />
-          </label>
+        <div className="flex flex-col md:flex-row items-center gap-4 no-print bg-white p-4 rounded-3xl border border-surface-container shadow-sm">
+          <div className="flex flex-col gap-2">
+            <span className="text-[10px] font-bold text-secondary uppercase px-2">1. File Đơn Hàng (A)</span>
+            <label className={`flex items-center gap-2 px-4 py-3 rounded-2xl font-bold border-2 border-dashed transition-all cursor-pointer ${ordersFile ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-50 border-slate-200 text-secondary hover:border-primary'}`}>
+              {ordersFile ? <CheckCircle2 size={18} /> : <Upload size={18} />}
+              <span className="text-sm truncate max-w-[150px]">{ordersFile ? ordersFile.name : 'Chọn file Đơn hàng'}</span>
+              <input type="file" onChange={(e) => setOrdersFile(e.target.files?.[0] || null)} accept=".xlsx, .xls, .csv" className="hidden" />
+            </label>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <span className="text-[10px] font-bold text-secondary uppercase px-2">2. File Tiền Về (B)</span>
+            <label className={`flex items-center gap-2 px-4 py-3 rounded-2xl font-bold border-2 border-dashed transition-all cursor-pointer ${transactionsFile ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-50 border-slate-200 text-secondary hover:border-primary'}`}>
+              {transactionsFile ? <CheckCircle2 size={18} /> : <Upload size={18} />}
+              <span className="text-sm truncate max-w-[150px]">{transactionsFile ? transactionsFile.name : 'Chọn file Tiền về'}</span>
+              <input type="file" onChange={(e) => setTransactionsFile(e.target.files?.[0] || null)} accept=".xlsx, .xls, .csv" className="hidden" />
+            </label>
+          </div>
+
+          <button 
+            onClick={handleDualReconcile}
+            disabled={!ordersFile || !transactionsFile || isUploading}
+            className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-bold transition-all shadow-lg ${!ordersFile || !transactionsFile || isUploading ? 'bg-slate-300 text-white cursor-not-allowed' : 'bg-primary text-on-primary hover:bg-primary/90 shadow-primary/20 active:scale-95'}`}
+          >
+            {isUploading ? <Loader2 className="animate-spin" size={20} /> : <FileCheck size={20} />}
+            <span>Bắt đầu đối soát</span>
+          </button>
         </div>
       </header>
 
@@ -215,8 +288,10 @@ const Reconciliation: React.FC = () => {
                 className="bg-white border border-surface-container rounded-2xl px-4 py-3 text-sm focus:ring-2 ring-primary outline-none flex-1 md:flex-none"
               >
                 <option value="all">Tất cả trạng thái</option>
-                <option value="matched">Khớp hoàn toàn</option>
-                <option value="discrepancy">Bất thường / Lệch</option>
+                <option value="matched">Đúng - Đã khớp</option>
+                <option value="discrepancy">Lệch - Bất thường</option>
+                <option value="late_payment">Tiền chưa về (A có, B không)</option>
+                <option value="other_transaction">Giao dịch khác (B có, A không)</option>
               </select>
             </div>
           </div>
@@ -311,11 +386,13 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, icon, color, highligh
 const StatusBadge: React.FC<{ status: ReconciliationRecord['status'] }> = ({ status }) => {
   switch (status) {
     case 'matched':
-      return <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-100 text-green-700 text-[10px] font-bold uppercase"><CheckCircle2 size={12}/> Khớp</span>;
+      return <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-100 text-green-700 text-[10px] font-bold uppercase"><CheckCircle2 size={12}/> Đã khớp</span>;
     case 'discrepancy':
-      return <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-100 text-red-700 text-[10px] font-bold uppercase"><AlertCircle size={12}/> Bất thường</span>;
+      return <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-100 text-red-700 text-[10px] font-bold uppercase"><AlertTriangle size={12}/> Bất thường</span>;
     case 'late_payment':
-      return <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold uppercase"><Clock size={12}/> Thu chậm</span>;
+      return <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold uppercase"><Clock size={12}/> Tiền chưa về</span>;
+    case 'other_transaction':
+      return <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 text-slate-700 text-[10px] font-bold uppercase"><Search size={12}/> Giao dịch khác</span>;
     default:
       return <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 text-slate-700 text-[10px] font-bold uppercase">Đang chờ</span>;
   }
