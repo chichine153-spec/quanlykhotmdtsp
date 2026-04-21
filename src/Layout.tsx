@@ -71,8 +71,8 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
 
   React.useEffect(() => {
     fetchPendingPayments();
-    // Refresh occasionally instead of real-time listener
-    const interval = setInterval(fetchPendingPayments, 5 * 60 * 1000); // 5 minutes
+    // Refresh much less often instead of every 5 minutes
+    const interval = setInterval(fetchPendingPayments, 30 * 60 * 1000); // 30 minutes
     return () => clearInterval(interval);
   }, [role, user]);
 

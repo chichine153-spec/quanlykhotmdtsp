@@ -1,4 +1,4 @@
-import { collection, query, where, getDocs, doc, setDoc, serverTimestamp, getFirestore } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, setDoc, serverTimestamp, getFirestore, limit, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 import { ReconciliationRecord, Order } from '../types';
 import * as XLSX from 'xlsx';
@@ -169,9 +169,20 @@ export class ReconciliationService {
    * Matches report data with system orders and saves results
    */
   static async reconcile(userId: string, reportData: any[]): Promise<{ results: ReconciliationRecord[], saveError: boolean }> {
-    // 1. Fetch all orders for this user
     const ordersRef = collection(db, 'orders');
-    const q = query(ordersRef, where('userId', '==', userId));
+    
+    // LIMIT: Only reconcile against orders from the last 45 days to save quota
+    const fortyFiveDaysAgo = new Date();
+    fortyFiveDaysAgo.setDate(fortyFiveDaysAgo.getDate() - 45);
+    const isolimitFetch = fortyFiveDaysAgo.toISOString();
+
+    const q = query(
+      ordersRef, 
+      where('userId', '==', userId),
+      where('processedAt', '>=', isolimitFetch),
+      limit(1000) // Hard limit to avoid quota explosion
+    );
+    
     const querySnapshot = await getDocs(q);
     const ordersMap = new Map<string, Order>();
     querySnapshot.forEach(docSnap => {
@@ -261,15 +272,32 @@ export class ReconciliationService {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     const isolimit = sevenDaysAgo.toISOString();
+    
+    // Also limit the search to the last 30 days to avoid fetching thousands of old orders
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const startDate = thirtyDaysAgo.toISOString();
 
     // 1. Get delivered orders
     const ordersRef = collection(db, 'orders');
-    const q = query(ordersRef, where('userId', '==', userId), where('status', '==', 'delivered'));
+    const q = query(
+      ordersRef, 
+      where('userId', '==', userId), 
+      where('status', '==', 'delivered'),
+      where('processedAt', '>=', startDate),
+      where('processedAt', '<=', isolimit),
+      limit(200)
+    );
     const snapshot = await getDocs(q);
     
-    // 2. Get all reconciled tracking codes for this user
+    // 2. Get all reconciled tracking codes for this user (limited to recent records)
     const reconRef = collection(db, 'reconciliations');
-    const reconQ = query(reconRef, where('userId', '==', userId));
+    const reconQ = query(
+      reconRef, 
+      where('userId', '==', userId),
+      orderBy('reconciledAt', 'desc'),
+      limit(300)
+    );
     const reconSnap = await getDocs(reconQ);
     const reconciledCodes = new Set<string>();
     reconSnap.forEach(d => reconciledCodes.add(d.data().trackingCode));
@@ -291,7 +319,12 @@ export class ReconciliationService {
    */
   static async fetchHistory(userId: string): Promise<ReconciliationRecord[]> {
     const reconRef = collection(db, 'reconciliations');
-    const q = query(reconRef, where('userId', '==', userId));
+    const q = query(
+      reconRef, 
+      where('userId', '==', userId),
+      orderBy('reconciledAt', 'desc'),
+      limit(200)
+    );
     const snapshot = await getDocs(q);
     return snapshot.docs.map(d => ({ ...d.data(), id: d.id } as ReconciliationRecord));
   }

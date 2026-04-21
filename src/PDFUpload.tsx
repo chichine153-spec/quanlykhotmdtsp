@@ -873,13 +873,20 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
                                 </div>
                               </td>
                               <td className="px-4 py-3">
-                                <input 
-                                  type="text"
-                                  value={item.sku}
-                                  onChange={(e) => handleUpdateReviewItem(oIdx, iIdx, 'sku', e.target.value)}
-                                  className="bg-surface-container-lowest border border-surface-container focus:border-primary focus:ring-1 focus:ring-primary rounded-lg px-2 py-1 outline-none font-bold text-[11px] text-on-surface w-full transition-all"
-                                  placeholder="Mã SKU"
-                                />
+                                <div className="flex flex-col gap-1">
+                                  <input 
+                                    type="text"
+                                    value={item.sku}
+                                    onChange={(e) => handleUpdateReviewItem(oIdx, iIdx, 'sku', e.target.value)}
+                                    className="bg-surface-container-lowest border border-surface-container focus:border-primary focus:ring-1 focus:ring-primary rounded-lg px-2 py-1 outline-none font-bold text-[11px] text-on-surface w-full transition-all"
+                                    placeholder="Mã SKU"
+                                  />
+                                  {item.productName && (
+                                    <div className="text-[9px] text-secondary/60 italic leading-tight truncate max-w-[120px]" title={item.productName}>
+                                      {item.productName}
+                                    </div>
+                                  )}
+                                </div>
                               </td>
                               <td className="px-4 py-3">
                                 <input 

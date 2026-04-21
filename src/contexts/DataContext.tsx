@@ -44,11 +44,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [config, setConfig] = useState<ProfitConfig | null>(null);
   const [globalConfig, setGlobalConfig] = useState<{ geminiApiKey?: string } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [fetching, setFetching] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [quotaExceeded, setQuotaExceeded] = useState(false);
 
   const fetchData = async (force: boolean = false) => {
-    if (!user) return;
+    if (!user || fetching) return;
 
     // Check cache if not forced
     const cachedInventory = localStorage.getItem(`cache_inventory_${user.uid}`);
@@ -79,6 +80,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     }
 
     setLoading(true);
+    setFetching(true);
     try {
       // Fetch initial data using getDocs for better control over quota usage
       const inventoryQuery = isAdmin 
@@ -136,6 +138,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       
       setLastUpdated(new Date(now));
       setLoading(false);
+      setFetching(false);
       setQuotaExceeded(false);
     } catch (error: any) {
       const classified = classifyError(error, 'Firebase');
@@ -152,6 +155,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       }
       
       setLoading(false);
+      setFetching(false);
     }
   };
 

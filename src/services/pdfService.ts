@@ -223,26 +223,26 @@ export class PDFService {
     fallbackKey: string | null,
     shopPlan: string
   ): Promise<ExtractedOrder[]> {
-    const prompt = `DƯỚI ĐÂY LÀ NỘI DUNG VĂN BẢN TRÍCH XUẤT TỪ FILE VẬN ĐƠN (SHIPPING LABEL) HOẶC HÓA ĐƠN:
+    const prompt = `DƯỚI ĐÂY LÀ NỘI DUNG VĂN BẢN TRÍCH XUẤT TỪ FILE VẬN ĐƠN (SHIPPING LABEL) HOẶC HÓA ĐƠN CỦA SHOPEE:
     ---
     ${text}
     ---
-    NHIỆM VỤ: Trích xuất danh sách các đơn hàng chính xác.
+    NHIỆM VỤ: Trích xuất danh sách các đơn hàng chính xác từ văn bản này.
     
-    YÊU CẦU QUAN TRỌNG VỀ SỐ LƯỢNG (QUANTITY):
-    - TUYỆT ĐỐI KHÔNG để quantity > 1 trong kết quả trả về.
-    - Nếu một mã vận đơn có tổng SL là 2 (ví dụ: 2 Cốc 336), bạn PHẢI tạo ra 2 đối tượng item riêng biệt trong mảng items, mỗi dòng có quantity = 1.
-    - Nếu đơn có 2 mẫu khác nhau (ví dụ: 1 Cốc Hồng, 1 Cốc Be), cũng PHẢI tạo 2 dòng riêng biệt với quantity = 1.
-    - Điều này giúp hệ thống trừ kho chính xác từng sản phẩm.
+    YÊU CẦU QUAN TRỌNG VỀ ĐỊNH DANH (IDENTIFICATION):
+    1. Mã vận đơn (Tracking Code): Thường bắt đầu bằng SPXVN..., VN..., dùng làm neo để nhóm sản phẩm.
+    2. Tên sản phẩm (Product Name): Trích xuất Tên đầy đủ của sản phẩm. Ví dụ: "Bình giữ nhiệt Costa BGN07", "Cốc giữ nhiệt Zana 334".
+    3. Mã SKU: Đây là mã định danh sản phẩm quan trọng nhất.
+       - QUY TẮC VÀNG: Phần mã số/ký hiệu đứng ĐẦU TIÊN (trước dấu gạch ngang "-" hoặc khoảng trắng) trong tên phân loại thường là SKU. 
+       - Ví dụ: Trong chuỗi "334-Màu Cam 600ml", hãy bóc tách "334" là SKU và "Màu Cam 600ml" là Color.
+       - Đặc biệt lưu ý các tiền tố: 334, 335, 336, 338, BGN (ví dụ: 334, 335, BGN01, BGN-07). Nếu thấy các số này đứng đầu, chúng CHẮC CHẮN là SKU.
+       - TUYỆT ĐỐI BỎ QUA các mã vận hành/hậu cần của sàn: "MBA-...", "HUB-...", "POST-...", "Standard-...", "Hà Nội - ...", "HCM - ...", "Hòa Bình - ...". Các mã này KHÔNG phải là SKU sản phẩm.
+       - SKU thường nằm trong bảng kê hàng hóa, ngay cạnh tên sản phẩm hoặc trong ngoặc [...].
+    4. Màu sắc/Phân loại (Color/Variant): Mô tả màu sắc, kích thước. Ví dụ: "Màu Cam", "900ml", "Size M". Nếu SKU cũng chứa thông tin màu sắc (như trong "334-Màu Cam"), hãy trích xuất đúng phần mô tả màu vào trường này.
     
-    HƯỚNG DẪN CHI TIẾT:
-    1. Mã vận đơn (Tracking Code):SPXVN..., VN..., dùng làm neo để nhóm sản phẩm.
-    2. Mã SKU: Mã định danh quan trọng nhất (330, 315, BGN-01). Ưu tiên mã ngắn.
-    3. Màu sắc/Phân loại (Color/Variant): Mô tả màu sắc, kích thước. KHÔNG kèm số lượng vào đây.
-    4. Thông tin người nhận: Tên, SĐT, Địa chỉ.
-    
-    YÊU CẦU ĐỊA PHƯƠNG HÓA:
-    - Vận đơn Shopee/TikTok/Lazada Việt Nam. SKU là mã code, Variant là chữ mô tả.
+    YÊU CẦU VỀ SỐ LƯỢNG (QUANTITY):
+    - TUYỆT ĐỐI KHÔNG để quantity > 1 trong một dòng items.
+    - Nếu đơn có 2 sản phẩm giống nhau, hãy tạo 2 đối tượng item riêng biệt với quantity = 1.
     
     Trả về mảng JSON các đối tượng ExtractedOrder.`;
 
@@ -270,6 +270,7 @@ export class PDFService {
               items: {
                 type: Type.OBJECT,
                 properties: {
+                  productName: { type: Type.STRING },
                   sku: { type: Type.STRING },
                   color: { type: Type.STRING },
                   quantity: { type: Type.NUMBER },
@@ -310,8 +311,8 @@ export class PDFService {
           
           if (parts.length === qty) {
             return parts.map(p => {
-              // Try to detect if there's a new SKU in the part (e.g. "336 - Màu Hồng")
-              const skuMatch = p.match(/\b(BGN\d*|315|330|336|338|\d{3,10})\b/i);
+              // Try to detect if there's a new SKU in the part (e.g. "336 - Màu Hồng" or "334 - Màu Tím")
+              const skuMatch = p.match(/\b(BGN\d*|315|330|334|335|336|338|\d{3,10})\b/i);
               if (skuMatch) {
                 const newSku = skuMatch[1];
                 const newColor = p.replace(newSku, '').replace(/^[\s\-]+/, '').trim();
@@ -510,100 +511,6 @@ export class PDFService {
     }
   }
 
-  private static parseSkuAndColor(rawInfo: string, quantity: number): ExtractedItem | null {
-    // Remove leading item numbers like "1. " and trailing commas/spaces
-    let cleanedInfo = rawInfo.replace(/^\d+[\.\s\]]*/, '').trim();
-    cleanedInfo = cleanedInfo.replace(/[,;]\s*$/, '').trim();
-    if (!cleanedInfo) return null;
-
-    // Filter out unwanted items (stickers, bags, gifts, etc.)
-    const excludedKeywords = ['sticker', 'túi đựng', 'quà tặng', 'phụ kiện', 'quà', 'set', 'túi', 'nắp đạy', 'nắp cốc', 'ống hút', 'nắp đậy', 'sticker nắp đạy', 'nắp đậy ống hút'];
-    const lowerInfo = cleanedInfo.toLowerCase();
-    if (excludedKeywords.some(kw => lowerInfo.includes(kw))) {
-      return null;
-    }
-
-    // Split by comma or semicolon
-    const parts = cleanedInfo.split(/[,;]/).map(p => p.trim()).filter(p => p.length > 0);
-    if (parts.length === 0) return null;
-    
-    let sku = '';
-    let color = '';
-    
-    // The last part usually contains the SKU and Variant in Shopee labels
-    const lastPart = parts[parts.length - 1];
-    
-    // 1. Clean dimension patterns (e.g., 31x16x7, 1200ml) and "Size"
-    const dimensionPattern = /\b\d+x\d+x\d+\b|\b\d+ml\b/i;
-    const sizePattern = /\bSize\b/i;
-
-    // 2. Extract SKU: Look for numeric SKU (3+ digits) or BGN prefix
-    // We want to be strict about what counts as an SKU
-    const skuMatch = lastPart.match(/\b(BGN\d*|315|330|336|338|\d{3,10})\b/i);
-    
-    if (skuMatch) {
-      const potentialSku = skuMatch[1].trim();
-      
-      // Check if this potential SKU is actually a dimension or "Size"
-      if (dimensionPattern.test(potentialSku) || sizePattern.test(potentialSku)) {
-        // If it is garbage, we look for a REAL SKU in the remaining text
-        const remainingText = cleanedInfo.replace(potentialSku, '');
-        const realSkuMatch = remainingText.match(/\b(BGN\d*|315|330|336|338|\d{3,10})\b/i);
-        
-        if (realSkuMatch) {
-          sku = realSkuMatch[1].trim();
-          // Color is the rest of the text, including the garbage we found
-          color = cleanedInfo.replace(sku, '').trim();
-        } else {
-          // If no real SKU found, this might not be a valid product for our inventory
-          sku = '';
-          color = cleanedInfo;
-        }
-      } else {
-        sku = potentialSku;
-        // Color is everything else in the last part or other parts
-        color = lastPart.replace(sku, '').trim();
-        if (!color && parts.length > 1) {
-          color = parts.slice(0, -1).join(', ');
-        }
-      }
-    } else {
-      // Fallback: use the first word of the last part if it looks like a code
-      const firstWord = lastPart.split(/[\s\-]/)[0].trim();
-      if (firstWord.length >= 3 && !dimensionPattern.test(firstWord) && !sizePattern.test(firstWord)) {
-        sku = firstWord;
-        color = lastPart.substring(sku.length).trim();
-      } else {
-        // Try other parts
-        for (let i = parts.length - 2; i >= 0; i--) {
-          const partMatch = parts[i].match(/\b(BGN\d*|315|330|336|338|\d{3,10})\b/i);
-          if (partMatch && !dimensionPattern.test(partMatch[1]) && !sizePattern.test(partMatch[1])) {
-            sku = partMatch[1].trim();
-            color = cleanedInfo.replace(sku, '').trim();
-            break;
-          }
-        }
-      }
-    }
-
-    // 3. Final cleanup of SKU and Color
-    sku = sku.replace(/^[,\-\s]+|[,\-\s]+$/g, '').trim();
-    color = color.replace(/^[,\-\s]+|[,\-\s]+$/g, '').trim();
-    
-    // Remove "SL: X" from color
-    color = color.replace(/SL:\s*\d+/i, '').trim();
-    
-    // If SKU is still a dimension or "Size", move it to color
-    if (dimensionPattern.test(sku) || sizePattern.test(sku)) {
-      color = `${sku} ${color}`.trim();
-      sku = '';
-    }
-
-    if (!sku) return null;
-
-    return { sku, color, quantity };
-  }
-
   /**
    * Helper to find a product in inventory based on SKU and Variant
    */
@@ -667,12 +574,21 @@ export class PDFService {
       }
     }
 
-    // 4. Partial SKU match
+    // 4. Partial SKU match (prioritize color match among partial SKU matches)
     if (!matchedProduct) {
-      matchedProduct = allProducts.find(p => {
+      const partialSkuMatches = allProducts.filter(p => {
         const pSku = normalize(p.sku);
         return pSku.includes(normExtractedSku) || normExtractedSku.includes(pSku);
       });
+      
+      if (partialSkuMatches.length > 0) {
+        // Find best color match among these partial SKU matches
+        matchedProduct = partialSkuMatches.find(p => {
+          const v = normalize(p.variant);
+          const c = normExtractedColor;
+          return (v && c) && (v.includes(c) || c.includes(v));
+        }) || partialSkuMatches[0];
+      }
     }
 
     if (matchedProduct && !matchedProduct.ref && matchedProduct.id) {
