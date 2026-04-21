@@ -84,8 +84,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     try {
       // Fetch initial data using getDocs for better control over quota usage
       const inventoryQuery = isAdmin 
-        ? query(collection(db, 'inventory'), limit(300)) 
-        : query(collection(db, 'inventory'), where('userId', '==', user.uid), limit(200));
+        ? query(collection(db, 'inventory'), limit(1000)) 
+        : query(collection(db, 'inventory'), where('userId', '==', user.uid), limit(500));
         
       const ordersQuery = isAdmin
         ? query(collection(db, 'orders'), orderBy('processedAt', 'desc'), limit(100))

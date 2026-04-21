@@ -328,6 +328,8 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
             stockStatus: stockInfo.inStock ? 'in_stock' : 'out_of_stock',
             currentStock: stockInfo.currentStock,
             productName: stockInfo.productName || item.productName,
+            // If we matched a product with a different SKU than extracted, store the real SKU for display
+            matchedSku: (stockInfo.realSku && stockInfo.realSku !== item.sku) ? stockInfo.realSku : undefined,
             category: stockInfo.category,
             costPrice: stockInfo.costPrice || item.costPrice || 0,
             sellingPrice: stockInfo.sellingPrice || item.sellingPrice || 0,
@@ -882,8 +884,13 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
                                     placeholder="Mã SKU"
                                   />
                                   {item.productName && (
-                                    <div className="text-[9px] text-secondary/60 italic leading-tight truncate max-w-[120px]" title={item.productName}>
-                                      {item.productName}
+                                    <div className="text-[9px] text-secondary/60 italic leading-tight truncate max-w-[150px]" title={item.productName}>
+                                      {item.productName} 
+                                      {item.matchedSku && (
+                                        <span className="font-black text-primary ml-1 not-italic">
+                                          [SKU Chuẩn: {item.matchedSku}]
+                                        </span>
+                                      )}
                                     </div>
                                   )}
                                 </div>

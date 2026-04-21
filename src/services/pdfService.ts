@@ -34,6 +34,7 @@ export interface ExtractedItem {
   color: string;
   quantity: number;
   productName?: string;
+  matchedSku?: string;
   currentStock?: number;
   packagingFee?: number;
   costPrice?: number;
@@ -232,12 +233,14 @@ export class PDFService {
     YÊU CẦU QUAN TRỌNG VỀ ĐỊNH DANH (IDENTIFICATION):
     1. Mã vận đơn (Tracking Code): Thường bắt đầu bằng SPXVN..., VN..., dùng làm neo để nhóm sản phẩm.
     2. Tên sản phẩm (Product Name): Trích xuất Tên đầy đủ của sản phẩm. Ví dụ: "Bình giữ nhiệt Costa BGN07", "Cốc giữ nhiệt Zana 334".
-    3. Mã SKU: Đây là mã định danh sản phẩm quan trọng nhất.
+    3. Mã SKU (QUAN TRỌNG NHẤT):
+       - SKU thường là một mã số (ví dụ: 334, 335, 336, 338, 315) hoặc mã chữ số (ví dụ: BGN01, BGN-07).
+       - SKU KHÔNG phải là tên phân loại màu sắc (ví dụ: "Màu Cam", "Màu Hồng-600ml").
+       - SKU là mã của sản phẩm chính, không phải thuộc tính.
+       - Ví dụ: Trong "Cốc giữ nhiệt 334 - Màu Cam", SKU là "334", Màu sắc là "Màu Cam".
        - QUY TẮC VÀNG: Phần mã số/ký hiệu đứng ĐẦU TIÊN (trước dấu gạch ngang "-" hoặc khoảng trắng) trong tên phân loại thường là SKU. 
-       - Ví dụ: Trong chuỗi "334-Màu Cam 600ml", hãy bóc tách "334" là SKU và "Màu Cam 600ml" là Color.
-       - Đặc biệt lưu ý các tiền tố: 334, 335, 336, 338, BGN (ví dụ: 334, 335, BGN01, BGN-07). Nếu thấy các số này đứng đầu, chúng CHẮC CHẮN là SKU.
-       - TUYỆT ĐỐI BỎ QUA các mã vận hành/hậu cần của sàn: "MBA-...", "HUB-...", "POST-...", "Standard-...", "Hà Nội - ...", "HCM - ...", "Hòa Bình - ...". Các mã này KHÔNG phải là SKU sản phẩm.
-       - SKU thường nằm trong bảng kê hàng hóa, ngay cạnh tên sản phẩm hoặc trong ngoặc [...].
+       - Đặc biệt lưu ý các tiền tố: 334, 335, 336, 338, BGN. Nếu thấy các số này, chúng CHẮC CHẮN là SKU.
+       - TUYỆT ĐỐI BỎ QUA các mã vận hành: "MBA-...", "HUB-...", "POST-...", "Standard-...", "Hà Nội - ...", "HCM - ...".
     4. Màu sắc/Phân loại (Color/Variant): Mô tả màu sắc, kích thước. Ví dụ: "Màu Cam", "900ml", "Size M". Nếu SKU cũng chứa thông tin màu sắc (như trong "334-Màu Cam"), hãy trích xuất đúng phần mô tả màu vào trường này.
     
     YÊU CẦU VỀ SỐ LƯỢNG (QUANTITY):
@@ -578,7 +581,12 @@ export class PDFService {
     if (!matchedProduct) {
       const partialSkuMatches = allProducts.filter(p => {
         const pSku = normalize(p.sku);
-        return pSku.includes(normExtractedSku) || normExtractedSku.includes(pSku);
+        const pName = normalize(p.name);
+        // Check if SKU is inside extracted SKU OR vice versa
+        // OR check if extracted SKU is actually a part of the product name (e.g. "334" in "Cốc 334")
+        return pSku.includes(normExtractedSku) || 
+               normExtractedSku.includes(pSku) ||
+               pName.includes(normExtractedSku);
       });
       
       if (partialSkuMatches.length > 0) {
@@ -605,6 +613,7 @@ export class PDFService {
     inStock: boolean, 
     currentStock: number, 
     productName?: string, 
+    realSku?: string,
     category?: string,
     costPrice?: number,
     sellingPrice?: number
@@ -617,6 +626,7 @@ export class PDFService {
         inStock: matchedProduct.stock > 0, 
         currentStock: matchedProduct.stock,
         productName: matchedProduct.name,
+        realSku: matchedProduct.sku,
         category: matchedProduct.category,
         costPrice: matchedProduct.costPrice,
         sellingPrice: matchedProduct.sellingPrice
