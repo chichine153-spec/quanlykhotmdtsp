@@ -4,7 +4,25 @@ import App from './App.tsx';
 import { AuthProvider } from './contexts/AuthContext';
 import { DataProvider } from './contexts/DataContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { doc, getDocFromServer } from 'firebase/firestore';
+import { db } from './firebase';
 import './index.css';
+
+// Test connection to Firestore as per best practices
+async function testConnection() {
+  try {
+    // Only attempt if we have initialized db
+    if (db) {
+      await getDocFromServer(doc(db, 'global_configs', 'settings'));
+      console.log('Firebase connection verified.');
+    }
+  } catch (error) {
+    if(error instanceof Error && (error.message.includes('offline') || error.message.includes('permission'))) {
+      console.warn("Firestore connection check produced an expected warning or error:", error.message);
+    }
+  }
+}
+testConnection();
 
 // Global error handling for unhandled promise rejections and errors
 // This is crucial for catching Firestore internal assertion failures that happen in background streams
