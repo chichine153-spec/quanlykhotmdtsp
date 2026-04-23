@@ -42,20 +42,32 @@ export default function Dashboard({ onScreenChange }: DashboardProps) {
   const [loading, setLoading] = React.useState(false);
   const [selectedOrder, setSelectedOrder] = React.useState<OrderRecord | null>(null);
   const [showTrackingModal, setShowTrackingModal] = React.useState(false);
-  const [selectedDate, setSelectedDate] = React.useState(new Date().toISOString().split('T')[0]);
+  const getLocalDateString = (date: Date | string) => {
+    try {
+      const d = new Date(date);
+      if (isNaN(d.getTime())) return '';
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const [selectedDate, setSelectedDate] = React.useState(getLocalDateString(new Date()));
   const [showOrderDetails, setShowOrderDetails] = React.useState(false);
   const [showProblematicModal, setShowProblematicModal] = React.useState(false);
   const [showTopSellersModal, setShowTopSellersModal] = React.useState(false);
   const [topSellersTimeframe, setTopSellersTimeframe] = React.useState<'today' | '7days' | '30days'>('today');
-  const [shippingOrders, setShippingOrders] = React.useState<any[]>([]);
 
-  // Get last 10 days
+  // Get last 10 days in local time
   const last10Days = React.useMemo(() => {
     const dates = [];
     for (let i = 0; i < 10; i++) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      dates.push(d.toISOString().split('T')[0]);
+      dates.push(getLocalDateString(d));
     }
     return dates;
   }, []);
@@ -64,38 +76,17 @@ export default function Dashboard({ onScreenChange }: DashboardProps) {
     setLoading(dataLoading);
   }, [dataLoading]);
 
-  // Fetch shipping orders from Supabase
-  const fetchShippingOrders = React.useCallback(async () => {
-    if (!user) return;
-    const supabase = getSupabase();
-    if (!supabase) return;
-
-    try {
-      const { data, error } = await supabase
-        .from('print_history')
-        .select('*')
-        .eq('user_id', user.uid)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setShippingOrders(data || []);
-    } catch (err) {
-      console.error('Error fetching shipping orders:', err);
-    }
-  }, [user]);
-
-  React.useEffect(() => {
-    fetchShippingOrders();
-  }, [fetchShippingOrders]);
-
-  // Derived stats
+  // Derived stats with robust local date comparison
   const dailyOrders = React.useMemo(() => {
-    return orders.filter(o => o.processedAt.split('T')[0] === selectedDate);
+    return orders.filter(o => {
+      if (!o.processedAt) return false;
+      return getLocalDateString(o.processedAt) === selectedDate;
+    });
   }, [orders, selectedDate]);
 
   const shippingCount = React.useMemo(() => {
-    return shippingOrders.filter(o => o.status === 'Giao hàng' || o.status === 'Đang giao' || !o.status).length;
-  }, [shippingOrders]);
+    return dailyOrders.length;
+  }, [dailyOrders]);
 
   const lowStockItems = React.useMemo(() => {
     return InventoryService.getLowStockItems(inventory, 5);

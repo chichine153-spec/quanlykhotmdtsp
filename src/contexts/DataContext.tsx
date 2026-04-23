@@ -84,33 +84,26 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     try {
       // 1. Fetch data from Supabase-enabled services first
       // This will use Supabase if configured, or fallback to Firebase if not.
-      const [newInventory, newOrders] = await Promise.all([
+      const [newInventory, newOrders, newConfig, newReturns, newProblematic] = await Promise.all([
         InventoryService.fetchInventory(user.uid),
-        InventoryService.fetchOrders(user.uid)
+        InventoryService.fetchOrders(user.uid),
+        ProfitService.fetchConfig(user.uid),
+        ProfitService.fetchReturns(user.uid),
+        InventoryService.fetchProblematicOrders(user.uid)
       ]);
       
       // 2. Fetch other configs that still reside in Firebase for now
       // We wrap these in individual try-catch to not block the whole UI if one fails
-      let newConfig = config;
       let newGlobalConfig = globalConfig;
-      let newReturns = returns;
-      let newProblematic = problematicOrders;
 
       try {
-        const [returnsSnap, problematicSnap, configSnap, globalConfigSnap] = await Promise.all([
-          getDocs(query(collection(db, 'returns'), where('userId', '==', user.uid), limit(50))),
-          getDocs(query(collection(db, 'problematic_orders'), where('userId', '==', user.uid), limit(30))),
-          getDoc(doc(db, 'profit_configs', user.uid)),
+        const [globalConfigSnap] = await Promise.all([
           getDoc(doc(db, 'global_configs', 'settings'))
         ]);
 
-        newReturns = returnsSnap.docs.map(d => ({ id: d.id, ...d.data() })) as ReturnRecord[];
-        newProblematic = problematicSnap.docs.map(d => ({ id: d.id, ...d.data() })) as ProblematicOrder[];
-        newConfig = configSnap.exists() ? configSnap.data() as ProfitConfig : null;
         newGlobalConfig = globalConfigSnap.exists() ? globalConfigSnap.data() as any : null;
       } catch (fbError: any) {
         console.warn('[DataContext] Firebase secondary fetch failed (likely quota):', fbError.message);
-        // If it's a quota error, we just keep using what we have (or cache)
       }
 
       console.log(`Fetch successful for user ${user.uid}: ${newInventory.length} products, ${newOrders.length} orders.`);

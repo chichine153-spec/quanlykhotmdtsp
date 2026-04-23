@@ -28,7 +28,7 @@ import { GeminiService } from './services/gemini';
 import { ThermalLabel } from './components/RePrintModule';
 import { OrderRecord } from './services/inventoryService';
 import { logErrorToSupabase, FRIENDLY_ERROR_MESSAGE } from './lib/error-logging';
-import { Printer, X } from 'lucide-react';
+import { Printer, X, ExternalLink } from 'lucide-react';
 import { Screen } from './types';
 
 interface PDFUploadProps {
@@ -87,6 +87,11 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
   
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [isInventoryEmpty, setIsInventoryEmpty] = React.useState(false);
+  const [isIframe, setIsIframe] = React.useState(false);
+
+  React.useEffect(() => {
+    setIsIframe(window.self !== window.top);
+  }, []);
 
   // Auto-refresh when printing modal opens to catch background image_url updates
   React.useEffect(() => {
@@ -616,21 +621,57 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
   const [isPrinting, setIsPrinting] = React.useState(false);
 
   const handlePrint = () => {
+    if (!selectedOrderToPrint) {
+      addToast("Không tìm thấy thông tin đơn hàng để in.", "error");
+      return;
+    }
+
+    const { trackingCode, orderId, job_id, shop_id } = selectedOrderToPrint;
+
+    // Shopee URL logic: If we have both IDs, try to open Shopee Print Page
+    if (job_id && shop_id && job_id !== 'null' && shop_id !== 'null') {
+      setIsPrinting(true);
+      const shopee_print_url = `https://banhang.shopee.vn/api/v3/settings/print_awb/?job_id=${job_id}&shop_id=${shop_id}&lang=vi`;
+      
+      try {
+        const newWindow = window.open(shopee_print_url, '_blank');
+        
+        if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+          addToast("Trình duyệt đã chặn cửa sổ bật lên. Vui lòng cho phép trình duyệt mở tab mới hoặc nhấn 'Mở tab mới' ở trên.", "error");
+          setIsPrinting(false);
+        } else {
+          addToast("Đang chuyển sang trang in Shopee...", "success");
+          setTimeout(() => {
+            setShowPrintTemplate(false);
+            setIsPrinting(false);
+            if (onScreenChange) onScreenChange('reprint');
+          }, 800);
+        }
+        return;
+      } catch (err) {
+        console.error("[PDFUpload] Opening Shopee print URL failed", err);
+      }
+    }
+
+    // Fallback logic: Use system thermal template (window.print)
+    console.log('[PDFUpload] No Shopee print IDs found, falling back to system thermal template');
     setIsPrinting(true);
-    // Ensure focus is on the document
+    
+    // Ensure window has focus for printing
     window.focus();
     
-    // Tiny delay to allow state changes if any
     setTimeout(() => {
       try {
         window.print();
+        addToast("Đang chuẩn bị bản in hệ thống...", "info");
       } catch (err) {
-        console.error("[PDFUpload] Print failed", err);
-        addToast("Không thể mở hộp thoại in. Vui lòng thử lại hoặc mở tab mới.", "error");
+        console.error("[PDFUpload] System print failed", err);
+        addToast("Không thể in. Vui lòng thử lại.", "error");
       } finally {
         setIsPrinting(false);
+        // Don't auto-close modal on fallback print as user might need to retry or see it
       }
-    }, 150);
+    }, 200);
   };
 
   return (
@@ -1361,13 +1402,42 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
                 className="relative w-full max-w-2xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] no-print"
               >
                 <div className="p-6 border-b border-surface-container flex justify-between items-center">
-                  <h3 className="text-xl font-black text-on-surface tracking-tight">Xem trước bản in nhiệt</h3>
-                  <button 
-                    onClick={() => setShowPrintTemplate(false)}
-                    className="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center text-secondary hover:bg-error hover:text-white transition-all"
-                  >
-                    <X size={20} />
-                  </button>
+                  <div className="flex flex-col">
+                    <h3 className="text-xl font-black text-on-surface tracking-tight">Xem trước bản in nhiệt</h3>
+                    <div className="flex gap-3 mt-1">
+                      {selectedOrderToPrint?.orderId && (
+                        <span className="text-[10px] font-bold text-secondary bg-surface-container px-2 py-0.5 rounded">ID: {selectedOrderToPrint.orderId}</span>
+                      )}
+                      {selectedOrderToPrint?.job_id && (
+                        <span className="text-[10px] font-bold text-secondary bg-surface-container px-2 py-0.5 rounded">Job: {selectedOrderToPrint.job_id}</span>
+                      )}
+                      {selectedOrderToPrint?.shop_id && (
+                        <span className="text-[10px] font-bold text-secondary bg-surface-container px-2 py-0.5 rounded">Shop: {selectedOrderToPrint.shop_id}</span>
+                      )}
+                    </div>
+                    {isIframe && (
+                      <p className="text-[10px] font-bold text-primary flex items-center gap-1 mt-0.5">
+                        <AlertCircle size={10} /> Trình duyệt đang chặn in ấn trong iframe.
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {isIframe && (
+                      <button 
+                        onClick={() => window.open(window.location.href, '_blank')}
+                        className="flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-xl font-bold text-xs hover:bg-primary hover:text-white transition-all"
+                      >
+                        <ExternalLink size={14} />
+                        Mở tab mới
+                      </button>
+                    )}
+                    <button 
+                      onClick={() => setShowPrintTemplate(false)}
+                      className="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center text-secondary hover:bg-error hover:text-white transition-all"
+                    >
+                      <X size={20} />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex-grow overflow-y-auto p-8 bg-surface-container-low flex justify-center">

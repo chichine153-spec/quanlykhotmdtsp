@@ -19,12 +19,43 @@ import { db } from '../firebase';
 import { ReturnRecord } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
 
+import { getSupabase } from '../lib/supabase';
+
 export class ReturnService {
   /**
    * Search for an original order by tracking code
    */
   static async searchOrder(trackingCode: string, userId: string) {
-    // Try searching in 'orders' first
+    const supabase = getSupabase();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('user_id', userId)
+          .eq('tracking_code', trackingCode)
+          .maybeSingle();
+        
+        if (error) throw error;
+        if (data) {
+          return {
+            id: data.id,
+            trackingCode: data.tracking_code,
+            userId: data.user_id,
+            platform: data.platform,
+            status: data.status,
+            total_amount: data.total_amount,
+            total_cost: data.total_cost,
+            processedAt: data.created_at,
+            items: data.items || [] // Assumes items are stored as JSONB in Supabase
+          };
+        }
+      } catch (err) {
+        console.error('[ReturnService] Supabase search failed:', err);
+      }
+    }
+
+    // Try searching in 'orders' first in Firestore
     const ordersRef = collection(db, 'orders');
     const q = query(
       ordersRef,
@@ -77,6 +108,58 @@ export class ReturnService {
         costPrice: item.costPrice || 0
       }))
     };
+
+    const supabase = getSupabase();
+    if (supabase) {
+      try {
+        // 1. Save return to Supabase
+        await supabase
+          .from('returns')
+          .insert({
+            user_id: userId,
+            tracking_code: order.trackingCode,
+            returned_at: returnData.returnedAt,
+            items: returnData.items,
+            reason: returnData.reason
+          });
+        
+        // 2. Update order status in Supabase
+        await supabase
+          .from('orders')
+          .update({ status: 'returned' })
+          .eq('tracking_code', order.trackingCode);
+        
+        // 3. Update inventory in Supabase
+        for (const item of returnData.items) {
+          const { data: p } = await supabase
+            .from('products')
+            .select('stock_quantity, id')
+            .eq('sku', item.sku)
+            .eq('variant', item.variant)
+            .maybeSingle();
+          
+          if (p) {
+            await supabase
+              .from('products')
+              .update({ stock_quantity: Number(p.stock_quantity || 0) + item.quantity })
+              .eq('id', p.id);
+            
+            // Log addition
+            await supabase.from('inventory_logs').insert({
+              user_id: userId,
+              sku: item.sku,
+              product_name: item.productName,
+              variant: item.variant,
+              quantity_change: item.quantity,
+              type: 'addition',
+              details: `Nhập hàng hoàn từ mã ${order.trackingCode}`
+            });
+          }
+        }
+      } catch (err) {
+        console.error('[ReturnService] Supabase process failed:', err);
+      }
+    }
 
     await runTransaction(db, async (transaction) => {
       // 1. ALL READS FIRST

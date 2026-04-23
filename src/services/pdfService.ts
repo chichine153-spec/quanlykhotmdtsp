@@ -51,6 +51,10 @@ export interface ExtractedOrder {
   recipientAddress?: string;
   rawText?: string;
   isCup?: boolean; // Note for "Cốc giữ nhiệt"
+  job_id?: string;
+  shop_id?: string;
+  orderId?: string;
+  platform?: string;
 }
 
 enum OperationType {
@@ -178,11 +182,24 @@ export class PDFService {
         fallbackKey, 
         shopPlan
       );
-      
+
+      // BACKUP REGEX EXTRACTION for job_id and shop_id
+      const docJobIdMatch = fullText.match(/job_id[:=]\s*(\d+)/i);
+      const docShopIdMatch = fullText.match(/shop_id[:=]\s*(\d+)/i);
+      const docJobId = docJobIdMatch ? docJobIdMatch[1] : null;
+      const docShopId = docShopIdMatch ? docShopIdMatch[1] : null;
+
       // Check for "Cốc giữ nhiệt" category
       const cupKeywords = ['cốc', 'ly', 'giữ nhiệt', 'costa', 'tumbler', 'cup', 'bình'];
       const processedOrders = extractedOrders.map(order => {
-        const isCup = order.items.some(item => 
+        // Enforce IDs from backup if Gemini missed them
+        const finalOrder = {
+          ...order,
+          job_id: (order.job_id && order.job_id !== 'null') ? order.job_id : (docJobId || ''),
+          shop_id: (order.shop_id && order.shop_id !== 'null') ? order.shop_id : (docShopId || '')
+        };
+
+        const isCup = finalOrder.items.some(item => 
           cupKeywords.some(kw => 
             (item.sku?.toLowerCase().includes(kw) || 
              item.productName?.toLowerCase().includes(kw) ||
@@ -190,7 +207,7 @@ export class PDFService {
           )
         );
         return {
-          ...order,
+          ...finalOrder,
           rawText: fullText,
           isCup
         };
@@ -232,8 +249,12 @@ export class PDFService {
     
     YÊU CẦU QUAN TRỌNG VỀ ĐỊNH DANH (IDENTIFICATION):
     1. Mã vận đơn (Tracking Code): Thường bắt đầu bằng SPXVN..., VN..., dùng làm neo để nhóm sản phẩm.
-    2. Tên sản phẩm (Product Name): Trích xuất Tên đầy đủ của sản phẩm. Ví dụ: "Bình giữ nhiệt Costa BGN07", "Cốc giữ nhiệt Zana 334".
-    3. Mã SKU (QUAN TRỌNG NHẤT):
+    2. Mã đơn hàng (Order ID): Một dãy số dài thường bắt đầu bằng số Shopee (ví dụ: 240524XAB...).
+    3. Mã Job ID và Shop ID (PHỤC VỤ IN NHIỆT): 
+       - Tìm kiếm trong văn bản các chuỗi có định dạng job_id=[SỐ] và shop_id=[SỐ] hoặc các tham số URL tương tự.
+       - Nếu không thấy trực tiếp dưới dạng job_id/shop_id, hãy tìm các mã số định danh cửa hàng (thường 8-10 chữ số) và ID tiến trình in (thường 10-15 chữ số).
+    4. Tên sản phẩm (Product Name): Trích xuất Tên đầy đủ của sản phẩm. Ví dụ: "Bình giữ nhiệt Costa BGN07", "Cốc giữ nhiệt Zana 334".
+    5. Mã SKU (QUAN TRỌNG NHẤT):
        - SKU thường là một mã số (ví dụ: 334, 335, 336, 338, 315) hoặc mã chữ số (ví dụ: BGN01, BGN-07).
        - SKU KHÔNG phải là tên phân loại màu sắc (ví dụ: "Màu Cam", "Màu Hồng-600ml").
        - SKU là mã của sản phẩm chính, không phải thuộc tính.
@@ -268,6 +289,9 @@ export class PDFService {
             recipientName: { type: Type.STRING },
             recipientPhone: { type: Type.STRING },
             recipientAddress: { type: Type.STRING },
+            orderId: { type: Type.STRING, description: "Mã đơn hàng (Order ID), thường bắt đầu bằng số Shopee" },
+            job_id: { type: Type.STRING, description: "Mã Job ID của đơn hàng in nhiệt (nếu có)" },
+            shop_id: { type: Type.STRING, description: "Mã Shop ID của đơn hàng (nếu có)" },
             items: {
               type: Type.ARRAY,
               items: {
@@ -299,6 +323,9 @@ export class PDFService {
       recipientPhone: (order.recipientPhone && String(order.recipientPhone).toLowerCase() !== 'null') ? order.recipientPhone : '',
       recipientAddress: (order.recipientAddress && String(order.recipientAddress).toLowerCase() !== 'null') ? order.recipientAddress : '',
       region: (order.region && String(order.region).toLowerCase() !== 'null') ? order.region : '',
+      orderId: (order.orderId && String(order.orderId).toLowerCase() !== 'null') ? order.orderId : '',
+      job_id: (order.job_id && String(order.job_id).toLowerCase() !== 'null') ? order.job_id : '',
+      shop_id: (order.shop_id && String(order.shop_id).toLowerCase() !== 'null') ? order.shop_id : '',
     }));
     
     // Split items with quantity > 1 into multiple items with quantity 1
@@ -650,11 +677,30 @@ export class PDFService {
     }
 
     try {
-      const processedOrderRef = doc(db, 'processed_orders', trackingCode);
+      // Helper to safely parse numbers and strip common currency formats
+      const safeNum = (val: any) => {
+        if (typeof val === 'number') return isNaN(val) ? 0 : val;
+        if (!val) return 0;
+        // Clean string: keep only digits, minus, and dot for decimals
+        let cleaned = String(val).replace(/[^\d.-]/g, '');
+        // To be safe for VND: if no cents are expected, remove all dots/commas.
+        if (cleaned.includes('.') && cleaned.split('.').pop()?.length !== 2) {
+          cleaned = cleaned.replace(/\./g, '');
+        }
+        const num = parseFloat(cleaned);
+        return isNaN(num) ? 0 : num;
+      };
+
       const orderRef = doc(db, 'orders', trackingCode);
-      const shippingLabelRef = doc(db, 'shipping_labels', trackingCode);
       const inventoryLogsRef = collection(db, 'inventory_logs');
       const productNames: string[] = [];
+      let processedItemsResult: any[] = [];
+      let totalRevenueValue = 0;
+      let totalCostValue = 0;
+      let platformFeeValue = 0;
+      let taxFeeValue = 0;
+      let packagingFeeValue = 0;
+      const finalizedItemsResult: any[] = [];
 
       // Use pre-fetched products if available, otherwise fetch once
       let allProducts = preFetchedProducts;
@@ -687,20 +733,17 @@ export class PDFService {
       console.log(`[PDFService] Starting transaction for order ${trackingCode}...`);
       
       // PRE-MATCH PRODUCTS: Find all matched products BEFORE the transaction
-      // to avoid "Firestore transactions require all reads to be performed before any writes"
       const itemsWithMatchedProducts = await Promise.all(items.map(async (item) => {
         const matchedProduct = await PDFService.findMatchedProduct(item.sku, item.color, allProducts);
         return { ...item, matchedProduct };
       }));
 
-      const finalizedItems: any[] = [];
-
       await runTransaction(db, async (transaction) => {
         // A. ALL READS FIRST
         
-        // Check for duplicate order in processed_orders collection
-        const tProcessedSnap = await transaction.get(processedOrderRef);
-        if (tProcessedSnap.exists()) {
+        // Check for duplicate order in orders collection instead of processed_orders
+        const tOrderSnap = await transaction.get(orderRef);
+        if (tOrderSnap.exists()) {
           console.warn(`[PDFService] Order ${trackingCode} already processed.`);
           throw new Error(`Đơn hàng [${trackingCode}] đã được xử lý trước đó, không thể trừ kho thêm lần nữa`);
         }
@@ -730,7 +773,7 @@ export class PDFService {
             console.log(`[PDFService] NEW SKU FOUND: ${sku} (${color}). Creating new inventory entry...`);
             
             const newProductRef = doc(collection(db, 'inventory'));
-            const initialStock = Number(quantity);
+            const initialStock = 0 - safeNum(quantity);
             const status = initialStock > 10 ? 'in_stock' : (initialStock > 0 ? 'low_stock' : 'out_of_stock');
             
             const newProductData = {
@@ -740,8 +783,8 @@ export class PDFService {
               name: `Sản phẩm mới (${sku})`,
               stock: initialStock,
               status: status,
-              costPrice: Number(extCost || 0),
-              sellingPrice: Number(extSell || 0),
+              costPrice: safeNum(extCost),
+              sellingPrice: safeNum(extSell),
               category: 'General',
               image: 'https://picsum.photos/seed/new/200/200',
               createdAt: new Date().toISOString()
@@ -757,25 +800,25 @@ export class PDFService {
               productName: newProductData.name,
               variant: newProductData.variant,
               change: initialStock,
-              type: 'addition',
+              type: 'deduction',
               trackingCode: trackingCode,
               timestamp: Timestamp.now(),
-              details: 'Tạo mới từ PDF'
+              details: 'Tạo mới từ PDF (Trừ kho)'
             });
 
             productNames.push(newProductData.name);
             const newItem = {
               sku: sku,
               variant: color || 'Mặc định',
-              quantity,
+              quantity: safeNum(quantity),
               productName: newProductData.name,
               productId: newProductRef.id,
               category: 'General',
-              costPrice: Number(extCost || 0),
-              sellingPrice: Number(extSell || 0)
+              costPrice: safeNum(extCost),
+              sellingPrice: safeNum(extSell)
             };
             processedItems.push(newItem);
-            finalizedItems.push(newItem);
+            finalizedItemsResult.push(newItem);
 
             continue;
           }
@@ -791,7 +834,7 @@ export class PDFService {
           const initialStock = Number(productDataInTransaction.stock || 0);
           const currentStock = currentStockMap.has(productRef.id) ? currentStockMap.get(productRef.id)! : initialStock;
           
-          const deductQty = Number(quantity);
+          const deductQty = safeNum(quantity);
           const newStock = currentStock - deductQty;
           currentStockMap.set(productRef.id, newStock); // Update local map for next item
           
@@ -805,8 +848,8 @@ export class PDFService {
             updatedAt: new Date().toISOString()
           };
 
-          if (extCost) updateData.costPrice = Number(extCost);
-          if (extSell) updateData.sellingPrice = Number(extSell);
+          if (extCost) updateData.costPrice = safeNum(extCost);
+          if (extSell) updateData.sellingPrice = safeNum(extSell);
 
           transaction.update(productRef, updateData);
           
@@ -828,40 +871,49 @@ export class PDFService {
           const processedItem = {
             sku: matchedProduct.sku,
             variant: matchedProduct.variant || '',
-            quantity,
+            quantity: safeNum(quantity),
             productName: matchedProduct.name,
             productId: productRef.id,
             category: matchedProduct.category || '',
-            costPrice: Number(extCost || matchedProduct.costPrice || 0),
-            sellingPrice: Number(extSell || matchedProduct.sellingPrice || 0)
+            costPrice: safeNum(extCost || matchedProduct.costPrice),
+            sellingPrice: safeNum(extSell || matchedProduct.sellingPrice)
           };
           processedItems.push(processedItem);
-          finalizedItems.push(processedItem);
+          finalizedItemsResult.push(processedItem);
         }
 
         // Save order record
         const now = new Date();
         const expiryDate = new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000);
         
-        const totalRevenue = processedItems.reduce((sum, item) => sum + (item.sellingPrice * item.quantity), 0);
-        const totalCost = processedItems.reduce((sum, item) => sum + (item.costPrice * item.quantity), 0);
+        const totalRevenue = processedItems.reduce((sum, item) => sum + (safeNum(item.sellingPrice) * safeNum(item.quantity)), 0);
+        const totalCost = processedItems.reduce((sum, item) => sum + (safeNum(item.costPrice) * safeNum(item.quantity)), 0);
         
         // Calculate platform fee and tax fee based on item category
         let platformFee = 0;
         let taxFee = 0;
-        const taxPercent = config?.taxPercent || 1.5;
+        const profitConfig = config;
+        const taxPercent = safeNum(profitConfig?.taxPercent || 1.5);
 
         processedItems.forEach(item => {
-          const feePercent = ProfitService.getPlatformFeePercent(item.sku, item.productName || '', config);
-          platformFee += (item.sellingPrice * (feePercent / 100)) * item.quantity;
-          taxFee += (item.sellingPrice * (taxPercent / 100)) * item.quantity;
+          const feePercent = ProfitService.getPlatformFeePercent(item.sku, item.productName || '', profitConfig);
+          platformFee += (safeNum(item.sellingPrice) * (feePercent / 100)) * safeNum(item.quantity);
+          taxFee += (safeNum(item.sellingPrice) * (taxPercent / 100)) * safeNum(item.quantity);
         });
 
         // Calculate packaging fee based on item category
         const packagingFee = processedItems.reduce((sum, item) => {
-          const fee = ProfitService.calculatePackagingFee(item.sku, item.productName || '', config);
-          return sum + (item.quantity * fee);
+          const fee = ProfitService.calculatePackagingFee(item.sku, item.productName || '', profitConfig);
+          return sum + (safeNum(item.quantity) * fee);
         }, 0);
+
+        // Capture values for outside the transaction
+        processedItemsResult = [...processedItems];
+        totalRevenueValue = totalRevenue;
+        totalCostValue = totalCost;
+        platformFeeValue = platformFee;
+        taxFeeValue = taxFee;
+        packagingFeeValue = packagingFee;
 
         // Infer destination from region
         let destination = 'Chưa xác định';
@@ -878,6 +930,7 @@ export class PDFService {
           destination,
           userId: auth.currentUser?.uid,
           pdfUrl: downloadURL || '',
+          storagePath: order.rawText === 'TEMP_PATH_MARKER' ? `orders/${auth.currentUser?.uid}/${trackingCode}.pdf` : '',
           totalRevenue,
           totalCost,
           platformFee,
@@ -885,26 +938,10 @@ export class PDFService {
           packagingFee,
           recipientName: order.recipientName || '',
           recipientPhone: order.recipientPhone || '',
-          recipientAddress: order.recipientAddress || ''
-        });
-
-        // Mark as processed
-        transaction.set(processedOrderRef, {
-          trackingCode,
-          processedAt: now.toISOString(),
-          expiryDate: expiryDate.toISOString(),
-          userId: auth.currentUser?.uid
-        });
-
-        // Save to shipping_labels for re-print
-        transaction.set(shippingLabelRef, {
-          trackingCode,
-          pdfUrl: downloadURL || '',
-          uploadDate: now.toISOString(),
-          expiryDate: expiryDate.toISOString(),
-          userId: auth.currentUser?.uid,
-          region: order.region || '',
-          items: processedItems.map(i => `${i.sku} (${i.quantity})`).join(', ')
+          recipientAddress: order.recipientAddress || '',
+          orderId: order.orderId || '',
+          job_id: order.job_id || '',
+          shop_id: order.shop_id || ''
         });
       });
 
@@ -920,13 +957,20 @@ export class PDFService {
             .upsert({
               user_id: auth.currentUser?.uid,
               tracking_code: trackingCode,
+              order_id: order.orderId || '',
+              job_id: order.job_id || '',
+              shop_id: order.shop_id || '',
               shop_name: 'Zenith Store', // Default or from config
-              platform: 'Shopee',
+              platform: order.platform || 'Shopee',
               customer_name: order.recipientName || 'Khách hàng Shopee',
-              total_amount: processedItems.reduce((sum, item) => sum + (item.sellingPrice * item.quantity), 0),
-              profit: processedItems.reduce((sum, item) => sum + ((item.sellingPrice - item.costPrice) * item.quantity), 0),
+              total_amount: Number(totalRevenueValue || 0),
+              total_cost: Number(totalCostValue || 0),
+              platform_fee: Number(platformFeeValue || 0),
+              tax_fee: Number(taxFeeValue || 0),
+              packaging_fee: Number(packagingFeeValue || 0),
+              profit: Number((totalRevenueValue || 0) - (totalCostValue || 0) - (platformFeeValue || 0) - (taxFeeValue || 0) - (packagingFeeValue || 0)),
               status: 'Processed',
-              items: processedItems,
+              items: JSON.stringify(processedItemsResult),
               image_url: downloadURL || '',
               processed_at: new Date().toISOString()
             });
@@ -936,13 +980,14 @@ export class PDFService {
           }
 
           // B. Update Products Stock in Supabase
-          for (const item of finalizedItems) {
+          for (const item of finalizedItemsResult) {
             try {
               // Get current stock
               const { data: currentProd, error: fetchError } = await supabase
                 .from('products')
                 .select('stock_quantity, id')
                 .eq('sku', item.sku)
+                .eq('variant', item.variant || 'Mặc định')
                 .maybeSingle();
 
               if (!fetchError && currentProd) {
@@ -956,6 +1001,21 @@ export class PDFService {
                   .eq('id', currentProd.id);
                 
                 console.log(`[PDFService] Supabase stock updated for ${item.sku}: ${currentProd.stock_quantity} -> ${newQty}`);
+
+                // C. Insert Inventory Log into Supabase
+                await supabase
+                  .from('inventory_logs')
+                  .insert({
+                    user_id: auth.currentUser?.uid,
+                    sku: item.sku,
+                    product_name: item.productName || `Sản phẩm ${item.sku}`,
+                    variant: item.variant || '',
+                    quantity_change: 0 - Number(item.quantity),
+                    type: 'deduction',
+                    tracking_code: trackingCode,
+                    timestamp: new Date().toISOString(),
+                    details: 'Trừ kho từ bóc tách PDF'
+                  });
               } else if (!currentProd) {
                 // If product doesn't exist in Supabase yet, create it
                 console.log(`[PDFService] Creating new product in Supabase: ${item.sku}`);
@@ -965,9 +1025,9 @@ export class PDFService {
                     user_id: auth.currentUser?.uid,
                     sku: item.sku,
                     name: item.productName || `Sản phẩm ${item.sku}`,
-                    stock_quantity: 0 - Number(item.quantity), // Start negative if unknown
-                    cost_price: item.costPrice,
-                    selling_price: item.sellingPrice,
+                    stock_quantity: 0 - safeNum(item.quantity), // Start negative if unknown
+                    cost_price: safeNum(item.costPrice),
+                    selling_price: safeNum(item.sellingPrice),
                     updated_at: new Date().toISOString()
                   });
               }
@@ -980,8 +1040,8 @@ export class PDFService {
           const printData = {
             user_id: auth.currentUser?.uid,
             tracking_number: trackingCode,
-            product_name: processedItems.map(i => `${i.sku} (${i.quantity})`).join(', '),
-            quantity: processedItems.reduce((sum, i) => sum + i.quantity, 0),
+            product_name: processedItemsResult.map(i => `${i.sku} (${i.quantity})`).join(', '),
+            quantity: processedItemsResult.reduce((sum, i) => sum + i.quantity, 0),
             image_url: downloadURL || '',
             is_cup: order.isCup || false,
             created_at: new Date().toISOString()
@@ -1010,9 +1070,9 @@ export class PDFService {
   static async cleanupExpiredData(userId: string): Promise<number> {
     try {
       const now = new Date().toISOString();
-      const labelsRef = collection(db, 'shipping_labels');
+      const ordersRef = collection(db, 'orders');
       const q = query(
-        labelsRef, 
+        ordersRef, 
         where('userId', '==', userId),
         where('expiryDate', '<=', now)
       );
@@ -1022,27 +1082,19 @@ export class PDFService {
       for (const docSnap of snapshot.docs) {
         const data = docSnap.data();
         
-        // 1. Delete from Storage
+        // 1. Delete from Storage if path exists
         if (data.storagePath) {
           try {
             const fileRef = ref(storage, data.storagePath);
             await deleteObject(fileRef);
           } catch (e) {
-            console.error('Error deleting file from storage:', e);
+            // Likely already deleted or doesn't exist
           }
         }
 
-        // 2. Delete from Firestore shipping_labels
+        // 2. Delete from Firestore orders
         await deleteDoc(docSnap.ref);
-
-        // 3. Delete from orders and processed_orders (optional but keeps DB clean)
-        try {
-          await deleteDoc(doc(db, 'orders', data.trackingCode));
-          await deleteDoc(doc(db, 'processed_orders', data.trackingCode));
-        } catch (e) {
-          console.error('Error deleting order records:', e);
-        }
-
+        
         count++;
       }
       return count;
@@ -1068,24 +1120,22 @@ export class PDFService {
       const returnSnapshot = await getDocs(q);
       const returnRefs = returnSnapshot.docs.map(d => d.ref);
 
+      let itemsToRevert: any[] = [];
       await runTransaction(db, async (transaction) => {
         const orderRef = doc(db, 'orders', trackingCode);
-        const processedOrderRef = doc(db, 'processed_orders', trackingCode);
-        const shippingLabelRef = doc(db, 'shipping_labels', trackingCode);
         const inventoryLogsRef = collection(db, 'inventory_logs');
         
         const orderSnap = await transaction.get(orderRef);
         
         if (!orderSnap.exists()) {
-          // If order record is missing, we still try to delete other records if they exist
+          // If order record is missing, we still try to delete order record if it exists
           transaction.delete(orderRef);
-          transaction.delete(processedOrderRef);
-          transaction.delete(shippingLabelRef);
           return;
         }
 
         const data = orderSnap.data();
         const items = data.items || [];
+        itemsToRevert = items;
 
         // 1. COLLECT ALL READS FIRST
         const productRefs = items
@@ -1130,14 +1180,49 @@ export class PDFService {
 
         // Delete records
         transaction.delete(orderRef);
-        transaction.delete(processedOrderRef);
-        transaction.delete(shippingLabelRef);
         
         // Delete associated returns
         for (const rRef of returnRefs) {
           transaction.delete(rRef);
         }
       });
+
+      // 3. Update Supabase if available
+      const supabase = getSupabase();
+      if (supabase) {
+        // Delete from orders
+        await supabase.from('orders').delete().eq('tracking_code', trackingCode);
+        // Delete from print history
+        await supabase.from('print_history').delete().eq('tracking_number', trackingCode);
+        
+        // Update stock in Supabase for each item
+        for (const item of itemsToRevert) {
+           const { data: prod } = await supabase
+            .from('products')
+            .select('stock_quantity, id')
+            .eq('sku', item.sku)
+            .eq('variant', item.variant || 'Mặc định')
+            .maybeSingle();
+           if (prod) {
+             await supabase.from('products').update({
+               stock_quantity: Number(prod.stock_quantity || 0) + Number(item.quantity)
+             }).eq('id', prod.id);
+             
+             // Log to Supabase
+             await supabase.from('inventory_logs').insert({
+               user_id: currentUserId,
+               sku: item.sku,
+               product_name: item.productName || `Sản phẩm ${item.sku}`,
+               variant: item.variant || '',
+               quantity_change: Number(item.quantity),
+               type: 'addition',
+               tracking_code: trackingCode,
+               timestamp: new Date().toISOString(),
+               details: 'Hoàn tác đơn hàng'
+             });
+           }
+        }
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `revert/${trackingCode}`);
     }

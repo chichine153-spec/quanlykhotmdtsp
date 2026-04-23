@@ -13,12 +13,43 @@ import {
 import { db, auth } from '../firebase';
 import { ProfitConfig, ReturnRecord } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
+import { getSupabase } from '../lib/supabase';
 
 export class ProfitService {
   /**
    * Fetch profit configuration
    */
   static async fetchConfig(userId: string) {
+    const supabase = getSupabase();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('profit_configs')
+          .select('*')
+          .eq('user_id', userId)
+          .maybeSingle();
+        
+        if (error) throw error;
+        if (data) {
+          return {
+            platformFeePercent: Number(data.platform_fee_percent || 12),
+            platformFeeCup: Number(data.platform_fee_cup || 25),
+            platformFeeBottle: Number(data.platform_fee_bottle || 20),
+            taxPercent: Number(data.tax_percent || 1.5),
+            packagingCostBottle: Number(data.packaging_cost_bottle || 6000),
+            packagingCostCup: Number(data.packaging_cost_cup || 8000),
+            marketingCost: Number(data.marketing_cost || 0),
+            otherCosts: Number(data.other_costs || 0),
+            cutoffHour: Number(data.cutoff_hour ?? 15),
+            dailyMarketingCosts: data.daily_marketing_costs || {},
+            lastUpdated: data.updated_at
+          } as ProfitConfig;
+        }
+      } catch (err) {
+        console.error('[ProfitService] Supabase config fetch error:', err);
+      }
+    }
+
     try {
       const docRef = doc(db, 'profit_configs', userId);
       const docSnap = await getDoc(docRef);
@@ -36,6 +67,31 @@ export class ProfitService {
    * Save profit configuration
    */
   static async saveConfig(userId: string, config: ProfitConfig) {
+    const supabase = getSupabase();
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('profit_configs')
+          .upsert({
+            user_id: userId,
+            platform_fee_percent: config.platformFeePercent,
+            platform_fee_cup: config.platformFeeCup,
+            platform_fee_bottle: config.platformFeeBottle,
+            tax_percent: config.taxPercent,
+            packaging_cost_bottle: config.packagingCostBottle,
+            packaging_cost_cup: config.packagingCostCup,
+            marketing_cost: config.marketingCost,
+            other_costs: config.otherCosts,
+            cutoff_hour: config.cutoffHour,
+            daily_marketing_costs: config.dailyMarketingCosts,
+            updated_at: new Date().toISOString()
+          });
+        if (error) throw error;
+      } catch (err) {
+        console.error('[ProfitService] Supabase config save error:', err);
+      }
+    }
+
     const docRef = doc(db, 'profit_configs', userId);
     await setDoc(docRef, {
       ...config,
@@ -122,16 +178,17 @@ export class ProfitService {
     const sellingPrice = item.sellingPrice || 0;
     const costPrice = item.costPrice || 0;
     const quantity = item.quantity || 0;
-    const shippingFee = item.shippingFee || 0; // Per item shipping if available
+    const shippingFee = item.shippingFee || 0;
+    const packagingFee = (item.packagingFee || 0) / (item.quantity || 1);
     
-    const platformFeePercent = this.getPlatformFeePercent(item.sku, item.productName || '', config);
+    const feePercent = this.getPlatformFeePercent(item.sku, item.productName || '', config);
     const taxPercent = config?.taxPercent || 1.5;
     
-    const platformFee = sellingPrice * (platformFeePercent / 100);
+    const platformFee = sellingPrice * (feePercent / 100);
     const tax = sellingPrice * (taxPercent / 100);
     
-    // Formula: Profit = Selling Price - Cost Price - Shipping Fee - Platform Fee - Tax
-    const unitProfit = sellingPrice - costPrice - shippingFee - platformFee - tax;
+    // Formula: Profit = Selling Price - Cost Price - Shipping Fee - Platform Fee - Tax - Packaging Fee
+    const unitProfit = sellingPrice - costPrice - shippingFee - platformFee - tax - packagingFee;
     
     return unitProfit * quantity;
   }
@@ -140,12 +197,36 @@ export class ProfitService {
    * Fetch return records
    */
   static async fetchReturns(userId: string) {
+    const supabase = getSupabase();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('returns')
+          .select('*')
+          .eq('user_id', userId)
+          .order('returned_at', { ascending: false })
+          .limit(100);
+        
+        if (error) throw error;
+        return data.map(r => ({
+          id: r.id,
+          trackingCode: r.tracking_code,
+          reason: r.reason,
+          items: r.items,
+          returnedAt: r.returned_at,
+          userId: r.user_id
+        })) as ReturnRecord[];
+      } catch (err) {
+        console.error('[ProfitService] Supabase returns fetch error:', err);
+      }
+    }
+
     try {
       const q = query(
         collection(db, 'returns'),
         where('userId', '==', userId),
         orderBy('returnedAt', 'desc'),
-        limit(100) // Limit to save quota
+        limit(100)
       );
       const snapshot = await getDocs(q);
       return snapshot.docs.map(doc => ({
@@ -162,6 +243,24 @@ export class ProfitService {
    * Add a return record
    */
   static async addReturn(userId: string, record: Partial<ReturnRecord>) {
+    const supabase = getSupabase();
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('returns')
+          .insert({
+            user_id: userId,
+            tracking_code: record.trackingCode,
+            reason: record.reason,
+            items: record.items,
+            returned_at: record.returnedAt || new Date().toISOString()
+          });
+        if (error) throw error;
+      } catch (err) {
+        console.error('[ProfitService] Supabase return add error:', err);
+      }
+    }
+
     const docRef = doc(collection(db, 'returns'));
     await setDoc(docRef, {
       ...record,
@@ -220,18 +319,25 @@ export class ProfitService {
       endDate = targetDate;
     }
 
-    // Filter orders for the main session/timeframe
+    // Filter orders for the main session/timeframe with robust date parsing
     const filteredOrders = orders.filter(o => {
-      const d = new Date(o.processedAt);
-      return d >= startDate && d < endDate;
+      if (!o.processedAt) return false;
+      // Handle potential space instead of T in date string
+      const d = new Date(o.processedAt.includes(' ') && !o.processedAt.includes('T') 
+        ? o.processedAt.replace(' ', 'T') 
+        : o.processedAt);
+      return !isNaN(d.getTime()) && d >= startDate && d < endDate;
     });
 
     // For 'today', also calculate pending orders (after cutoff)
     let pendingOrders: any[] = [];
     if (timeframe === 'today') {
       pendingOrders = orders.filter(o => {
-        const d = new Date(o.processedAt);
-        return d >= endDate;
+        if (!o.processedAt) return false;
+        const d = new Date(o.processedAt.includes(' ') && !o.processedAt.includes('T') 
+          ? o.processedAt.replace(' ', 'T') 
+          : o.processedAt);
+        return !isNaN(d.getTime()) && d >= endDate;
       });
     }
 
@@ -240,8 +346,22 @@ export class ProfitService {
       return d >= startDate && d < endDate;
     });
 
-    let revenue = filteredOrders.reduce((sum, o) => sum + (o.totalRevenue || 0), 0);
-    let costOfGoods = filteredOrders.reduce((sum, o) => sum + (o.totalCost || 0), 0);
+    // Helper to safely parse numbers and strip common currency formats
+    const safeNum = (val: any) => {
+      if (typeof val === 'number') return isNaN(val) ? 0 : val;
+      if (!val) return 0;
+      // Clean string: keep only digits, minus, and dot for decimals
+      let cleaned = String(val).replace(/[^\d.-]/g, '');
+      // To be safe for VND: if no cents are expected, remove all dots/commas.
+      if (cleaned.includes('.') && cleaned.split('.').pop()?.length !== 2) {
+        cleaned = cleaned.replace(/\./g, '');
+      }
+      const num = parseFloat(cleaned);
+      return isNaN(num) ? 0 : num;
+    };
+
+    let revenue = filteredOrders.reduce((sum, o) => sum + safeNum(o.totalRevenue), 0);
+    let costOfGoods = filteredOrders.reduce((sum, o) => sum + safeNum(o.totalCost), 0);
     let platformFees = 0;
     let taxFees = 0;
 
@@ -336,20 +456,25 @@ export class ProfitService {
 
     const productStats: Record<string, { name: string, variant: string, profit: number, count: number, feePercent: number }> = {};
     filteredOrders.forEach(o => {
-      o.items.forEach((item: any) => {
-        const key = `${item.sku}_${item.variant}`;
+      const items = Array.isArray(o.items) ? o.items : [];
+      items.forEach((item: any) => {
+        const variant = item.variant || item.color || 'Default';
+        const key = `${item.sku}_${variant}`;
+        
         if (!productStats[key]) {
+          const feePercent = this.getPlatformFeePercent(item.sku, item.productName || item.name || '', config);
           productStats[key] = { 
-            name: item.productName, 
-            variant: item.variant, 
+            name: item.productName || item.name || item.sku, 
+            variant, 
             profit: 0, 
-            count: 0,
-            feePercent: this.getPlatformFeePercent(item.sku, item.productName || '', config)
+            count: 0, 
+            feePercent 
           };
         }
-        const itemProfit = this.calculateItemProfit(item, config);
+        
+        const itemProfit = this.calculateItemProfit({ ...item, productName: item.productName || item.name }, config);
         productStats[key].profit += itemProfit;
-        productStats[key].count += item.quantity;
+        productStats[key].count += safeNum(item.quantity);
       });
     });
 

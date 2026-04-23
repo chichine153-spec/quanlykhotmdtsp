@@ -35,6 +35,9 @@ interface PrintHistoryRecord {
   status?: string;
   tracking_log?: any[];
   carrier?: string;
+  order_id?: string;
+  job_id?: string;
+  shop_id?: string;
 }
 
 export default function RePrintModule() {
@@ -54,13 +57,52 @@ export default function RePrintModule() {
   const [isPrinting, setIsPrinting] = React.useState(false);
 
   const handleThermalPrint = () => {
+    if (!orderToPrint) {
+      alert("Không tìm thấy thông tin đơn hàng để in.");
+      return;
+    }
+
+    const { job_id, shop_id, trackingCode, orderId } = orderToPrint;
+
+    // Shopee URL logic: If we have both IDs, try to open Shopee Print Page
+    if (job_id && shop_id && job_id !== 'null' && shop_id !== 'null') {
+      setIsPrinting(true);
+      const shopee_print_url = `https://banhang.shopee.vn/api/v3/settings/print_awb/?job_id=${job_id}&shop_id=${shop_id}&lang=vi`;
+      
+      try {
+        const newWindow = window.open(shopee_print_url, '_blank');
+        
+        if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+          alert("Trình duyệt đã chặn cửa sổ bật lên. Vui lòng cho phép trình duyệt mở tab mới hoặc sử dụng nút 'Mở tab mới' ở đầu trang.");
+          setIsPrinting(false);
+        } else {
+          // Success
+          setTimeout(() => {
+            setShowPrintTemplate(false);
+            setIsPrinting(false);
+          }, 800);
+        }
+        return;
+      } catch (err) {
+        console.error("[RePrintModule] Opening Shopee print URL failed", err);
+      }
+    }
+
+    // Fallback logic: Use system thermal template (window.print)
+    console.log('[RePrintModule] No Shopee print IDs found, falling back to system thermal template');
     setIsPrinting(true);
+    
+    // Ensure window has focus
     window.focus();
+    
     setTimeout(() => {
       try {
         window.print();
+        // Option to close modal after print if desired
+        // setShowPrintTemplate(false);
       } catch (err) {
-        console.error("[RePrintModule] Print failed", err);
+        console.error("[RePrintModule] System print failed", err);
+        alert("Không thể thực hiện in ấn. Vui lòng thử lại.");
       } finally {
         setIsPrinting(false);
       }
@@ -159,7 +201,10 @@ export default function RePrintModule() {
               image_url: data.image_url || data.pdfUrl || '',
               is_cup: false,
               created_at: data.processedAt,
-              user_id: data.userId || user.uid
+              user_id: data.userId || user.uid,
+              order_id: data.orderId,
+              job_id: data.job_id,
+              shop_id: data.shop_id
             } as PrintHistoryRecord;
           });
           
@@ -281,7 +326,10 @@ export default function RePrintModule() {
               image_url: data.image_url || data.pdfUrl || '', // Support both fields
               is_cup: false,
               created_at: data.processedAt || new Date().toISOString(),
-              user_id: data.userId || user.uid
+              user_id: data.userId || user.uid,
+              order_id: data.orderId,
+              job_id: data.job_id,
+              shop_id: data.shop_id
             } as PrintHistoryRecord;
           }
         }
@@ -317,7 +365,10 @@ export default function RePrintModule() {
         finalOrder = {
           ...orderData,
           trackingCode: label.tracking_number,
-          image_url: orderData.image_url || label.image_url // Preserve image_url from history if missing in doc
+          image_url: orderData.image_url || label.image_url, // Preserve image_url from history if missing in doc
+          job_id: orderData.job_id || label.job_id,
+          shop_id: orderData.shop_id || label.shop_id,
+          orderId: orderData.orderId || label.order_id
         };
       } else {
         finalOrder = {
@@ -604,7 +655,17 @@ export default function RePrintModule() {
               className="relative w-full max-w-2xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] no-print"
             >
               <div className="p-6 border-b border-surface-container flex justify-between items-center">
-                <h3 className="text-xl font-black text-on-surface tracking-tight">Xem trước bản in nhiệt</h3>
+                <div className="flex flex-col">
+                  <h3 className="text-xl font-black text-on-surface tracking-tight">Xem trước bản in nhiệt</h3>
+                  <div className="flex gap-2 mt-1">
+                    {orderToPrint?.orderId && (
+                      <span className="text-[9px] font-bold text-secondary bg-surface-container px-2 py-0.5 rounded">ID: {orderToPrint.orderId}</span>
+                    )}
+                    {orderToPrint?.job_id && (
+                      <span className="text-[9px] font-bold text-secondary bg-surface-container px-2 py-0.5 rounded">Job: {orderToPrint.job_id}</span>
+                    )}
+                  </div>
+                </div>
                 <button 
                   onClick={() => setShowPrintTemplate(false)}
                   className="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center text-secondary hover:bg-error hover:text-white transition-all"

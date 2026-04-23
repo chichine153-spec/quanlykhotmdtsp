@@ -30,6 +30,7 @@ import { db } from './firebase';
 import { useAuth } from './contexts/AuthContext';
 import { useData } from './contexts/DataContext';
 import { Product, InventoryLog } from './types';
+import { InventoryService } from './services/inventoryService';
 import { logErrorToSupabase, FRIENDLY_ERROR_MESSAGE } from './lib/error-logging';
 import { handleFirestoreError, OperationType } from './lib/firestore-errors';
 import { classifyError } from './lib/errorUtils';
@@ -64,31 +65,14 @@ export default function StockIn() {
   }, [user, quotaExceeded, quotaError]);
 
   const fetchHistory = async () => {
-    if (!user || quotaExceeded || quotaError) return;
+    if (!user) return;
     
     try {
-      const logsQuery = query(
-        collection(db, 'inventory_logs'),
-        where('userId', '==', user.uid),
-        where('type', '==', 'addition'),
-        orderBy('timestamp', 'desc'),
-        limit(20)
-      );
-
-      const snapshot = await getDocs(logsQuery);
-      const logs = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as InventoryLog[];
-      setHistoryLogs(logs);
+      const logs = await InventoryService.fetchInventoryLogs(user.uid, 'addition');
+      setHistoryLogs(logs as InventoryLog[]);
       setQuotaError(false);
     } catch (error: any) {
-      const classified = classifyError(error, 'Firebase');
-      if (classified.isQuota) {
-        setQuotaError(true);
-      } else {
-        console.error('StockIn logs error:', error);
-      }
+      console.error('StockIn logs error:', error);
     }
   };
 
@@ -140,38 +124,7 @@ export default function StockIn() {
       const variantProduct = products.find(p => p.id === selectedVariantId);
       if (!variantProduct) throw new Error('Không tìm thấy thông tin sản phẩm.');
 
-      const productRef = doc(db, 'inventory', selectedVariantId);
-      const logRef = doc(collection(db, 'inventory_logs'));
-
-      await runTransaction(db, async (transaction) => {
-        const productDoc = await transaction.get(productRef);
-        if (!productDoc.exists()) {
-          throw new Error("Sản phẩm không tồn tại trong kho.");
-        }
-
-        const currentStock = productDoc.data().stock || 0;
-        const newStock = currentStock + Number(quantity);
-        const status = newStock > 10 ? 'in_stock' : (newStock > 0 ? 'low_stock' : 'out_of_stock');
-
-        // 1. Update Inventory
-        transaction.update(productRef, { 
-          stock: newStock,
-          status: status,
-          updatedAt: serverTimestamp()
-        });
-
-        // 2. Log History
-        transaction.set(logRef, {
-          timestamp: serverTimestamp(),
-          sku: variantProduct.sku,
-          productName: variantProduct.name,
-          variant: variantProduct.variant || 'Mặc định',
-          change: Number(quantity),
-          type: 'addition',
-          userId: user.uid,
-          performer: user.displayName || 'Admin'
-        });
-      });
+      await InventoryService.stockIn(user.uid, selectedVariantId, variantProduct, Number(quantity));
 
       setSuccessMessage(`Đã cộng ${quantity} sản phẩm vào kho thành công!`);
       setQuantity('');
@@ -179,6 +132,7 @@ export default function StockIn() {
       
       // Clear success message after 5 seconds
       setTimeout(() => setSuccessMessage(null), 5000);
+      fetchHistory(); // Refresh history
     } catch (err: any) {
       console.error('Stock In Error:', err);
       logErrorToSupabase(err, 'stock_in', user?.uid);

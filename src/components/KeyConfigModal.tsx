@@ -167,7 +167,7 @@ export default function KeyConfigModal({ isOpen, onClose }: KeyConfigModalProps)
                 <div className="relative group">
                   <input 
                     type="password"
-                    value={apiKey}
+                    value={apiKey || ''}
                     onChange={(e) => setApiKey(e.target.value)}
                     placeholder="Dán mã API Key tại đây..."
                     className="w-full bg-surface-container rounded-2xl px-5 py-4 text-sm font-mono border-2 border-transparent focus:border-primary outline-none transition-all group-hover:bg-surface-container-high"
@@ -208,7 +208,7 @@ export default function KeyConfigModal({ isOpen, onClose }: KeyConfigModalProps)
                   <label className="text-[10px] font-black text-secondary uppercase tracking-widest ml-2">Supabase Project URL</label>
                   <input 
                     type="text"
-                    value={supabaseUrl}
+                    value={supabaseUrl || ''}
                     onChange={(e) => setSupabaseUrl(e.target.value)}
                     placeholder="https://your-project.supabase.co"
                     className="w-full bg-surface-container rounded-2xl px-5 py-4 text-sm font-mono border-2 border-transparent focus:border-primary outline-none transition-all"
@@ -219,7 +219,7 @@ export default function KeyConfigModal({ isOpen, onClose }: KeyConfigModalProps)
                   <label className="text-[10px] font-black text-secondary uppercase tracking-widest ml-2">Supabase Anon Key</label>
                   <input 
                     type="password"
-                    value={supabaseKey}
+                    value={supabaseKey || ''}
                     onChange={(e) => setSupabaseKey(e.target.value)}
                     placeholder="Dán mã Anon/Public Key..."
                     className="w-full bg-surface-container rounded-2xl px-5 py-4 text-sm font-mono border-2 border-transparent focus:border-primary outline-none transition-all"

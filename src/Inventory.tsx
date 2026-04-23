@@ -184,22 +184,14 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
     if (!user) return;
     setIsUpdating(true);
     try {
-      const q = query(
-        collection(db, 'inventory_logs'),
-        where('userId', '==', user.uid),
-        orderBy('timestamp', 'desc'),
-        limit(50)
-      );
-      const snapshot = await getDocs(q);
-      const logs = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as InventoryLog[];
+      const logs = await InventoryService.fetchInventoryLogs(user.uid);
       setInventoryLogs(logs);
     } catch (error: any) {
       console.error('Fetch History Error:', error);
       if (error.message?.includes('Quota')) {
         addToast('Không thể tải lịch sử do hết hạn mức truy cập.', 'error');
+      } else {
+        addToast('Lỗi khi tải lịch sử kho hàng.', 'error');
       }
     } finally {
       setIsUpdating(false);
@@ -1531,7 +1523,7 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
                     <label className="block text-xs font-bold uppercase tracking-widest text-secondary">Tên sản phẩm</label>
                     <input 
                       type="text"
-                      value={isAddingNew ? newProduct.name : (editingProduct?.name || '')}
+                      value={isAddingNew ? (newProduct.name || '') : (editingProduct?.name || '')}
                       onChange={(e) => {
                         if (isAddingNew) setNewProduct({...newProduct, name: e.target.value});
                         else if (editingProduct) setEditingProduct({...editingProduct, name: e.target.value});
@@ -1545,7 +1537,7 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
                     <label className="block text-xs font-bold uppercase tracking-widest text-secondary">Mã SKU</label>
                     <input 
                       type="text"
-                      value={isAddingNew ? newProduct.sku : (editingProduct?.sku || '')}
+                      value={isAddingNew ? (newProduct.sku || '') : (editingProduct?.sku || '')}
                       onChange={(e) => {
                         if (isAddingNew) setNewProduct({...newProduct, sku: e.target.value});
                         else if (editingProduct) setEditingProduct({...editingProduct, sku: e.target.value});
@@ -1560,7 +1552,7 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
                     <label className="block text-xs font-bold uppercase tracking-widest text-secondary">Màu sắc / Phân loại</label>
                     <input 
                       type="text"
-                      value={isAddingNew ? newProduct.variant : editingProduct?.variant || ''}
+                      value={isAddingNew ? (newProduct.variant || '') : (editingProduct?.variant || '')}
                       onChange={(e) => {
                         if (isAddingNew) setNewProduct({...newProduct, variant: e.target.value});
                         else if (editingProduct) setEditingProduct({...editingProduct, variant: e.target.value});
@@ -1574,7 +1566,7 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
                     <label className="block text-xs font-bold uppercase tracking-widest text-secondary">Tồn kho</label>
                     <input 
                       type="number"
-                      value={isAddingNew ? newProduct.stock : (editingProduct?.stock ?? 0)}
+                      value={isAddingNew ? (newProduct.stock ?? 0) : (editingProduct?.stock ?? 0)}
                       onChange={(e) => {
                         const val = parseInt(e.target.value) || 0;
                         if (isAddingNew) setNewProduct({...newProduct, stock: val});
@@ -1589,7 +1581,7 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
                     <label className="block text-xs font-bold uppercase tracking-widest text-secondary">Danh mục</label>
                     <input 
                       type="text"
-                      value={isAddingNew ? newProduct.category : (editingProduct?.category || '')}
+                      value={isAddingNew ? (newProduct.category || '') : (editingProduct?.category || '')}
                       onChange={(e) => {
                         if (isAddingNew) setNewProduct({...newProduct, category: e.target.value});
                         else if (editingProduct) setEditingProduct({...editingProduct, category: e.target.value});
@@ -1602,7 +1594,7 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
                     <label className="block text-xs font-bold uppercase tracking-widest text-secondary">Giá vốn (VNĐ)</label>
                     <input 
                       type="number"
-                      value={isAddingNew ? newProduct.costPrice : editingProduct?.costPrice || 0}
+                      value={isAddingNew ? (newProduct.costPrice ?? 0) : (editingProduct?.costPrice ?? 0)}
                       onChange={(e) => {
                         const val = parseInt(e.target.value) || 0;
                         if (isAddingNew) setNewProduct({...newProduct, costPrice: val});
@@ -1617,7 +1609,7 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
                     <label className="block text-xs font-bold uppercase tracking-widest text-secondary">Giá bán (VNĐ)</label>
                     <input 
                       type="number"
-                      value={isAddingNew ? newProduct.sellingPrice : editingProduct?.sellingPrice || 0}
+                      value={isAddingNew ? (newProduct.sellingPrice ?? 0) : (editingProduct?.sellingPrice ?? 0)}
                       onChange={(e) => {
                         const val = parseInt(e.target.value) || 0;
                         if (isAddingNew) setNewProduct({...newProduct, sellingPrice: val});

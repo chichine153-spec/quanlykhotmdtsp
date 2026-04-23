@@ -57,30 +57,16 @@ export default function InTransitManagement() {
   }, [dataLoading]);
 
   const fetchLogs = async () => {
-    if (!user || quotaExceeded) return;
+    if (!user) return;
     
     setLoading(true);
     try {
-      const logsQuery = query(
-        collection(db, 'in_transit_logs'),
-        where('userId', '==', user.uid),
-        orderBy('timestamp', 'desc'),
-        limit(50)
-      );
-      const snapshot = await getDocs(logsQuery);
-      const logs = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as InTransitLog[];
-      setInTransitLogs(logs);
+      const logs = await InventoryService.fetchInTransitLogs(user.uid);
+      setInTransitLogs(logs as InTransitLog[]);
       setQuotaError(false);
     } catch (error: any) {
-      const classified = classifyError(error, 'Firebase');
-      if (classified.isQuota) {
-        setQuotaError(true);
-      } else {
-        console.error('InTransit logs error:', error);
-      }
+      console.error('InTransit logs error:', error);
+      setError('Không thể tải lịch sử hàng đang về.');
     } finally {
       setLoading(false);
     }
