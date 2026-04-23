@@ -53,7 +53,7 @@ export class UsageService {
     }
   }
 
-  static async incrementUsage(userId: string): Promise<void> {
+  static async incrementUsage(userId: string, amount: number = 1): Promise<void> {
     const today = this.getTodayStr();
     const docId = `${userId}_${today}`;
     const docRef = doc(db, 'usage_records', docId);
@@ -62,13 +62,13 @@ export class UsageService {
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         await updateDoc(docRef, {
-          count: increment(1)
+          count: increment(amount)
         });
       } else {
         await setDoc(docRef, {
           userId,
           date: today,
-          count: 1,
+          count: amount,
           createdAt: serverTimestamp()
         });
       }

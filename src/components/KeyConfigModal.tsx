@@ -15,6 +15,8 @@ interface KeyConfigModalProps {
 export default function KeyConfigModal({ isOpen, onClose }: KeyConfigModalProps) {
   const { user, geminiApiKey: initialKey, refreshUsage, setGeminiApiKey } = useAuth();
   const [apiKey, setApiKey] = React.useState(initialKey || '');
+  const [supabaseUrl, setSupabaseUrl] = React.useState('');
+  const [supabaseKey, setSupabaseKey] = React.useState('');
   const [isTesting, setIsTesting] = React.useState(false);
   const [testResult, setTestResult] = React.useState<'idle' | 'success' | 'error'>('idle');
   const [isSaving, setIsSaving] = React.useState(false);
@@ -22,6 +24,8 @@ export default function KeyConfigModal({ isOpen, onClose }: KeyConfigModalProps)
   React.useEffect(() => {
     if (isOpen) {
       setApiKey(initialKey || '');
+      setSupabaseUrl(localStorage.getItem('supabase_url') || '');
+      setSupabaseKey(localStorage.getItem('supabase_anon_key') || '');
       setTestResult('idle');
     }
   }, [isOpen, initialKey]);
@@ -84,15 +88,28 @@ export default function KeyConfigModal({ isOpen, onClose }: KeyConfigModalProps)
     try {
       const userRef = doc(db, 'users', user.uid);
       await updateDoc(userRef, {
-        geminiApiKey: apiKey.trim() || null
+        geminiApiKey: apiKey.trim() || null,
+        supabaseUrl: supabaseUrl.trim() || null,
+        supabaseKey: supabaseKey.trim() || null
       });
       
-      // Update local storage for immediate use (GeminiService uses this as fallback)
+      // Update local storage for immediate use
       localStorage.setItem('gemini_api_key', apiKey.trim());
+      localStorage.setItem('supabase_url', supabaseUrl.trim());
+      localStorage.setItem('supabase_anon_key', supabaseKey.trim());
+      localStorage.setItem('global_supabase_url', supabaseUrl.trim());
+      localStorage.setItem('global_supabase_key', supabaseKey.trim());
+      
       setGeminiApiKey(apiKey.trim() || null);
       GeminiService.resetInstance();
       
-      toast.success('Đã lưu cấu hình API Key');
+      toast.success('Đã lưu cấu hình API');
+      
+      // Reload is necessary to re-init Supabase client correctly across context
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+      
       onClose();
     } catch (error) {
       console.error('[KeySave] Error:', error);
@@ -110,10 +127,10 @@ export default function KeyConfigModal({ isOpen, onClose }: KeyConfigModalProps)
             initial={{ opacity: 0, scale: 0.9, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 20 }}
-            className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-md overflow-hidden flex flex-col border border-surface-container"
+            className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-md overflow-hidden flex flex-col border border-surface-container overflow-y-auto max-h-[95vh]"
           >
             {/* Header */}
-            <div className="p-6 border-b border-surface-container bg-primary/5 flex justify-between items-center">
+            <div className="p-6 border-b border-surface-container bg-primary/5 flex justify-between items-center sticky top-0 bg-white/80 backdrop-blur-md z-10">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center shadow-lg shadow-primary/20">
                   <Key size={20} />
@@ -139,11 +156,12 @@ export default function KeyConfigModal({ isOpen, onClose }: KeyConfigModalProps)
                   <span className="text-xs font-black uppercase tracking-widest">Bảo mật đa lớp</span>
                 </div>
                 <p className="text-[11px] text-secondary leading-relaxed">
-                  API Key của bạn được lưu trữ an toàn và xử lý qua <strong>Proxy máy chủ</strong>. 
+                  Thông tin của bạn được lưu trữ an toàn và xử lý qua <strong>Proxy máy chủ</strong>. 
                   Chúng tôi không bao giờ gọi trực tiếp API từ trình duyệt để tránh bị lộ Key.
                 </p>
               </div>
 
+              {/* Gemini Section */}
               <div className="space-y-2">
                 <label className="text-xs font-black text-secondary uppercase tracking-widest ml-2">Gemini API Key của bạn</label>
                 <div className="relative group">
@@ -179,6 +197,36 @@ export default function KeyConfigModal({ isOpen, onClose }: KeyConfigModalProps)
                 </div>
               </div>
 
+              {/* Supabase Section */}
+              <div className="pt-4 border-t border-surface-container space-y-4">
+                <div className="flex items-center gap-2 text-tertiary">
+                   <Globe size={16} />
+                   <span className="text-xs font-black uppercase tracking-widest">Cấu hình Supabase</span>
+                </div>
+                
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-secondary uppercase tracking-widest ml-2">Supabase Project URL</label>
+                  <input 
+                    type="text"
+                    value={supabaseUrl}
+                    onChange={(e) => setSupabaseUrl(e.target.value)}
+                    placeholder="https://your-project.supabase.co"
+                    className="w-full bg-surface-container rounded-2xl px-5 py-4 text-sm font-mono border-2 border-transparent focus:border-primary outline-none transition-all"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-secondary uppercase tracking-widest ml-2">Supabase Anon Key</label>
+                  <input 
+                    type="password"
+                    value={supabaseKey}
+                    onChange={(e) => setSupabaseKey(e.target.value)}
+                    placeholder="Dán mã Anon/Public Key..."
+                    className="w-full bg-surface-container rounded-2xl px-5 py-4 text-sm font-mono border-2 border-transparent focus:border-primary outline-none transition-all"
+                  />
+                </div>
+              </div>
+
               <div className="pt-4 flex gap-4">
                 <button 
                   onClick={onClose}
@@ -188,7 +236,7 @@ export default function KeyConfigModal({ isOpen, onClose }: KeyConfigModalProps)
                 </button>
                 <button 
                   onClick={handleSave}
-                  disabled={isSaving}
+                  disabled={isSaving || !apiKey || !supabaseKey}
                   className="flex-1 py-4 bg-primary text-white text-sm font-black rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   {isSaving ? <Loader2 size={20} className="animate-spin" /> : <Save size={20} />}

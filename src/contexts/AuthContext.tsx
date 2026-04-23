@@ -37,7 +37,7 @@ interface AuthContextType {
   clearError: () => void;
   isSubscriptionValid: () => boolean;
   refreshUsage: () => Promise<void>;
-  incrementDailyCount: () => Promise<void>;
+  incrementDailyCount: (amount?: number) => Promise<void>;
   setGeminiApiKey: (key: string | null) => void;
 }
 
@@ -199,16 +199,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const incrementDailyCount = async () => {
+  const incrementDailyCount = async (amount: number = 1) => {
     if (!user) return;
     try {
-      await UsageService.incrementUsage(user.uid);
-      setDailyOrderCount(prev => prev + 1);
+      await UsageService.incrementUsage(user.uid, amount);
+      setDailyOrderCount(prev => prev + amount);
       
-      // Also potentially update Firestore for backup/listing
       const userRef = doc(db, 'users', user.uid);
       await updateDoc(userRef, {
-        dailyOrderCount: dailyOrderCount + 1
+        dailyOrderCount: dailyOrderCount + amount
       });
     } catch (e) {
       console.error("Increment failed", e);

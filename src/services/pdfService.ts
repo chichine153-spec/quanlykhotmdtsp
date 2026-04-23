@@ -908,65 +908,89 @@ export class PDFService {
         });
       });
 
-      // 3. Save to Supabase
+      // 3. Save to Supabase (PRIORITY STORAGE)
       try {
         const supabase = getSupabase();
         if (supabase) {
-          // A. Update print_history
-          const supabaseData = order.items.map(item => ({
-            tracking_number: trackingCode,
-            product_name: `${item.sku}${item.color ? ` (${item.color})` : ''}`.trim(),
-            quantity: item.quantity,
-            user_id: auth.currentUser?.uid,
-            created_at: new Date().toISOString(),
-            is_cup: order.isCup || false,
-            status: 'Giao hàng'
-          }));
+          console.log(`[PDFService] Writing order ${trackingCode} to Supabase...`);
+          
+          // A. Insert Order into Supabase
+          const { error: orderError } = await supabase
+            .from('orders')
+            .upsert({
+              user_id: auth.currentUser?.uid,
+              tracking_code: trackingCode,
+              shop_name: 'Zenith Store', // Default or from config
+              platform: 'Shopee',
+              customer_name: order.recipientName || 'Khách hàng Shopee',
+              total_amount: processedItems.reduce((sum, item) => sum + (item.sellingPrice * item.quantity), 0),
+              profit: processedItems.reduce((sum, item) => sum + ((item.sellingPrice - item.costPrice) * item.quantity), 0),
+              status: 'Processed',
+              items: processedItems,
+              image_url: downloadURL || '',
+              processed_at: new Date().toISOString()
+            });
 
-          const { error: supabaseError } = await supabase
-            .from('print_history')
-            .upsert(supabaseData, { onConflict: 'tracking_number,product_name' });
-
-          if (supabaseError) {
-            console.error('[PDFService] Supabase print_history error:', supabaseError.message);
+          if (orderError) {
+            console.error('[PDFService] Supabase Order Insert Error:', orderError.message);
           }
 
-          // B. Update products table stock (New requirement)
-          // "Hệ thống phải thực hiện lệnh UPDATE vào bảng products trong Supabase dựa trên đúng SKU_ID của từng phân loại."
+          // B. Update Products Stock in Supabase
           for (const item of finalizedItems) {
             try {
-              // First check if SKU exists in products table
+              // Get current stock
               const { data: currentProd, error: fetchError } = await supabase
                 .from('products')
                 .select('stock_quantity, id')
-                .eq('sku_id', item.sku)
+                .eq('sku', item.sku)
                 .maybeSingle();
 
-              if (fetchError) {
-                console.error(`[PDFService] Supabase fetch products error for ${item.sku}:`, fetchError.message);
-              } else if (currentProd) {
-                const newSupaStock = Number(currentProd.stock_quantity || 0) - Number(item.quantity);
-                const { error: updateError } = await supabase
+              if (!fetchError && currentProd) {
+                const newQty = Number(currentProd.stock_quantity || 0) - Number(item.quantity);
+                await supabase
                   .from('products')
                   .update({ 
-                    stock_quantity: newSupaStock,
+                    stock_quantity: newQty,
                     updated_at: new Date().toISOString()
                   })
-                  .eq('sku_id', item.sku);
+                  .eq('id', currentProd.id);
                 
-                if (updateError) {
-                  console.error(`[PDFService] Supabase update products stock error for ${item.sku}:`, updateError.message);
-                } else {
-                  console.log(`[PDFService] Supabase products stock updated for ${item.sku}: ${currentProd.stock_quantity} -> ${newSupaStock}`);
-                }
+                console.log(`[PDFService] Supabase stock updated for ${item.sku}: ${currentProd.stock_quantity} -> ${newQty}`);
+              } else if (!currentProd) {
+                // If product doesn't exist in Supabase yet, create it
+                console.log(`[PDFService] Creating new product in Supabase: ${item.sku}`);
+                await supabase
+                  .from('products')
+                  .insert({
+                    user_id: auth.currentUser?.uid,
+                    sku: item.sku,
+                    name: item.productName || `Sản phẩm ${item.sku}`,
+                    stock_quantity: 0 - Number(item.quantity), // Start negative if unknown
+                    cost_price: item.costPrice,
+                    selling_price: item.sellingPrice,
+                    updated_at: new Date().toISOString()
+                  });
               }
-            } catch (supaErr) {
-              console.error(`[PDFService] Fatal error updating Supabase products for ${item.sku}:`, supaErr);
+            } catch (err) {
+              console.error(`[PDFService] Supabase Inventory Update Error for ${item.sku}:`, err);
             }
           }
+
+          // C. Update print_history
+          const printData = {
+            user_id: auth.currentUser?.uid,
+            tracking_number: trackingCode,
+            product_name: processedItems.map(i => `${i.sku} (${i.quantity})`).join(', '),
+            quantity: processedItems.reduce((sum, i) => sum + i.quantity, 0),
+            image_url: downloadURL || '',
+            is_cup: order.isCup || false,
+            created_at: new Date().toISOString()
+          };
+
+          await supabase.from('print_history').insert(printData);
         }
       } catch (err) {
-        console.error('[PDFService] Supabase operations fatal error:', err);
+        console.error('[PDFService] Supabase Global Error:', err);
       }
 
       console.log(`[PDFService] Order ${trackingCode} processed successfully.`);

@@ -82,38 +82,36 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     setFetching(true);
     try {
-      // Fetch initial data using getDocs for better control over quota usage
-      const inventoryQuery = isAdmin 
-        ? query(collection(db, 'inventory'), limit(1000)) 
-        : query(collection(db, 'inventory'), where('userId', '==', user.uid), limit(500));
-        
-      const ordersQuery = isAdmin
-        ? query(collection(db, 'orders'), orderBy('processedAt', 'desc'), limit(100))
-        : query(collection(db, 'orders'), where('userId', '==', user.uid), orderBy('processedAt', 'desc'), limit(80));
-        
-      const returnsQuery = isAdmin
-        ? query(collection(db, 'returns'), orderBy('returnedAt', 'desc'), limit(50))
-        : query(collection(db, 'returns'), where('userId', '==', user.uid), orderBy('returnedAt', 'desc'), limit(40));
-        
-      const problematicQuery = isAdmin
-        ? query(collection(db, 'problematic_orders'), orderBy('updatedAt', 'desc'), limit(30))
-        : query(collection(db, 'problematic_orders'), where('userId', '==', user.uid), orderBy('updatedAt', 'desc'), limit(20));
-
-      const [inventorySnap, ordersSnap, returnsSnap, problematicSnap, configSnap, globalConfigSnap] = await Promise.all([
-        getDocs(inventoryQuery),
-        getDocs(ordersQuery),
-        getDocs(returnsQuery),
-        getDocs(problematicQuery),
-        getDoc(doc(db, 'profit_configs', user.uid)),
-        getDoc(doc(db, 'global_configs', 'settings'))
+      // 1. Fetch data from Supabase-enabled services first
+      // This will use Supabase if configured, or fallback to Firebase if not.
+      const [newInventory, newOrders] = await Promise.all([
+        InventoryService.fetchInventory(user.uid),
+        InventoryService.fetchOrders(user.uid)
       ]);
       
-      const newInventory = inventorySnap.docs.map(d => ({ id: d.id, ...d.data() })) as Product[];
-      const newOrders = ordersSnap.docs.map(d => ({ id: d.id, ...d.data() })) as OrderRecord[];
-      const newReturns = returnsSnap.docs.map(d => ({ id: d.id, ...d.data() })) as ReturnRecord[];
-      const newProblematic = problematicSnap.docs.map(d => ({ id: d.id, ...d.data() })) as ProblematicOrder[];
-      const newConfig = configSnap.exists() ? configSnap.data() as ProfitConfig : null;
-      const newGlobalConfig = globalConfigSnap.exists() ? globalConfigSnap.data() as any : null;
+      // 2. Fetch other configs that still reside in Firebase for now
+      // We wrap these in individual try-catch to not block the whole UI if one fails
+      let newConfig = config;
+      let newGlobalConfig = globalConfig;
+      let newReturns = returns;
+      let newProblematic = problematicOrders;
+
+      try {
+        const [returnsSnap, problematicSnap, configSnap, globalConfigSnap] = await Promise.all([
+          getDocs(query(collection(db, 'returns'), where('userId', '==', user.uid), limit(50))),
+          getDocs(query(collection(db, 'problematic_orders'), where('userId', '==', user.uid), limit(30))),
+          getDoc(doc(db, 'profit_configs', user.uid)),
+          getDoc(doc(db, 'global_configs', 'settings'))
+        ]);
+
+        newReturns = returnsSnap.docs.map(d => ({ id: d.id, ...d.data() })) as ReturnRecord[];
+        newProblematic = problematicSnap.docs.map(d => ({ id: d.id, ...d.data() })) as ProblematicOrder[];
+        newConfig = configSnap.exists() ? configSnap.data() as ProfitConfig : null;
+        newGlobalConfig = globalConfigSnap.exists() ? globalConfigSnap.data() as any : null;
+      } catch (fbError: any) {
+        console.warn('[DataContext] Firebase secondary fetch failed (likely quota):', fbError.message);
+        // If it's a quota error, we just keep using what we have (or cache)
+      }
 
       console.log(`Fetch successful for user ${user.uid}: ${newInventory.length} products, ${newOrders.length} orders.`);
 
@@ -122,8 +120,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       setReturns(newReturns);
       setProblematicOrders(newProblematic);
       setConfig(newConfig);
+      setGlobalConfig(newGlobalConfig);
 
-      // Save to cache BEFORE setting globalConfig to ensure consistency
+      // Save to cache
       const now = new Date().getTime();
       localStorage.setItem(`cache_inventory_${user.uid}`, JSON.stringify(newInventory));
       localStorage.setItem(`cache_orders_${user.uid}`, JSON.stringify(newOrders));
@@ -133,20 +132,31 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem('cache_global_config', JSON.stringify(newGlobalConfig));
       localStorage.setItem(`cache_time_${user.uid}`, now.toString());
 
-      setGlobalConfig(newGlobalConfig);
-      GeminiService.resetInstance();
+      if (newGlobalConfig) GeminiService.resetInstance();
       
       setLastUpdated(new Date(now));
       setLoading(false);
       setFetching(false);
-      setQuotaExceeded(false);
+      
+      // CRITICAL: If we have Supabase data, we don't care about Firebase quota errors
+      if (newInventory.length > 0 || newOrders.length > 0) {
+        setQuotaExceeded(false);
+      }
     } catch (error: any) {
       const classified = classifyError(error, 'Firebase');
       console.error('Fetch Data Error:', classified.message);
       
       if (classified.isQuota || error.message?.includes('INTERNAL ASSERTION FAILED')) {
         setQuotaExceeded(true);
-        // Fallback to cache if available
+        try {
+          // Hard disable network to prevent further quota drain
+          await disableNetwork(db);
+          console.warn('[DataContext] Network disabled due to Quota Exceeded');
+        } catch (e) {
+          console.error('Failed to disable network:', e);
+        }
+        
+        // Mandatory fallback to cache if available
         if (cachedInventory) setInventory(JSON.parse(cachedInventory));
         if (cachedOrders) setOrders(JSON.parse(cachedOrders));
         if (cachedReturns) setReturns(JSON.parse(cachedReturns));
@@ -196,15 +206,18 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, [user]);
 
   const refreshData = async () => {
-    if (quotaExceeded) {
-      try {
-        await enableNetwork(db);
-        setQuotaExceeded(false);
-      } catch (e) {
-        console.error('Failed to enable network:', e);
-      }
+    try {
+      setLoading(true);
+      // Always try to enable network when user explicitly asks for refresh
+      await enableNetwork(db);
+      setQuotaExceeded(false);
+      await fetchData(true);
+    } catch (error: any) {
+      console.error('Refresh failed:', error);
+      // If still quota exceeded, it will be caught in fetchData
+    } finally {
+      setLoading(false);
     }
-    await fetchData(true);
   };
 
   return (

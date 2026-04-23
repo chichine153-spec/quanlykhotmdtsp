@@ -38,11 +38,18 @@ export default function ApiKeyManager() {
     if (isGeminiValid && supabaseKey) {
       localStorage.setItem('gemini_api_key', geminiKey);
       localStorage.setItem('ghn_token', ghnToken);
-      localStorage.setItem('supabase_url', supabaseUrl || 'https://pdqhkeewyvimykvyexgo.supabase.co');
+      localStorage.setItem('supabase_url', supabaseUrl);
       localStorage.setItem('supabase_anon_key', supabaseKey);
+      
+      // Also sync to global storage used by getSupabase()
+      localStorage.setItem('global_supabase_url', supabaseUrl);
+      localStorage.setItem('global_supabase_key', supabaseKey);
+      
       setStatus('valid');
       setTimeout(() => setShowInput(false), 2000);
-      window.location.reload(); // Reload to re-initialize Supabase client
+      
+      // Force reload to apply new Supabase instance across the app
+      window.location.reload();
     } else {
       setStatus('invalid');
     }

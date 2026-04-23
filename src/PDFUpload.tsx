@@ -543,9 +543,6 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
             timeoutPromise
           ]);
 
-          // Increment usage stat
-          await incrementDailyCount();
-
           clearInterval(progressInterval);
           updateProgress(nextBaseProgress);
 
@@ -576,6 +573,11 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
       }
 
       updateProgress(100);
+      
+      // Batch increment usage for all successful orders to save quota
+      if (successCount > 0) {
+        await incrementDailyCount(successCount);
+      }
       
       if (errors.length > 0) {
         if (successCount > 0) {

@@ -238,47 +238,36 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
     const items = Array.isArray(itemsInput) ? itemsInput : products;
     if (!user || items.length === 0) return;
     const supabase = getSupabase();
-    if (!supabase) {
-      if (!silent) addToast('Supabase chưa được cấu hình.', 'error');
-      return;
-    }
+    if (!supabase) return;
 
     if (!silent) setIsSyncing(true);
     try {
-      // Robust check for items being an array
       const itemsToProcess = Array.isArray(items) ? items : [];
-      if (itemsToProcess.length === 0) {
-        if (!silent) setIsSyncing(false);
-        return;
-      }
+      if (itemsToProcess.length === 0) return;
 
       const supabaseData = itemsToProcess.map(p => ({
         user_id: user.uid,
-        product_name: p.variant ? `${p.name} (${p.variant})` : p.name,
+        name: p.name,
         sku: p.sku,
+        variant: p.variant || '',
+        category: p.category || 'General',
         stock_quantity: Number(p.stock),
+        cost_price: Number(p.costPrice || 0),
+        selling_price: Number(p.sellingPrice || 0),
+        image_url: p.image,
         updated_at: new Date().toISOString()
       }));
 
+      // Fixed: Using 'products' table to match latest SQL
       const { error } = await supabase
-        .from('inventory')
-        .upsert(supabaseData, { onConflict: 'user_id,product_name' });
+        .from('products')
+        .upsert(supabaseData, { onConflict: 'user_id,sku' });
 
       if (error) throw error;
-      if (!silent) addToast('Đã đồng bộ dữ liệu kho sang Supabase thành công!', 'success');
-      
-      // Refresh forecast count after sync
-      const { data: forecastData } = await supabase
-        .from('restock_forecast')
-        .select('id')
-        .eq('user_id', user.uid)
-        .or('suggested_restock_qty.gt.0,stock_quantity.lte.5');
-      
-      if (forecastData) setForecastCount(forecastData.length);
+      if (!silent) addToast('Đã đồng bộ dữ liệu sang Supabase !', 'success');
     } catch (error: any) {
       console.error('Sync Error:', error);
-      logErrorToSupabase(error, 'inventory_sync', user.uid);
-      if (!silent) addToast(FRIENDLY_ERROR_MESSAGE, 'error');
+      if (!silent) addToast('Lỗi đồng bộ Supabase: ' + error.message, 'error');
     } finally {
       if (!silent) setIsSyncing(false);
     }
@@ -300,24 +289,54 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
     setIsUpdating(true);
     try {
       const status = (newProduct.stock || 0) > 10 ? 'in_stock' : ((newProduct.stock || 0) > 0 ? 'low_stock' : 'out_of_stock');
-      await addDoc(collection(db, 'inventory'), {
-        ...newProduct,
-        userId: user.uid,
-        stock: Number(newProduct.stock || 0),
-        status: status,
-        createdAt: new Date().toISOString()
-      });
+      
+      // 1. Try Supabase first
+      const supabase = getSupabase();
+      if (supabase) {
+        const { error: sbError } = await supabase
+          .from('products')
+          .insert({
+            user_id: user.uid,
+            sku: newProduct.sku,
+            name: newProduct.name,
+            variant: newProduct.variant || '',
+            category: newProduct.category || 'General',
+            stock_quantity: Number(newProduct.stock || 0),
+            cost_price: Number(newProduct.costPrice || 0),
+            selling_price: Number(newProduct.sellingPrice || 0),
+            image_url: newProduct.image,
+            updated_at: new Date().toISOString()
+          });
+        
+        if (sbError) {
+          console.error('Supabase Add Error:', sbError);
+          // Don't throw yet, try Firebase fallback
+        }
+      }
 
-      // Log the addition
-      await addDoc(collection(db, 'inventory_logs'), {
-        timestamp: serverTimestamp(),
-        sku: newProduct.sku,
-        productName: newProduct.name,
-        variant: newProduct.variant || '',
-        change: Number(newProduct.stock || 0),
-        type: 'addition',
-        userId: user?.uid
-      });
+      // 2. Firebase Write (as secondary storage)
+      try {
+        await addDoc(collection(db, 'inventory'), {
+          ...newProduct,
+          userId: user.uid,
+          stock: Number(newProduct.stock || 0),
+          status: status,
+          createdAt: new Date().toISOString()
+        });
+
+        // Log the addition
+        await addDoc(collection(db, 'inventory_logs'), {
+          timestamp: serverTimestamp(),
+          sku: newProduct.sku,
+          productName: newProduct.name,
+          variant: newProduct.variant || '',
+          change: Number(newProduct.stock || 0),
+          type: 'addition',
+          userId: user?.uid
+        });
+      } catch (fbErr) {
+        console.warn('Firebase sync failed (likely quota), but Supabase might be okay.', fbErr);
+      }
 
       setIsAddingNew(false);
       setNewProduct({
@@ -333,12 +352,7 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
       refreshData();
     } catch (error) {
       console.error("Add Error:", error);
-      try {
-        handleFirestoreError(error, OperationType.WRITE, 'inventory');
-      } catch (fe: any) {
-        const errObj = JSON.parse(fe.message);
-        addToast(errObj.userFriendlyMessage || 'Lỗi khi thêm sản phẩm mới. Có thể ảnh quá lớn.', 'error');
-      }
+      addToast('Lỗi khi thêm sản phẩm mới.', 'error');
     } finally {
       setIsUpdating(false);
     }
@@ -361,36 +375,62 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
 
     setIsUpdating(true);
     try {
-      const productRef = doc(db, 'inventory', editingProduct.id);
       const status = editingProduct.stock > 10 ? 'in_stock' : (editingProduct.stock > 0 ? 'low_stock' : 'out_of_stock');
       
       // Get original product to calculate change
       const originalProduct = products.find(p => p.id === editingProduct.id);
-      const stockChange = originalProduct ? Number(editingProduct.stock) - originalProduct.stock : 0;
+      const stockChange = originalProduct ? Number(editingProduct.stock) - Number(originalProduct.stock) : 0;
 
-      await updateDoc(productRef, {
-        name: editingProduct.name,
-        sku: editingProduct.sku,
-        stock: Number(editingProduct.stock),
-        variant: editingProduct.variant || '',
-        category: editingProduct.category || 'General',
-        image: editingProduct.image,
-        costPrice: Number(editingProduct.costPrice || 0),
-        sellingPrice: Number(editingProduct.sellingPrice || 0),
-        status: status
-      });
+      // 1. Supabase Update
+      const supabase = getSupabase();
+      if (supabase) {
+        const { error: sbError } = await supabase
+          .from('products')
+          .update({
+            sku: editingProduct.sku,
+            name: editingProduct.name,
+            variant: editingProduct.variant || '',
+            category: editingProduct.category || 'General',
+            stock_quantity: Number(editingProduct.stock),
+            cost_price: Number(editingProduct.costPrice || 0),
+            selling_price: Number(editingProduct.sellingPrice || 0),
+            image_url: editingProduct.image,
+            updated_at: new Date().toISOString()
+          })
+          .match({ user_id: user.uid, sku: originalProduct?.sku || editingProduct.sku });
+        
+        if (sbError) console.error('Supabase Update Error:', sbError);
+      }
 
-      if (stockChange !== 0) {
-        // Log the change
-        await addDoc(collection(db, 'inventory_logs'), {
-          timestamp: serverTimestamp(),
+      // 2. Firebase Update (secondary)
+      try {
+        const productRef = doc(db, 'inventory', editingProduct.id);
+        await updateDoc(productRef, {
+          name: editingProduct.name,
           sku: editingProduct.sku,
-          productName: editingProduct.name,
+          stock: Number(editingProduct.stock),
           variant: editingProduct.variant || '',
-          change: stockChange,
-          type: 'manual_edit',
-          userId: user?.uid
+          category: editingProduct.category || 'General',
+          image: editingProduct.image,
+          costPrice: Number(editingProduct.costPrice || 0),
+          sellingPrice: Number(editingProduct.sellingPrice || 0),
+          status: status
         });
+
+        if (stockChange !== 0) {
+          // Log the change
+          await addDoc(collection(db, 'inventory_logs'), {
+            timestamp: serverTimestamp(),
+            sku: editingProduct.sku,
+            productName: editingProduct.name,
+            variant: editingProduct.variant || '',
+            change: stockChange,
+            type: 'manual_edit',
+            userId: user?.uid
+          });
+        }
+      } catch (fbErr) {
+        console.warn('Firebase Update Sync failed (likely quota)', fbErr);
       }
 
       setEditingProduct(null);
@@ -399,12 +439,7 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
       refreshData();
     } catch (error) {
       console.error("Update Error:", error);
-      try {
-        handleFirestoreError(error, OperationType.UPDATE, 'inventory');
-      } catch (fe: any) {
-        const errObj = JSON.parse(fe.message);
-        addToast(errObj.userFriendlyMessage || 'Lỗi khi cập nhật sản phẩm. Có thể ảnh quá lớn.', 'error');
-      }
+      addToast('Lỗi khi cập nhật sản phẩm.', 'error');
     } finally {
       setIsUpdating(false);
     }
@@ -611,7 +646,9 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
           console.log('First data row example:', rows[0]);
         }
         
+        const supabase = getSupabase();
         const batch = writeBatch(db);
+        const supabaseItems: any[] = [];
         let count = 0;
         let updatedCount = 0;
 
@@ -652,57 +689,80 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
           const key = `${sku.toLowerCase()}_${variant.toLowerCase()}`;
           const existingProduct = inventoryMap.get(key);
 
-          if (existingProduct) {
-            // Update existing product
-            const productRef = doc(db, 'inventory', existingProduct.id);
-            batch.update(productRef, {
-              costPrice,
-              sellingPrice,
-              updatedAt: new Date().toISOString()
-            });
-            updatedCount++;
-          } else {
-            // Create new product
-            const newDocRef = doc(collection(db, 'inventory'));
-            const productData = {
-              userId: user.uid,
+          // Prepare Supabase data
+          if (supabase) {
+            supabaseItems.push({
+              user_id: user.uid,
+              sku: sku,
               name: name || 'Sản phẩm không tên',
-              sku: sku || `SKU-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
-              variant,
-              stock,
-              category,
-              status,
-              costPrice,
-              sellingPrice,
-              destination,
-              image: 'https://picsum.photos/seed/import/200/200',
-              createdAt: new Date().toISOString()
-            };
-            batch.set(newDocRef, productData);
-            count++;
+              variant: variant, // Ensure this matches renamed SQL column 'variant'
+              category: category,
+              stock_quantity: stock,
+              cost_price: Number(costPrice),
+              selling_price: Number(sellingPrice),
+              image_url: 'https://picsum.photos/seed/import/200/200',
+              updated_at: new Date().toISOString()
+            });
           }
 
-          // Log the import (only for new ones or significant changes if needed)
-          const logRef = doc(collection(db, 'inventory_logs'));
-          batch.set(logRef, {
-            timestamp: serverTimestamp(),
-            sku: sku || 'N/A',
-            productName: name || 'Sản phẩm không tên',
-            variant,
-            change: existingProduct ? 0 : stock,
-            type: 'bulk_import',
-            userId: user.uid,
-            details: existingProduct ? 'Cập nhật giá từ Excel' : 'Nhập mới từ Excel'
-          });
+          if (existingProduct) {
+            // Update existing product in Firebase logic (optional secondary)
+            try {
+              const productRef = doc(db, 'inventory', existingProduct.id);
+              batch.update(productRef, {
+                costPrice,
+                sellingPrice,
+                updatedAt: new Date().toISOString()
+              });
+              updatedCount++;
+            } catch (e) {}
+          } else {
+            // Create new product in Firebase logic (optional secondary)
+            try {
+              const newDocRef = doc(collection(db, 'inventory'));
+              const productData = {
+                userId: user.uid,
+                name: name || 'Sản phẩm không tên',
+                sku: sku || `SKU-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
+                variant,
+                stock,
+                category,
+                status,
+                costPrice,
+                selling_price: sellingPrice,
+                destination,
+                image: 'https://picsum.photos/seed/import/200/200',
+                createdAt: new Date().toISOString()
+              };
+              batch.set(newDocRef, productData);
+              count++;
+            } catch (e) {}
+          }
         }
 
-        if (count > 0 || updatedCount > 0) {
-          await batch.commit();
-          await refreshData();
-          addToast(`Đã nhập thành công: ${count} mới, ${updatedCount} cập nhật giá!`, 'success');
-        } else {
-          addToast('Không tìm thấy sản phẩm hợp lệ trong file.', 'info');
+        // 1. Supabase Fast Upsert
+        if (supabase && supabaseItems.length > 0) {
+          const { error: sbError } = await supabase
+            .from('products')
+            .upsert(supabaseItems, { onConflict: 'user_id,sku' });
+          
+          if (sbError) {
+            console.error('Supabase Bulk Error:', sbError);
+            throw new Error(`Supabase Error: ${sbError.message}`);
+          }
+        } else if (!supabase) {
+          throw new Error('Supabase chưa được cấu hình. Vui lòng kiểm tra lại URL và Key trong mục Cấu hình API.');
         }
+
+        // 2. Firebase Secondary Commit (Silent fallback)
+        try {
+          await batch.commit();
+        } catch (e) {
+          console.warn('Firebase batch commit failed, likely quota.', e);
+        }
+
+        await refreshData();
+        addToast(`Đã nhập thành công vào Supabase!`, 'success');
       } catch (error) {
         console.error("Bulk Import Error:", error);
         addToast('Lỗi khi nhập dữ liệu từ file. Vui lòng kiểm tra định dạng file Excel/CSV.', 'error');

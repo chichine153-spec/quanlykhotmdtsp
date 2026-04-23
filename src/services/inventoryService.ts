@@ -16,6 +16,7 @@ import {
 import { db } from '../firebase';
 import { Product, InTransitLog } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
+import { getSupabase } from '../lib/supabase';
 
 export interface OrderRecord {
   id: string;
@@ -53,49 +54,121 @@ export interface OrderRecord {
 
 export class InventoryService {
   /**
-   * Fetch all inventory
+   * Fetch all inventory from Supabase
    */
   static async fetchInventory(userId: string) {
+    const supabase = getSupabase();
+    if (!supabase) {
+      // Fallback to Firebase for now if Supabase not configured
+      try {
+        const q = query(
+          collection(db, 'inventory'),
+          where('userId', '==', userId)
+        );
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as Product[];
+      } catch (error) {
+        handleFirestoreError(error, OperationType.LIST, 'inventory');
+        return [];
+      }
+    }
+
     try {
-      const q = query(
-        collection(db, 'inventory'),
-        where('userId', '==', userId)
-      );
-      const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Product[];
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'inventory');
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      return data.map(p => {
+        const stock = Number(p.stock_quantity || 0);
+        const status = stock > 10 ? 'in_stock' : (stock > 0 ? 'low_stock' : 'out_of_stock');
+        
+        return {
+          id: p.id,
+          sku: p.sku,
+          name: p.name,
+          category: p.category,
+          costPrice: Number(p.cost_price || 0),
+          sellingPrice: Number(p.selling_price || 0),
+          stock: stock,
+          status: status, // Dynamically derived from Supabase stock_quantity
+          variant: p.variant || '',
+          weight: p.weight,
+          image: p.image_url || 'https://picsum.photos/seed/piti/200/200',
+          userId: p.user_id,
+          lastUpdated: p.updated_at
+        };
+      }) as Product[];
+    } catch (err) {
+      console.error('[InventoryService] Supabase fetch error:', err);
       return [];
     }
   }
 
   /**
-   * Fetch all orders (filtered to last 15 days)
+   * Fetch all orders from Supabase (filtered to last 15 days)
    */
   static async fetchOrders(userId: string) {
+    const supabase = getSupabase();
+    if (!supabase) {
+      try {
+        const fifteenDaysAgo = new Date();
+        fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
+        const fifteenDaysAgoStr = fifteenDaysAgo.toISOString();
+
+        const q = query(
+          collection(db, 'orders'), 
+          where('userId', '==', userId),
+          where('processedAt', '>=', fifteenDaysAgoStr),
+          orderBy('processedAt', 'desc'),
+          limit(150)
+        );
+        
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as OrderRecord[];
+      } catch (error) {
+        handleFirestoreError(error, OperationType.LIST, 'orders');
+        return [];
+      }
+    }
+
     try {
       const fifteenDaysAgo = new Date();
       fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
-      const fifteenDaysAgoStr = fifteenDaysAgo.toISOString();
 
-      const q = query(
-        collection(db, 'orders'), 
-        where('userId', '==', userId),
-        where('processedAt', '>=', fifteenDaysAgoStr),
-        orderBy('processedAt', 'desc'),
-        limit(150) // Limit to save quota
-      );
-      
-      const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('user_id', userId)
+        .gte('processed_at', fifteenDaysAgo.toISOString())
+        .order('processed_at', { ascending: false })
+        .limit(150);
+
+      if (error) throw error;
+
+      return data.map(o => ({
+        id: o.tracking_code, // Use tracking code as ID for stability
+        trackingCode: o.tracking_code,
+        processedAt: o.processed_at,
+        platform: o.platform,
+        customerName: o.customer_name,
+        items: o.items,
+        userId: o.user_id,
+        totalRevenue: o.total_amount,
+        profit: o.profit,
+        image_url: o.image_url,
+        status: o.status
       })) as OrderRecord[];
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'orders');
+    } catch (err) {
+      console.error('[InventoryService] Supabase orders fetch error:', err);
       return [];
     }
   }
