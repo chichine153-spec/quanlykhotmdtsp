@@ -53,6 +53,9 @@ export interface OrderRecord {
     time: string;
     location?: string;
   }[];
+  isSettled?: boolean;
+  actualRevenue?: number;
+  actual_revenue?: number;
 }
 
 export class InventoryService {

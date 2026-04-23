@@ -821,9 +821,9 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
       
       let matchesStatus = true;
       const stockNum = Number(p.stock);
-      if (statusFilter === 'in_stock') matchesStatus = stockNum > 10;
-      else if (statusFilter === 'low_stock') matchesStatus = stockNum > 0 && stockNum <= 10;
-      else if (statusFilter === 'out_of_stock') matchesStatus = stockNum <= 0;
+      if (statusFilter === 'in_stock') matchesStatus = stockNum >= 10;
+      else if (statusFilter === 'low_stock') matchesStatus = stockNum >= 5 && stockNum < 10;
+      else if (statusFilter === 'out_of_stock') matchesStatus = stockNum < 5;
       
       return matchesSearch && matchesCategory && matchesStatus;
     });
@@ -1013,7 +1013,7 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
           </div>
           <div>
             <p className="text-[10px] uppercase tracking-widest text-secondary font-bold mb-1">Sắp hết hàng</p>
-            <p className="text-3xl font-black text-primary">{(Array.isArray(products) ? products : []).filter(p => Number(p.stock) > 0 && Number(p.stock) <= 10).length}</p>
+            <p className="text-3xl font-black text-primary">{(Array.isArray(products) ? products : []).filter(p => Number(p.stock) > 0 && Number(p.stock) < 10).length}</p>
           </div>
         </div>
         <div 
@@ -1026,9 +1026,9 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
             <TrendingUp size={20} />
           </div>
           <div>
-            <p className="text-[10px] uppercase tracking-widest text-secondary font-bold mb-1">Cần nhập thêm</p>
+            <p className="text-[10px] uppercase tracking-widest text-secondary font-bold mb-1">Cần nhập gấp</p>
             <p className="text-3xl font-black text-on-surface">
-              {Math.max(forecastCount, (Array.isArray(products) ? products : []).filter(p => Number(p.stock) <= 5).length)}
+              {(Array.isArray(products) ? products : []).filter(p => Number(p.stock) < 5).length}
             </p>
           </div>
         </div>
@@ -1260,12 +1260,12 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
                         </td>
                         <td className="px-6 py-4 text-center">
                           <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                            variant.stock > 10 ? 'bg-tertiary-fixed text-on-tertiary-fixed' :
-                            variant.stock > 0 ? 'bg-primary-fixed text-on-primary-fixed' :
-                            'bg-surface-container-high text-secondary'
+                            variant.stock >= 10 ? 'bg-green-100 text-green-700' :
+                            variant.stock >= 5 ? 'bg-amber-100 text-amber-700' :
+                            'bg-red-100 text-red-700 animate-pulse'
                           }`}>
-                            {variant.stock > 10 ? 'Còn hàng' :
-                             variant.stock > 0 ? 'Sắp hết' : 'Hết hàng'}
+                            {variant.stock >= 10 ? 'Còn hàng' :
+                             variant.stock >= 5 ? 'Sắp hết' : 'NHẬP GẤP'}
                           </span>
                         </td>
                         <td className="px-6 py-4 text-right">

@@ -37,6 +37,9 @@ export interface ExtractedItem {
   matchedSku?: string;
   currentStock?: number;
   packagingFee?: number;
+  platformFee?: number;
+  taxFee?: number;
+  profit?: number;
   costPrice?: number;
   sellingPrice?: number;
   stockStatus?: 'in_stock' | 'out_of_stock' | 'low_stock' | 'checking';
@@ -49,6 +52,7 @@ export interface ExtractedOrder {
   recipientName?: string;
   recipientPhone?: string;
   recipientAddress?: string;
+  recipient_address?: string;
   rawText?: string;
   isCup?: boolean; // Note for "Cốc giữ nhiệt"
   job_id?: string;
@@ -117,7 +121,9 @@ export class PDFService {
     userId: string,
     shopKey: string | null,
     fallbackKey: string | null,
-    shopPlan: string
+    shopPlan: string,
+    inventoryData: any[] = [],
+    profitConfig: any = null
   ): Promise<ExtractedOrder[]> {
     let arrayBuffer: ArrayBuffer;
     
@@ -213,7 +219,53 @@ export class PDFService {
         };
       });
 
-      return processedOrders;
+      // Enrich with inventory data for instant profit calculation
+      const enrichedOrders = await Promise.all(processedOrders.map(async (order) => {
+        const enrichedItems = await Promise.all(order.items.map(async (item) => {
+          const skuMatch = await this.findMatchedProduct(item.sku, item.color, inventoryData);
+          
+          if (skuMatch) {
+            const costPrice = Number(item.costPrice || skuMatch.costPrice || 0);
+            const sellingPrice = Number(item.sellingPrice || skuMatch.sellingPrice || 0);
+            const quantity = Number(item.quantity || 1);
+            
+            const platformFeePercent = ProfitService.getPlatformFeePercent(skuMatch.sku, skuMatch.name, profitConfig);
+            const taxPercent = Number(profitConfig?.taxPercent || 1.5);
+            const packagingFee = ProfitService.calculatePackagingFee(skuMatch.sku, skuMatch.name, profitConfig);
+            
+            const pFee = (sellingPrice * (platformFeePercent / 100)) * quantity;
+            const tFee = (sellingPrice * (taxPercent / 100)) * quantity;
+            const packFee = packagingFee * quantity;
+            const profit = (sellingPrice * quantity) - (costPrice * quantity) - pFee - tFee - packFee;
+
+            return {
+              ...item,
+              matchedSku: skuMatch.sku,
+              productName: skuMatch.name,
+              currentStock: skuMatch.stock,
+              costPrice,
+              sellingPrice,
+              packagingFee: packFee,
+              platformFee: pFee,
+              taxFee: tFee,
+              profit,
+              stockStatus: (skuMatch.stock > 10 ? 'in_stock' : (skuMatch.stock > 0 ? 'low_stock' : 'out_of_stock')) as 'in_stock' | 'out_of_stock' | 'low_stock' | 'checking'
+            };
+          } else {
+            return {
+              ...item,
+              stockStatus: 'checking' as 'checking'
+            };
+          }
+        }));
+
+        return {
+          ...order,
+          items: enrichedItems
+        };
+      }));
+
+      return enrichedOrders;
     } catch (error: any) {
       console.error('[PDFService] Gemini Parsing Error:', error);
       
@@ -667,7 +719,7 @@ export class PDFService {
   /**
    * Processes an entire order: checks for duplicates, updates inventory for all items, and uploads the label.
    */
-  static async processOrder(file: File, order: ExtractedOrder, preFetchedProducts?: any[], preFetchedConfig?: any, preUploadedUrl?: string): Promise<{ productNames: string[] }> {
+  static async processOrder(file: File, order: ExtractedOrder, preFetchedProducts?: any[], preFetchedConfig?: any, preUploadedUrl?: string): Promise<any> {
     const { trackingCode, items } = order;
     console.log(`[PDFService] Processing order: ${trackingCode} with ${items.length} items`);
 
@@ -681,11 +733,14 @@ export class PDFService {
       const safeNum = (val: any) => {
         if (typeof val === 'number') return isNaN(val) ? 0 : val;
         if (!val) return 0;
-        // Clean string: keep only digits, minus, and dot for decimals
-        let cleaned = String(val).replace(/[^\d.-]/g, '');
-        // To be safe for VND: if no cents are expected, remove all dots/commas.
-        if (cleaned.includes('.') && cleaned.split('.').pop()?.length !== 2) {
-          cleaned = cleaned.replace(/\./g, '');
+        const str = String(val);
+        if (/^-?\d+(\.\d+)?$/.test(str)) return parseFloat(str);
+        
+        let cleaned = str.replace(/[^\d.,-]/g, '');
+        if ((cleaned.match(/[\.,]/g) || []).length > 1 || (cleaned.includes('.') && cleaned.length > 5)) {
+          cleaned = cleaned.replace(/[\.,]/g, '');
+        } else {
+          cleaned = cleaned.replace(',', '.');
         }
         const num = parseFloat(cleaned);
         return isNaN(num) ? 0 : num;
@@ -700,6 +755,7 @@ export class PDFService {
       let platformFeeValue = 0;
       let taxFeeValue = 0;
       let packagingFeeValue = 0;
+      let destinationValue = 'Chưa xác định';
       const finalizedItemsResult: any[] = [];
 
       // Use pre-fetched products if available, otherwise fetch once
@@ -754,9 +810,13 @@ export class PDFService {
           if (item.matchedProduct) {
             const productRef = item.matchedProduct.ref || doc(db, 'inventory', item.matchedProduct.id);
             if (!productSnaps.has(productRef.id)) {
-              const snap = await transaction.get(productRef);
-              if (snap.exists()) {
-                productSnaps.set(productRef.id, snap.data());
+              try {
+                const snap = await transaction.get(productRef);
+                if (snap && snap.exists()) {
+                  productSnaps.set(productRef.id, snap.data());
+                }
+              } catch (e) {
+                console.warn(`[PDFService] Could not pre-fetch snap for product ${productRef.id}:`, e);
               }
             }
           }
@@ -764,83 +824,55 @@ export class PDFService {
 
         // B. ALL WRITES SECOND
         const processedItems: any[] = [];
-        const currentStockMap = new Map<string, number>(); // Track stock changes within the transaction for multiple items of same product
+        const currentStockMap = new Map<string, number>();
+
+        console.log(`[PDFService] Starting processing for ${itemsWithMatchedProducts.length} items...`);
 
         for (const item of itemsWithMatchedProducts) {
           const { sku, color, quantity, costPrice: extCost, sellingPrice: extSell, matchedProduct } = item;
           
           if (!matchedProduct) {
-            console.log(`[PDFService] NEW SKU FOUND: ${sku} (${color}). Creating new inventory entry...`);
-            
-            const newProductRef = doc(collection(db, 'inventory'));
-            const initialStock = 0 - safeNum(quantity);
-            const status = initialStock > 10 ? 'in_stock' : (initialStock > 0 ? 'low_stock' : 'out_of_stock');
-            
-            const newProductData = {
-              userId: auth.currentUser?.uid,
-              sku: sku,
-              variant: color || 'Mặc định',
-              name: `Sản phẩm mới (${sku})`,
-              stock: initialStock,
-              status: status,
-              costPrice: safeNum(extCost),
-              sellingPrice: safeNum(extSell),
-              category: 'General',
-              image: 'https://picsum.photos/seed/new/200/200',
-              createdAt: new Date().toISOString()
-            };
-
-            transaction.set(newProductRef, newProductData);
-            
-            // Log the new product creation
-            const newLogRef = doc(inventoryLogsRef);
-            transaction.set(newLogRef, {
-              userId: auth.currentUser?.uid,
-              sku: sku,
-              productName: newProductData.name,
-              variant: newProductData.variant,
-              change: initialStock,
-              type: 'deduction',
-              trackingCode: trackingCode,
-              timestamp: Timestamp.now(),
-              details: 'Tạo mới từ PDF (Trừ kho)'
-            });
-
-            productNames.push(newProductData.name);
-            const newItem = {
-              sku: sku,
-              variant: color || 'Mặc định',
-              quantity: safeNum(quantity),
-              productName: newProductData.name,
-              productId: newProductRef.id,
-              category: 'General',
-              costPrice: safeNum(extCost),
-              sellingPrice: safeNum(extSell)
-            };
-            processedItems.push(newItem);
-            finalizedItemsResult.push(newItem);
-
-            continue;
+            console.error(`[PDFService] SKU NOT FOUND ERROR: ${sku} (${color}).`);
+            throw new Error(`Mã SKU [${sku}] không tồn tại trong kho hoặc chưa được khai báo. Vui lòng sử dụng tính năng "Nhập kho nhanh" hoặc thêm SKU này vào kho để có đủ dữ liệu tính toán.`);
           }
 
           const productRef = matchedProduct.ref || doc(db, 'inventory', matchedProduct.id);
           const productDataInTransaction = productSnaps.get(productRef.id);
           
+          const itemQuantity = safeNum(quantity);
+          const itemCostPrice = safeNum(extCost || matchedProduct.costPrice);
+          const itemSellingPrice = safeNum(extSell || matchedProduct.sellingPrice);
+
           if (!productDataInTransaction) {
-            console.error(`[PDFService] Product document ${productRef.id} not found in pre-fetched snaps!`);
+            // FALLBACK: If not in Firestore but matched (likely from Supabase), we still need to record the sale
+            console.warn(`[PDFService] Product ${matchedProduct.sku} matched but NOT in Firestore snaps. Proceeding without Firestore stock deduction for this item.`);
+            
+            const processedItem = {
+              sku: matchedProduct.sku,
+              variant: matchedProduct.variant || color || 'Mặc định',
+              quantity: itemQuantity,
+              productName: matchedProduct.name,
+              productId: matchedProduct.id, 
+              category: matchedProduct.category || '',
+              costPrice: itemCostPrice,
+              sellingPrice: itemSellingPrice
+            };
+            processedItems.push(processedItem);
+            productNames.push(matchedProduct.name);
             continue;
           }
           
           const initialStock = Number(productDataInTransaction.stock || 0);
           const currentStock = currentStockMap.has(productRef.id) ? currentStockMap.get(productRef.id)! : initialStock;
           
-          const deductQty = safeNum(quantity);
+          const deductQty = itemQuantity;
           const newStock = currentStock - deductQty;
-          currentStockMap.set(productRef.id, newStock); // Update local map for next item
+          currentStockMap.set(productRef.id, newStock);
           
-          const status = newStock > 10 ? 'in_stock' : (newStock > 0 ? 'low_stock' : 'out_of_stock');
+          // User request: < 5 is "NHẬP GẤP" / "SẮP HẾT HÀNG"
+          const status = newStock >= 10 ? 'in_stock' : (newStock >= 5 ? 'low_stock' : 'out_of_stock');
 
-          console.log(`[PDFService] Transaction Update: ${matchedProduct.sku} | Stock: ${currentStock} -> ${newStock}`);
+          console.log(`[PDFService] Transaction Match: ${matchedProduct.sku} | Price: ${itemSellingPrice} | Cost: ${itemCostPrice}`);
 
           const updateData: any = {
             stock: newStock,
@@ -870,16 +902,21 @@ export class PDFService {
           
           const processedItem = {
             sku: matchedProduct.sku,
-            variant: matchedProduct.variant || '',
-            quantity: safeNum(quantity),
+            variant: matchedProduct.variant || color || 'Mặc định',
+            quantity: itemQuantity,
             productName: matchedProduct.name,
             productId: productRef.id,
             category: matchedProduct.category || '',
-            costPrice: safeNum(extCost || matchedProduct.costPrice),
-            sellingPrice: safeNum(extSell || matchedProduct.sellingPrice)
+            costPrice: itemCostPrice,
+            sellingPrice: itemSellingPrice
           };
           processedItems.push(processedItem);
-          finalizedItemsResult.push(processedItem);
+          finalizedItemsResult.push(processedItem); // Fixed: Populating for Supabase update
+        }
+
+        if (processedItems.length === 0) {
+          console.error('[PDFService] Processed items list is empty for order:', trackingCode);
+          throw new Error('Không có sản phẩm nào được xử lý cho đơn hàng này. Vui lòng kiểm tra lại file PDF.');
         }
 
         // Save order record
@@ -920,6 +957,8 @@ export class PDFService {
         const region = order.region || '';
         if (region.toUpperCase().startsWith('HN')) destination = 'Hà Nội';
         else if (region.toUpperCase().startsWith('SG') || region.toUpperCase().startsWith('HCM')) destination = 'Hồ Chí Minh';
+        
+        destinationValue = destination; // Update outside variable
 
         transaction.set(orderRef, {
           trackingCode,
@@ -936,6 +975,7 @@ export class PDFService {
           platformFee,
           taxFee,
           packagingFee,
+          profit: totalRevenue - totalCost - platformFee - taxFee - packagingFee,
           recipientName: order.recipientName || '',
           recipientPhone: order.recipientPhone || '',
           recipientAddress: order.recipientAddress || '',
@@ -960,7 +1000,7 @@ export class PDFService {
               order_id: order.orderId || '',
               job_id: order.job_id || '',
               shop_id: order.shop_id || '',
-              shop_name: 'Zenith Store', // Default or from config
+              shop_name: 'Zenith Store', 
               platform: order.platform || 'Shopee',
               customer_name: order.recipientName || 'Khách hàng Shopee',
               total_amount: Number(totalRevenueValue || 0),
@@ -970,9 +1010,13 @@ export class PDFService {
               packaging_fee: Number(packagingFeeValue || 0),
               profit: Number((totalRevenueValue || 0) - (totalCostValue || 0) - (platformFeeValue || 0) - (taxFeeValue || 0) - (packagingFeeValue || 0)),
               status: 'Processed',
-              items: JSON.stringify(processedItemsResult),
+              items: processedItemsResult, // Pass the array directly for JSONB column
               image_url: downloadURL || '',
-              processed_at: new Date().toISOString()
+              processed_at: new Date().toISOString(),
+              recipient_name: order.recipientName || '',
+              recipient_phone: order.recipientPhone || '',
+              recipient_address: order.recipient_address || order.recipientAddress || '',
+              region: order.region || ''
             });
 
           if (orderError) {
@@ -1054,7 +1098,11 @@ export class PDFService {
       }
 
       console.log(`[PDFService] Order ${trackingCode} processed successfully.`);
-      return { productNames };
+      return { 
+        productNames, 
+        processedItems: processedItemsResult,
+        totalProfit: totalRevenueValue - totalCostValue - platformFeeValue - taxFeeValue - packagingFeeValue
+      };
     } catch (error: any) {
       console.error(`[PDFService] Error processing order ${trackingCode}:`, error);
       if (error.message.includes('đã được xử lý')) throw error;

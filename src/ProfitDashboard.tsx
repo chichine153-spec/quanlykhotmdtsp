@@ -9,6 +9,7 @@ import {
   Save, 
   Loader2, 
   AlertCircle,
+  AlertTriangle,
   Package,
   ShoppingCart,
   ArrowRight,
@@ -17,9 +18,12 @@ import {
   Minus,
   RefreshCw,
   Clock,
-  X
+  X,
+  FileSpreadsheet,
+  Upload
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { toast } from 'react-hot-toast';
 import { 
   BarChart, 
   Bar, 
@@ -53,9 +57,9 @@ export default function ProfitDashboard() {
   const { orders, returns, config: globalConfig, loading: dataLoading, refreshData, lastUpdated } = useData();
   const [activeTab, setActiveTab] = React.useState<'today' | 'week' | 'month'>('today');
   const [config, setConfig] = React.useState<ProfitConfig>({
-    platformFeePercent: 12,
-    platformFeeCup: 25,
-    platformFeeBottle: 20,
+    platformFeePercent: 25,
+    platformFeeCup: 24.5,
+    platformFeeBottle: 25.4,
     taxPercent: 1.5,
     packagingCostBottle: 6000,
     packagingCostCup: 8000,
@@ -67,6 +71,34 @@ export default function ProfitDashboard() {
   });
   const [loading, setLoading] = React.useState(true);
   const [showConfig, setShowConfig] = React.useState(false);
+  const [uploading, setUploading] = React.useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleTransactionUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    setUploading(true);
+    const toastId = toast.loading('Đang xử lý file giao dịch...');
+    try {
+      const result = await ProfitService.processTransactionExcel(file, user.uid);
+      if (result.updated > 0) {
+        toast.success(`Đã cập nhật ${result.updated} đơn hàng!`, { id: toastId });
+        refreshData();
+      } else {
+        toast.error('Không tìm thấy đơn hàng nào để cập nhật.', { id: toastId });
+      }
+      if (result.errors.length > 0) {
+        console.warn('Transaction update errors:', result.errors);
+      }
+    } catch (error: any) {
+      console.error('Upload error:', error);
+      toast.error('Lỗi khi xử lý file Excel: ' + (error.message || 'Unknown error'), { id: toastId });
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
 
   React.useEffect(() => {
     if (globalConfig) setConfig(globalConfig);
@@ -111,9 +143,9 @@ export default function ProfitDashboard() {
       {/* Header Section */}
       <header className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
-          <h1 className="text-4xl font-extrabold tracking-tight text-on-surface mb-2">Phân tích lợi nhuận</h1>
+          <h1 className="text-4xl font-extrabold tracking-tight text-on-surface mb-2 uppercase">PITI STORE - PHÂN TÍCH LỢI NHUẬN</h1>
           <div className="flex items-center gap-2">
-            <p className="text-secondary font-medium">Báo cáo doanh thu, chi phí và lợi nhuận thực tế.</p>
+            <p className="text-secondary font-medium">Báo cáo doanh thu, chi phí và lợi nhuận thực tế ngay khi bán ra.</p>
             {lastUpdated && (
               <span className="text-[10px] bg-surface-container px-2 py-0.5 rounded-full text-secondary font-mono">
                 Cập nhật: {lastUpdated.toLocaleTimeString('vi-VN')}
@@ -130,6 +162,23 @@ export default function ProfitDashboard() {
           >
             <RefreshCw size={20} className={dataLoading ? 'animate-spin' : ''} />
           </button>
+
+          <input 
+            type="file" 
+            ref={fileInputRef}
+            onChange={handleTransactionUpload}
+            className="hidden"
+            accept=".xlsx, .xls, .csv"
+          />
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-blue-600 text-white font-bold hover:bg-blue-700 transition-all disabled:opacity-50"
+          >
+            {uploading ? <Loader2 size={20} className="animate-spin" /> : <FileSpreadsheet size={20} />}
+            <span>Quyết toán Shop</span>
+          </button>
+
           <div className="bg-surface-container-low p-1 rounded-2xl flex gap-1">
             {TIME_TABS.map(tab => (
               <button
@@ -155,8 +204,26 @@ export default function ProfitDashboard() {
       </header>
 
       {/* Main Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-surface-container flex flex-col gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        {stats.revenue === 0 && !loading && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="lg:col-span-4 bg-amber-50 border border-amber-200 rounded-[2.5rem] p-6 flex items-center gap-6"
+          >
+            <div className="w-14 h-14 rounded-2xl bg-amber-100 flex items-center justify-center text-amber-600 flex-shrink-0">
+              <AlertTriangle size={28} />
+            </div>
+            <div>
+              <p className="text-lg font-bold text-amber-900">Thông tin: Chưa có dữ liệu phân tích lợi nhuận</p>
+              <p className="text-secondary text-sm leading-relaxed">
+                Hệ thống cần dữ liệu từ các đơn hàng PDF đã tải lên và <strong>Giá vốn/Giá bán</strong> được thiết lập trong phần Kho hàng để thực hiện tính toán. 
+                Vui lòng kiểm tra lại cấu hình sản phẩm của bạn.
+              </p>
+            </div>
+          </motion.div>
+        )}
+        <div className="bg-white p-6 rounded-3xl shadow-sm border border-surface-container flex flex-col gap-4 group hover:border-primary transition-all">
           <div className="w-12 h-12 rounded-2xl bg-green-100 flex items-center justify-center text-green-600">
             <TrendingUp size={24} />
           </div>
@@ -345,17 +412,27 @@ export default function ProfitDashboard() {
                     </div>
                     <div>
                       <h4 className="font-bold text-on-surface">{order.trackingCode}</h4>
-                      <p className="text-xs text-secondary">
-                        {new Date(order.processedAt).toLocaleString('vi-VN')} | 
-                        {order.items.length} sản phẩm
-                      </p>
+                      <div className="flex items-center gap-2 text-xs text-secondary">
+                        <span>{new Date(order.processedAt).toLocaleString('vi-VN')}</span>
+                        <span>•</span>
+                        <span className={`font-bold ${order.items.length === 0 ? 'text-red-500' : 'text-primary'}`}>
+                          {order.items.length} sản phẩm
+                        </span>
+                        {order.items.length === 0 && (
+                          <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full font-bold uppercase">Lỗi dữ liệu</span>
+                        )}
+                      </div>
                     </div>
                   </div>
                   
                   <div className="flex flex-wrap items-center gap-6 text-right">
                     <div>
-                      <p className="text-xs font-bold text-secondary uppercase tracking-widest mb-1">Doanh thu</p>
-                      <p className="font-black text-on-surface">{(order.totalRevenue || 0).toLocaleString()}đ</p>
+                      <p className="text-xs font-bold text-secondary uppercase tracking-widest mb-1">
+                        {order.isSettled ? 'Thực nhận' : 'Dự kiến'}
+                      </p>
+                      <p className={`font-black ${order.isSettled ? 'text-primary' : 'text-on-surface'}`}>
+                        {(order.actualRevenue || order.totalRevenue || 0).toLocaleString()}đ
+                      </p>
                     </div>
                     <div>
                       <p className="text-xs font-bold text-secondary uppercase tracking-widest mb-1">Phí sàn</p>
@@ -372,7 +449,7 @@ export default function ProfitDashboard() {
                     <div>
                       <p className="text-xs font-bold text-secondary uppercase tracking-widest mb-1">Lợi nhuận</p>
                       <p className="font-black text-green-600">
-                        {((order.totalRevenue || 0) - (order.totalCost || 0) - (order.platformFee || 0) - (order.taxFee || 0) - (order.packagingFee || 0)).toLocaleString()}đ
+                        {((order.actualRevenue || order.totalRevenue || 0) - (order.totalCost || 0) - (order.platformFee || 0) - (order.taxFee || 0) - (order.packagingFee || 0)).toLocaleString()}đ
                       </p>
                     </div>
                   </div>

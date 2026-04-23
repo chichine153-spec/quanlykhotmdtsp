@@ -8,14 +8,186 @@ import {
   orderBy,
   Timestamp,
   getDocs,
-  limit
+  limit,
+  updateDoc
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { ProfitConfig, ReturnRecord } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
 import { getSupabase } from '../lib/supabase';
+import * as XLSX from 'xlsx';
 
 export class ProfitService {
+  /**
+   * Process Shopee Transaction Detail Excel file
+   */
+  static async processTransactionExcel(file: File, userId: string): Promise<{ updated: number, errors: string[] }> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        try {
+          const data = new Uint8Array(e.target?.result as ArrayBuffer);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as any[][];
+          
+          if (rows.length < 2) throw new Error('File Excel rỗng hoặc không đúng định dạng.');
+
+          // Find header row (usually contains "Mã đơn hàng" or "Số tiền")
+          let headerIdx = -1;
+          for (let i = 0; i < Math.min(rows.length, 10); i++) {
+            if (rows[i].some(cell => String(cell).includes('Mã đơn hàng') || String(cell).includes('Số tiền'))) {
+              headerIdx = i;
+              break;
+            }
+          }
+
+          if (headerIdx === -1) headerIdx = 0; // Fallback
+
+          const headers = rows[headerIdx].map(h => String(h || '').trim());
+          const colMadoan = headers.findIndex(h => h.includes('Mã đơn hàng'));
+          const colLoaiGiaoDich = headers.findIndex(h => h.includes('Loại giao dịch'));
+          const colSoTien = headers.findIndex(h => h.includes('Số tiền')); // Should be Column F according to user (idx 5)
+          const colNoiDung = headers.findIndex(h => h.includes('Nội dung'));
+          
+          // Fallback if index not found by name
+          const finalColSoTien = colSoTien !== -1 ? colSoTien : 5; // F is index 5
+          
+          let updatedCount = 0;
+          const errors: string[] = [];
+          const supabase = getSupabase();
+
+          // Group data by Order ID to handle multiple transaction lines (e.g. revenue + fee)
+          const orderUpdates: Record<string, any> = {};
+          let totalMarketingAd = 0;
+
+          for (let i = headerIdx + 1; i < rows.length; i++) {
+            const row = rows[i];
+            if (!row || row.length === 0) continue;
+
+            const trackingCode = String(row[colMadoan] || '').trim();
+            const type = String(row[colLoaiGiaoDich] || '').trim();
+            const amount = this.safeNum(row[finalColSoTien]);
+            const content = String(row[colNoiDung] || '').trim();
+
+            // Ad Credit Check
+            if (content.includes('Cấn trừ số dư TK Shop') || content.includes('Nạp tiền quảng cáo')) {
+              totalMarketingAd += Math.abs(amount);
+              continue;
+            }
+
+            if (!trackingCode || trackingCode === 'null') continue;
+
+            if (!orderUpdates[trackingCode]) {
+              orderUpdates[trackingCode] = {
+                actualRevenue: 0,
+                adjustmentFees: 0,
+                isReturned: false
+              };
+            }
+
+            if (type.includes('Doanh Thu Đơn Hàng') || type.includes('Thanh toán đơn hàng')) {
+              orderUpdates[trackingCode].actualRevenue += amount;
+            } else if (type.includes('Hàng hoàn') || type.includes('Phí trả hàng')) {
+              orderUpdates[trackingCode].isReturned = true;
+              orderUpdates[trackingCode].actualRevenue -= Math.abs(amount);
+            } else {
+              // Other fees (Platform, Service, etc.) - usually these are negative in the report if they are costs
+              // The user wants Platform Fee = (Listed Selling Price - AmountReceived)
+              // But we can also accumulate them from the report
+              orderUpdates[trackingCode].adjustmentFees += amount;
+            }
+          }
+
+          // Update Marketing Cost in daily config if we have enough info, 
+          // or just store it globally for now.
+          // For now, let's update the specific orders.
+          
+          for (const [trackingCode, data] of Object.entries(orderUpdates)) {
+            try {
+              // Update Supabase
+              if (supabase) {
+                const { error } = await supabase
+                  .from('orders')
+                  .update({
+                    actual_revenue: data.actualRevenue,
+                    is_settled: true,
+                    // If it's a return, we might want to flag it
+                    status: data.isReturned ? 'Returned' : 'Settled'
+                  })
+                  .eq('tracking_code', trackingCode);
+                
+                if (error) console.warn(`Supabase update error for ${trackingCode}:`, error);
+              }
+
+              // Update Firestore
+              const orderRef = doc(db, 'orders', trackingCode);
+              await updateDoc(orderRef, {
+                actualRevenue: data.actualRevenue,
+                isSettled: true,
+                status: data.isReturned ? 'Returned' : 'Settled'
+              }).catch(() => {
+                // Order might not exist in Firestore if it's old or only in Supabase
+              });
+
+              updatedCount++;
+            } catch (err) {
+              errors.push(`Lỗi cập nhật đơn ${trackingCode}`);
+            }
+          }
+
+          // If there was Marketing Ad cost, we should probably update the config
+          if (totalMarketingAd > 0) {
+            // Update daily marketing for today
+            const today = new Date().toISOString().split('T')[0];
+            const currentConfig = await this.fetchConfig(userId);
+            if (currentConfig) {
+              const dailyCosts = currentConfig.dailyMarketingCosts || {};
+              dailyCosts[today] = (dailyCosts[today] || 0) + totalMarketingAd;
+              await this.saveConfig(userId, {
+                ...currentConfig,
+                dailyMarketingCosts: dailyCosts
+              });
+            }
+          }
+
+          resolve({ updated: updatedCount, errors });
+        } catch (error: any) {
+          reject(error);
+        }
+      };
+      reader.onerror = (error) => reject(error);
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  /**
+   * Helper to safely parse numbers and strip common currency formats
+   */
+  static safeNum(val: any): number {
+    if (typeof val === 'number') return isNaN(val) ? 0 : val;
+    if (!val) return 0;
+    
+    const str = String(val);
+    // If it looks like a simple integer or float (e.g. 1.5, 10, 1000)
+    if (/^-?\d+(\.\d+)?$/.test(str)) return parseFloat(str);
+
+    // Clean string: keep only digits, minus, and dots/commas for cleanup
+    let cleaned = str.replace(/[^\d.,-]/g, '');
+    
+    // VND specific: if there are multiple dots or commas, or it's a large number with dots
+    // we assume they are thousand separators
+    if ((cleaned.match(/[\.,]/g) || []).length > 1 || (cleaned.includes('.') && cleaned.length > 5)) {
+      cleaned = cleaned.replace(/[\.,]/g, '');
+    } else {
+      // Handle single dot/comma as decimal if it looks like one (e.g. 1.5 or 1,5)
+      cleaned = cleaned.replace(',', '.');
+    }
+    
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? 0 : num;
+  }
+
   /**
    * Fetch profit configuration
    */
@@ -144,9 +316,10 @@ export class ProfitService {
     const s = String(sku || '').toUpperCase();
     const n = String(productName || '').toLowerCase();
     
-    const cupFee = config?.platformFeeCup || 25;
-    const bottleFee = config?.platformFeeBottle || 20;
-    const defaultFee = config?.platformFeePercent || 12;
+    // User requested: Cốc: 24.5%, Bình: 25.4%
+    const cupFee = config?.platformFeeCup || 24.5;
+    const bottleFee = config?.platformFeeBottle || 25.4;
+    const defaultFee = config?.platformFeePercent || 25;
 
     // 1. Check SKU for Cup
     const cupSkus = ['315', '330', '336', '338'];
@@ -346,56 +519,73 @@ export class ProfitService {
       return d >= startDate && d < endDate;
     });
 
-    // Helper to safely parse numbers and strip common currency formats
-    const safeNum = (val: any) => {
-      if (typeof val === 'number') return isNaN(val) ? 0 : val;
-      if (!val) return 0;
-      // Clean string: keep only digits, minus, and dot for decimals
-      let cleaned = String(val).replace(/[^\d.-]/g, '');
-      // To be safe for VND: if no cents are expected, remove all dots/commas.
-      if (cleaned.includes('.') && cleaned.split('.').pop()?.length !== 2) {
-        cleaned = cleaned.replace(/\./g, '');
-      }
-      const num = parseFloat(cleaned);
-      return isNaN(num) ? 0 : num;
-    };
-
-    let revenue = filteredOrders.reduce((sum, o) => sum + safeNum(o.totalRevenue), 0);
-    let costOfGoods = filteredOrders.reduce((sum, o) => sum + safeNum(o.totalCost), 0);
+    let totalAmountReceived = 0;
+    let costOfGoods = 0;
     let platformFees = 0;
     let taxFees = 0;
 
     filteredOrders.forEach(o => {
+      const cogs = this.safeNum(o.totalCost);
+      costOfGoods += cogs;
+
+      const isSettled = o.isSettled === true;
+      const actualRev = this.safeNum(o.actual_revenue || o.actualRevenue);
+      const totalRev = this.safeNum(o.totalRevenue);
+
+      let pFee = 0;
+      let tFee = 0;
+
       if (o.platformFee !== undefined && o.taxFee !== undefined) {
-        platformFees += o.platformFee;
-        taxFees += o.taxFee;
+        pFee = o.platformFee;
+        tFee = o.taxFee;
       } else {
-        o.items.forEach((item: any) => {
+        const items = Array.isArray(o.items) ? o.items : [];
+        items.forEach((item: any) => {
           const feePercent = this.getPlatformFeePercent(item.sku, item.productName || '', config);
           const taxPercent = config?.taxPercent || 1.5;
-          const itemPlatformFee = (item.sellingPrice * (feePercent / 100)) * item.quantity;
-          const itemTax = (item.sellingPrice * (taxPercent / 100)) * item.quantity;
-          platformFees += itemPlatformFee;
-          taxFees += itemTax;
+          pFee += (item.sellingPrice * (feePercent / 100)) * item.quantity;
+          tFee += (item.sellingPrice * (taxPercent / 100)) * item.quantity;
         });
       }
+
+      if (isSettled) {
+        totalAmountReceived += actualRev;
+        platformFees += (totalRev - actualRev);
+      } else {
+        totalAmountReceived += (totalRev - pFee - tFee);
+        platformFees += pFee;
+        taxFees += tFee;
+      }
     });
-    
+
     filteredReturns.forEach(ret => {
       const returnRevenue = ret.items.reduce((sum, item) => sum + ((item.sellingPrice || 0) * (item.quantity || 0)), 0);
       const returnCost = ret.items.reduce((sum, item) => sum + ((item.costPrice || 0) * (item.quantity || 0)), 0);
       
-      revenue -= returnRevenue;
+      // Subtract from income
+      totalAmountReceived -= returnRevenue;
+      // Subtract from COGS as the products are now back in stock (unless damaged, but we assume back in stock)
       costOfGoods -= returnCost;
 
-      // Adjust fees if possible (assuming similar fee structure)
+      // Subtract the fees as well (reverse them)
       ret.items.forEach(item => {
         const feePercent = this.getPlatformFeePercent(item.sku, item.productName || '', config);
         const taxPercent = config?.taxPercent || 1.5;
-        platformFees -= (item.sellingPrice * (feePercent / 100)) * item.quantity;
-        taxFees -= (item.sellingPrice * (taxPercent / 100)) * item.quantity;
+        const pFee = (item.sellingPrice * (feePercent / 100)) * item.quantity;
+        const tFee = (item.sellingPrice * (taxPercent / 100)) * item.quantity;
+        
+        platformFees -= pFee;
+        taxFees -= tFee;
+        
+        // Add back the fee amount to amount received because we subtracted gross revenue earlier
+        // amountReceived = Revenue - Fees. So if we subtract Revenue, we must add back Fees.
+        totalAmountReceived += (pFee + tFee); 
       });
+
+      // Note: we do NOT subtract packaging fees here, so they remain in the total costs.
     });
+
+    const revenue = totalAmountReceived + platformFees + taxFees; // Re-calculate gross revenue for comparison
 
     const packagingFees = filteredOrders.reduce((sum, o) => {
       if (o.packagingFee !== undefined) return sum + o.packagingFee;
@@ -474,7 +664,7 @@ export class ProfitService {
         
         const itemProfit = this.calculateItemProfit({ ...item, productName: item.productName || item.name }, config);
         productStats[key].profit += itemProfit;
-        productStats[key].count += safeNum(item.quantity);
+        productStats[key].count += this.safeNum(item.quantity);
       });
     });
 
@@ -496,7 +686,7 @@ export class ProfitService {
       orderCount: filteredOrders.length,
       returnCount: filteredReturns.length,
       pendingStats: timeframe === 'today' ? {
-        revenue: pendingOrders.reduce((sum, o) => sum + (o.totalRevenue || 0), 0),
+        revenue: pendingOrders.reduce((sum, o) => sum + (o.actualRevenue || o.totalRevenue || 0), 0),
         orderCount: pendingOrders.length
       } : undefined
     };

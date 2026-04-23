@@ -293,7 +293,9 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
         user.uid, 
         shopKey || null, 
         fallbackGeminiApiKey || null, 
-        shopPlanStr
+        shopPlanStr,
+        inventory,
+        dataConfig
       );
 
       setTotalOrders(orders.length);
@@ -543,10 +545,10 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
             setTimeout(() => reject(new Error('Hết thời gian xử lý đơn hàng (30s)')), 30000)
           );
 
-          await Promise.race([
+          const res = await Promise.race([
             PDFService.processOrder(currentFile!, order, inventory, profitConfig, preUploadedUrl),
             timeoutPromise
-          ]);
+          ]) as any;
 
           clearInterval(progressInterval);
           updateProgress(nextBaseProgress);
@@ -554,7 +556,11 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
           successCount++;
           setProcessedOrders(successCount);
           setLastOrder(order);
-          setCurrentFileOrders(prev => prev.map((o, idx) => idx === i ? { ...o, status: 'success' } : o));
+          setCurrentFileOrders(prev => prev.map((o, idx) => idx === i ? { 
+            ...o, 
+            status: 'success',
+            processedItems: res.processedItems
+          } : o));
         } catch (err: any) {
           console.error(`Error processing order ${order.trackingCode}:`, err);
           let errMsg = 'Lỗi không xác định';
@@ -896,9 +902,9 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
                         <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary">MÃ SKU</th>
                         <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary">MÀU SẮC</th>
                         <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-center">SL</th>
-                        <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-center">Giá Vốn/Bán</th>
-                        <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-center">Phí ĐG</th>
-                        <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-center">TRẠNG THÁI KHO</th>
+                        <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-center">Giá/Lợi nhuận</th>
+                        <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-center">Phí Sàn/ĐG/Thuế</th>
+                        <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-center">Tồn kho</th>
                         <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-secondary text-right">Sửa</th>
                       </tr>
                     </thead>
@@ -957,39 +963,40 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
                                 />
                               </td>
                               <td className="px-4 py-3 text-center">
-                                <div className="flex flex-col gap-1">
-                                  <input 
-                                    type="number"
-                                    value={item.costPrice || 0}
-                                    onChange={(e) => handleUpdateReviewItem(oIdx, iIdx, 'costPrice', e.target.value)}
-                                    className="bg-surface-container-lowest border border-surface-container focus:border-primary focus:ring-1 focus:ring-primary rounded-lg px-1 py-1 outline-none font-bold text-error text-[10px] w-20 text-center transition-all"
-                                    placeholder="Giá vốn"
-                                  />
-                                  <input 
-                                    type="number"
-                                    value={item.sellingPrice || 0}
-                                    onChange={(e) => handleUpdateReviewItem(oIdx, iIdx, 'sellingPrice', e.target.value)}
-                                    className="bg-surface-container-lowest border border-surface-container focus:border-primary focus:ring-1 focus:ring-primary rounded-lg px-1 py-1 outline-none font-bold text-green-600 text-[10px] w-20 text-center transition-all"
-                                    placeholder="Giá bán"
-                                  />
+                                <div className="flex flex-col gap-1 items-center justify-center">
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-[9px] text-error font-bold">{item.costPrice?.toLocaleString()}đ</span>
+                                    <span className="text-[9px] text-secondary">/</span>
+                                    <span className="text-[9px] text-green-600 font-bold">{item.sellingPrice?.toLocaleString()}đ</span>
+                                  </div>
+                                  <div className={`text-[10px] font-black px-2 py-0.5 rounded-lg ${Number(item.profit) > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                    {item.profit !== undefined ? `${Math.round(Number(item.profit)).toLocaleString()}đ` : 'Chưa có giá'}
+                                  </div>
                                 </div>
                               </td>
                               <td className="px-4 py-3 text-center">
-                                <span className="text-[10px] font-bold text-primary">
-                                  {item.packagingFee?.toLocaleString()}đ
-                                </span>
+                                <div className="flex flex-col text-[9px] font-bold leading-tight">
+                                  <span className="text-secondary">Sàn: {Math.round(item.platformFee || 0).toLocaleString()}đ</span>
+                                  <span className="text-secondary">ĐG: {Math.round(item.packagingFee || 0).toLocaleString()}đ</span>
+                                  <span className="text-secondary">Thuế: {Math.round(item.taxFee || 0).toLocaleString()}đ</span>
+                                </div>
                               </td>
                               <td className="px-4 py-3 text-center">
                                 {item.stockStatus === 'checking' ? (
-                                  <Loader2 className="animate-spin mx-auto text-secondary" size={14} />
+                                  <div className="flex flex-col items-center gap-1">
+                                    <AlertTriangle size={14} className="text-error animate-pulse" />
+                                    <span className="text-[8px] font-black text-error uppercase">Chưa khớp kho</span>
+                                  </div>
                                 ) : (
-                                  <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
-                                    item.stockStatus === 'in_stock' ? 'bg-green-100 text-green-700' : 'bg-error-container text-error'
-                                  }`}>
-                                    {item.stockStatus === 'in_stock' ? 'Còn hàng' : 'Hết hàng'}
-                                  </span>
+                                  <div className="flex flex-col items-center">
+                                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                                      item.stockStatus === 'in_stock' ? 'bg-green-100 text-green-700' : 'bg-error-container text-error'
+                                    }`}>
+                                      {item.stockStatus === 'in_stock' ? 'Còn hàng' : 'Hết hàng'}
+                                    </span>
+                                    <p className="text-[8px] text-secondary mt-0.5 font-bold">Tồn: {item.currentStock || 0}</p>
+                                  </div>
                                 )}
-                                <p className="text-[8px] text-secondary mt-0.5">Tồn: {item.currentStock || 0}</p>
                               </td>
                               <td className="px-4 py-3 text-right">
                                 <div className="flex justify-end gap-1">
@@ -1100,9 +1107,16 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
                                       </div>
                                     )}
                                     {order.status === 'success' && (
-                                      <div className="flex items-center gap-1.5 text-green-600">
-                                        <CheckCircle2 size={12} />
-                                        <span className="text-[10px] font-bold uppercase tracking-widest">Thành công</span>
+                                      <div className="flex flex-col items-end gap-1">
+                                        <div className="flex items-center gap-1.5 text-green-600">
+                                          <CheckCircle2 size={12} />
+                                          <span className="text-[10px] font-bold uppercase tracking-widest">Thành công</span>
+                                        </div>
+                                        {Array.isArray((order as any).processedItems) && (order as any).processedItems.map((pi: any, pIdx: number) => (
+                                          <div key={pIdx} className="text-[8px] text-secondary text-right leading-tight">
+                                            Đã trừ kho: {pi.productName} - {pi.variant} - Số lượng: {pi.quantity}
+                                          </div>
+                                        ))}
                                       </div>
                                     )}
                                     {order.status === 'error' && (
