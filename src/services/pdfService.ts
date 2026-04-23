@@ -304,17 +304,13 @@ export class PDFService {
     2. Mã đơn hàng (Order ID): Một dãy số dài thường bắt đầu bằng số Shopee (ví dụ: 240524XAB...).
     3. Mã Job ID và Shop ID (PHỤC VỤ IN NHIỆT): 
        - Tìm kiếm trong văn bản các chuỗi có định dạng job_id=[SỐ] và shop_id=[SỐ] hoặc các tham số URL tương tự.
-       - Nếu không thấy trực tiếp dưới dạng job_id/shop_id, hãy tìm các mã số định danh cửa hàng (thường 8-10 chữ số) và ID tiến trình in (thường 10-15 chữ số).
     4. Tên sản phẩm (Product Name): Trích xuất Tên đầy đủ của sản phẩm. Ví dụ: "Bình giữ nhiệt Costa BGN07", "Cốc giữ nhiệt Zana 334".
-    5. Mã SKU (QUAN TRỌNG NHẤT):
-       - SKU thường là một mã số (ví dụ: 334, 335, 336, 338, 315) hoặc mã chữ số (ví dụ: BGN01, BGN-07).
-       - SKU KHÔNG phải là tên phân loại màu sắc (ví dụ: "Màu Cam", "Màu Hồng-600ml").
-       - SKU là mã của sản phẩm chính, không phải thuộc tính.
-       - Ví dụ: Trong "Cốc giữ nhiệt 334 - Màu Cam", SKU là "334", Màu sắc là "Màu Cam".
-       - QUY TẮC VÀNG: Phần mã số/ký hiệu đứng ĐẦU TIÊN (trước dấu gạch ngang "-" hoặc khoảng trắng) trong tên phân loại thường là SKU. 
-       - Đặc biệt lưu ý các tiền tố: 334, 335, 336, 338, BGN. Nếu thấy các số này, chúng CHẮC CHẮN là SKU.
-       - TUYỆT ĐỐI BỎ QUA các mã vận hành: "MBA-...", "HUB-...", "POST-...", "Standard-...", "Hà Nội - ...", "HCM - ...".
-    4. Màu sắc/Phân loại (Color/Variant): Mô tả màu sắc, kích thước. Ví dụ: "Màu Cam", "900ml", "Size M". Nếu SKU cũng chứa thông tin màu sắc (như trong "334-Màu Cam"), hãy trích xuất đúng phần mô tả màu vào trường này.
+    5. Mã SKU / Mã mẫu (QUAN TRỌNG): 
+       - SKU thường là mã số (315, 332, 334) hoặc mã ký hiệu (BGN01).
+       - Nếu tên sản phẩm là "Cốc giữ nhiệt Costa 332", SKU/Mã mẫu là "332".
+       - CHÚ Ý: SKU KHÔNG phải là màu sắc. SKU là mã định danh dòng sản phẩm.
+    6. Màu sắc/Phân loại (Variant): Mô tả màu sắc, ví dụ: "Màu TRẮNG", "Màu XANH", "900ml".
+       - Nếu SKU trong văn bản bao gồm cả tên màu (ví dụ: 332-TRANG), hãy bóc tách SKU là "332" và Màu là "TRẮNG".
     
     YÊU CẦU VỀ SỐ LƯỢNG (QUANTITY):
     - TUYỆT ĐỐI KHÔNG để quantity > 1 trong một dòng items.
@@ -631,50 +627,31 @@ export class PDFService {
 
     const normExtractedSku = normalize(sku);
     const normExtractedColor = normalize(color);
-    const normExtractedCombined = normalize(sku + color);
+    const combinedExtracted = normalize(sku + color);
 
-    console.log(`[PDFService] Normalizing for match: SKU="${sku}"->"${normExtractedSku}", Color="${color}"->"${normExtractedColor}"`);
+    console.log(`[PDFService] Matching: SKU="${sku}", Color="${color}" | Combined="${combinedExtracted}"`);
 
-    // 1. Exact match (normalized)
+    // 1. Priority Match: Try to find a product where (SKU+Variant) or (SKU) or (Variant) matches the combined target
     let matchedProduct = allProducts.find(p => {
-      return normalize(p.sku) === normExtractedSku && normalize(p.variant) === normExtractedColor;
+      const pSkuNorm = normalize(p.sku);
+      const pVarNorm = normalize(p.variant);
+      const pCombNorm = normalize(decodeURIComponent(p.sku + (p.variant || '')));
+      
+      // Exact match for combined identification
+      return pSkuNorm === combinedExtracted || 
+             pVarNorm === combinedExtracted || 
+             pCombNorm === combinedExtracted ||
+             (pSkuNorm === normExtractedSku && pVarNorm === normExtractedColor);
     });
 
-    // 2. Combined match (SKU+Variant in one field)
+    // 2. Fallback: Match by SKU and then search for color within variant
     if (!matchedProduct) {
-      matchedProduct = allProducts.find(p => normalize(p.sku) === normExtractedCombined);
-    }
-
-    // 3. SKU match + partial variant match
-    if (!matchedProduct) {
-      const skuMatches = allProducts.filter(p => normalize(p.sku) === normExtractedSku);
+      const skuMatches = allProducts.filter(p => normalize(p.sku).includes(normExtractedSku) || normExtractedSku.includes(normalize(p.sku)));
       if (skuMatches.length > 0) {
         matchedProduct = skuMatches.find(p => {
           const v = normalize(p.variant);
           return v.includes(normExtractedColor) || normExtractedColor.includes(v);
         }) || skuMatches[0];
-      }
-    }
-
-    // 4. Partial SKU match (prioritize color match among partial SKU matches)
-    if (!matchedProduct) {
-      const partialSkuMatches = allProducts.filter(p => {
-        const pSku = normalize(p.sku);
-        const pName = normalize(p.name);
-        // Check if SKU is inside extracted SKU OR vice versa
-        // OR check if extracted SKU is actually a part of the product name (e.g. "334" in "Cốc 334")
-        return pSku.includes(normExtractedSku) || 
-               normExtractedSku.includes(pSku) ||
-               pName.includes(normExtractedSku);
-      });
-      
-      if (partialSkuMatches.length > 0) {
-        // Find best color match among these partial SKU matches
-        matchedProduct = partialSkuMatches.find(p => {
-          const v = normalize(p.variant);
-          const c = normExtractedColor;
-          return (v && c) && (v.includes(c) || c.includes(v));
-        }) || partialSkuMatches[0];
       }
     }
 
@@ -1026,12 +1003,12 @@ export class PDFService {
           // B. Update Products Stock in Supabase
           for (const item of finalizedItemsResult) {
             try {
-              // Get current stock
+              // Get current stock - Precise match using EXACT SKU and VARIANT from matched product
               const { data: currentProd, error: fetchError } = await supabase
                 .from('products')
                 .select('stock_quantity, id')
                 .eq('sku', item.sku)
-                .eq('variant', item.variant || 'Mặc định')
+                .eq('variant', item.variant || '') // Use empty string instead of 'Mặc định' for broad match
                 .maybeSingle();
 
               if (!fetchError && currentProd) {
@@ -1044,7 +1021,7 @@ export class PDFService {
                   })
                   .eq('id', currentProd.id);
                 
-                console.log(`[PDFService] Supabase stock updated for ${item.sku}: ${currentProd.stock_quantity} -> ${newQty}`);
+                console.log(`[PDFService] Supabase stock updated for ${item.sku} (${item.variant}): ${currentProd.stock_quantity} -> ${newQty}`);
 
                 // C. Insert Inventory Log into Supabase
                 await supabase
@@ -1058,22 +1035,39 @@ export class PDFService {
                     type: 'deduction',
                     tracking_code: trackingCode,
                     timestamp: new Date().toISOString(),
-                    details: 'Trừ kho từ bóc tách PDF'
+                    details: `Trừ kho tự động Shopee: ${item.sku} - SL: ${item.quantity}`
                   });
               } else if (!currentProd) {
-                // If product doesn't exist in Supabase yet, create it
-                console.log(`[PDFService] Creating new product in Supabase: ${item.sku}`);
-                await supabase
+                // If not found by SKU+Variant, try SKU only as fallback
+                const { data: skuOnlyProd } = await supabase
                   .from('products')
-                  .insert({
-                    user_id: auth.currentUser?.uid,
-                    sku: item.sku,
-                    name: item.productName || `Sản phẩm ${item.sku}`,
-                    stock_quantity: 0 - safeNum(item.quantity), // Start negative if unknown
-                    cost_price: safeNum(item.costPrice),
-                    selling_price: safeNum(item.sellingPrice),
-                    updated_at: new Date().toISOString()
-                  });
+                  .select('stock_quantity, id')
+                  .eq('sku', item.sku)
+                  .limit(1)
+                  .maybeSingle();
+
+                if (skuOnlyProd) {
+                  const newQty = Number(skuOnlyProd.stock_quantity || 0) - Number(item.quantity);
+                  await supabase
+                    .from('products')
+                    .update({ stock_quantity: newQty })
+                    .eq('id', skuOnlyProd.id);
+                } else {
+                  // Final fallback: Create it
+                  console.log(`[PDFService] Creating new product in Supabase: ${item.sku}`);
+                  await supabase
+                    .from('products')
+                    .insert({
+                      user_id: auth.currentUser?.uid,
+                      sku: item.sku,
+                      name: item.productName || `Sản phẩm ${item.sku}`,
+                      variant: item.variant || '',
+                      stock_quantity: 0 - safeNum(item.quantity),
+                      cost_price: safeNum(item.costPrice),
+                      selling_price: safeNum(item.sellingPrice),
+                      updated_at: new Date().toISOString()
+                    });
+                }
               }
             } catch (err) {
               console.error(`[PDFService] Supabase Inventory Update Error for ${item.sku}:`, err);

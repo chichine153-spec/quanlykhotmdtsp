@@ -92,7 +92,7 @@ export class InventoryService {
 
       return data.map(p => {
         const stock = Number(p.stock_quantity || 0);
-        const status = stock > 10 ? 'in_stock' : (stock > 0 ? 'low_stock' : 'out_of_stock');
+        const status = stock >= 10 ? 'in_stock' : (stock >= 5 ? 'low_stock' : 'out_of_stock');
         
         return {
           id: p.id,
