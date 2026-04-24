@@ -79,6 +79,13 @@ export class GeminiService {
   }
 
   /**
+   * Small sleep utility
+   */
+  private static async sleep(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
    * Executes an AI request with automatic failover logic.
    */
   static async handleAIRequest(params: {
@@ -110,7 +117,7 @@ export class GeminiService {
       throw new Error('MISSING_API_KEY');
     }
 
-    // Proxy call function using fetch for better control over error handling (prevents axios global error toasts)
+    // Proxy call function using fetch for better control over error handling
     const callProxy = async (apiKey: string) => {
       try {
         const response = await fetch('/api/gemini/proxy', {
@@ -137,17 +144,30 @@ export class GeminiService {
           return data.text;
         }
 
-        // Handle specific error codes for fallback
+        // Parse detailed error body if possible
+        const errorData = await response.json().catch(() => ({}));
+        const errorContent = JSON.stringify(errorData);
+
+        // Handle specific error codes for fallback or retry
+        if (response.status === 429 || errorContent.includes('429') || errorContent.includes('RESOURCE_EXHAUSTED')) {
+          throw new Error('GEMINI_QUOTA_EXCEEDED');
+        }
+        
+        if (response.status === 503 || errorContent.includes('503') || errorContent.includes('UNAVAILABLE')) {
+          throw new Error('GEMINI_SERVICE_UNAVAILABLE');
+        }
+
         if (response.status === 404 || response.status >= 500) {
           console.warn(`[GeminiService] Server Proxy returned ${response.status}. Switching to direct client-side call.`);
           return await callDirect(apiKey);
         }
 
-        // For other errors (like 400 - invalid key), parse the error
-        const errorData = await response.json().catch(() => ({}));
         const errorMsg = errorData.error || `Proxy error ${response.status}`;
         throw new Error(errorMsg);
       } catch (err: any) {
+        if (err.message === 'GEMINI_QUOTA_EXCEEDED' || err.message === 'GEMINI_SERVICE_UNAVAILABLE') {
+          throw err;
+        }
         // If it was a network error (failed to fetch), try fallback
         if (err.name === 'TypeError' && err.message === 'Failed to fetch') {
           console.warn('[GeminiService] Network error to proxy. Switching to direct client-side call.');
@@ -175,58 +195,153 @@ export class GeminiService {
         return result.text || '';
       } catch (directErr: any) {
         console.error('[GeminiService] Direct client-side call also failed:', directErr);
-        if (directErr.message?.includes('429') || directErr.message?.includes('Quota')) {
+        const errStr = directErr.message || '';
+        if (errStr.includes('429') || errStr.includes('Quota') || errStr.includes('RESOURCE_EXHAUSTED')) {
           throw new Error('GEMINI_QUOTA_EXCEEDED');
         }
-        if (directErr.message?.includes('API_KEY_INVALID')) {
+        if (errStr.includes('503') || errStr.includes('UNAVAILABLE')) {
+          throw new Error('GEMINI_SERVICE_UNAVAILABLE');
+        }
+        if (errStr.includes('API_KEY_INVALID')) {
           throw new Error('API_KEY_INVALID');
         }
         throw directErr;
       }
     };
     
-    try {
-      // 1. First Attempt with Primary Key
-      const text = await callProxy(useKey);
+    // Main execution loop with retries and model rotation
+    const maxRetries = 3;
+    let attempt = 0;
+    let currentKey = useKey;
+    
+    // Model rotation: Try flash-preview first, then stable flash
+    const models = ["gemini-3-flash-preview", "gemini-1.5-flash", "gemini-2.0-flash-exp"];
+    let modelIdx = 0;
 
-      return text || '';
-    } catch (err: any) {
-      const errorStr = (err.response?.data?.error || err.message || '').toString();
-      const isQuotaError = errorStr.includes('429') || errorStr.includes('Quota') || errorStr.includes('RESOURCE_EXHAUSTED');
-      const isAuthError = errorStr.includes('401') || errorStr.includes('Unauthorized') || errorStr.includes('API_KEY_INVALID') || errorStr.includes('INVALID_ARGUMENT');
+    while (attempt < maxRetries) {
+      const currentModel = models[modelIdx];
+      
+      try {
+        // Wrap callProxy to include the model
+        const callWithModel = async (apiKey: string, model: string) => {
+          try {
+            const response = await fetch('/api/gemini/proxy', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                apiKey,
+                model,
+                contents: prompt,
+                systemInstruction,
+                config: {
+                  generationConfig: {
+                    responseMimeType: responseMimeType as any,
+                    responseSchema
+                  }
+                }
+              }),
+            });
 
-      // Failover logic: Trigger fallback only for non-free plans if primary key fails
-      if ((isQuotaError || isAuthError) && fallbackKey && shopPlan !== 'free' && shopKey) {
-        console.log(`[GeminiService] Failover triggered via Proxy for user ${userId}.`);
-        
-        // Show notification to user
-        toast("Hạn mức cá nhân của bạn đã hết (hoặc lỗi Key), hệ thống đang tạm thời sử dụng tài nguyên dự phòng của Quản trị viên để xử lý", {
-          icon: '🛡️',
-          duration: 6000,
-          style: {
-            borderRadius: '16px',
-            background: '#333',
-            color: '#fff',
-            fontSize: '12px',
-            fontWeight: 'bold'
+            if (response.ok) {
+              const data = await response.json();
+              return data.text;
+            }
+
+            const errorData = await response.json().catch(() => ({}));
+            const errorContent = JSON.stringify(errorData);
+
+            if (response.status === 429 || errorContent.includes('429') || errorContent.includes('RESOURCE_EXHAUSTED')) {
+              throw new Error('GEMINI_QUOTA_EXCEEDED');
+            }
+            if (response.status === 503 || errorContent.includes('503') || errorContent.includes('UNAVAILABLE')) {
+              throw new Error('GEMINI_SERVICE_UNAVAILABLE');
+            }
+            if (response.status === 404 || response.status >= 500) {
+              return await callDirectWithModel(apiKey, model);
+            }
+            throw new Error(errorData.error || `Proxy error ${response.status}`);
+          } catch (err: any) {
+            if (err.message === 'GEMINI_QUOTA_EXCEEDED' || err.message === 'GEMINI_SERVICE_UNAVAILABLE') throw err;
+            if (err.name === 'TypeError' && err.message === 'Failed to fetch') return await callDirectWithModel(apiKey, model);
+            throw err;
           }
-        });
+        };
 
-        try {
-          const fallbackText = await callProxy(fallbackKey);
+        const callDirectWithModel = async (apiKey: string, model: string) => {
+          try {
+            const genAI = new GoogleGenAI({ apiKey });
+            const modelToUse = model.replace('-preview', ''); // Some clients don't like -preview in SDK
+            const result = await genAI.models.generateContent({
+              model: modelToUse,
+              contents: typeof prompt === 'string' ? [{ role: 'user', parts: [{ text: prompt }]}] : prompt as any,
+              config: {
+                systemInstruction: typeof systemInstruction === 'string' ? systemInstruction : undefined,
+                responseMimeType: responseMimeType as any,
+                responseSchema
+              }
+            });
+            return result.text || '';
+          } catch (directErr: any) {
+            const errStr = directErr.message || '';
+            if (errStr.includes('429') || errStr.includes('Quota') || errStr.includes('RESOURCE_EXHAUSTED')) throw new Error('GEMINI_QUOTA_EXCEEDED');
+            if (errStr.includes('503') || errStr.includes('UNAVAILABLE')) throw new Error('GEMINI_SERVICE_UNAVAILABLE');
+            if (errStr.includes('API_KEY_INVALID')) throw new Error('API_KEY_INVALID');
+            throw directErr;
+          }
+        };
 
-          return fallbackText || '';
-        } catch (fallbackErr) {
-          throw fallbackErr;
+        return await callWithModel(currentKey, currentModel);
+      } catch (err: any) {
+        const errorMsg = err.message || '';
+        const isQuotaError = errorMsg === 'GEMINI_QUOTA_EXCEEDED';
+        const isServiceBusy = errorMsg === 'GEMINI_SERVICE_UNAVAILABLE';
+        const isAuthError = errorMsg === 'API_KEY_INVALID' || errorMsg.includes('401') || errorMsg.includes('Unauthorized') || errorMsg.includes('INVALID_ARGUMENT');
+        
+        // If Quota Error, try next model first before retrying same model
+        if (isQuotaError && modelIdx < models.length - 1) {
+          modelIdx++;
+          console.warn(`[GeminiService] Model ${currentModel} reached quota. Trying ${models[modelIdx]}...`);
+          await this.sleep(1000);
+          continue;
         }
-      }
 
-      // Specific error message as requested by user if key fails and no failover
-      if (isQuotaError || isAuthError) {
-        throw new Error("API Key của bạn không hợp lệ hoặc hết hạn. Vui lòng kiểm tra lại tại Google AI Studio hoặc nâng cấp gói Foot để sử dụng Key dự phòng của hệ thống");
-      }
+        // Retryable errors
+        if ((isQuotaError || isServiceBusy) && attempt < maxRetries - 1) {
+          attempt++;
+          modelIdx = 0; // Reset model index when retrying with backoff
+          const delay = Math.pow(2, attempt) * 1000 + Math.random() * 2000;
+          console.warn(`[GeminiService] Attempt ${attempt} failed: ${errorMsg}. Retrying in ${Math.round(delay)}ms...`);
+          await this.sleep(delay);
+          continue;
+        }
 
-      throw err;
+        // Failover logic (only if we haven't already switched to fallbackKey)
+        if ((isQuotaError || isServiceBusy || isAuthError) && currentKey === shopKey && fallbackKey && shopPlan !== 'free') {
+          console.log(`[GeminiService] Failover to backup key for user ${userId}.`);
+          toast.success("Hệ thống chuyển sang dự phòng...", { icon: '🛡️', duration: 2000 });
+          currentKey = fallbackKey;
+          attempt = 0;
+          modelIdx = 0;
+          continue;
+        }
+
+        // Final specific error messages
+        if (isQuotaError) {
+          throw new Error("Lượt sử dụng AI hôm nay của bạn đã hết. Vui lòng nâng cấp gói hoặc thử lại vào ngày mai.");
+        }
+        if (isServiceBusy) {
+          throw new Error("Dịch vụ Google AI đang quá tải. Vui lòng thử lại sau vài giây.");
+        }
+        if (isAuthError) {
+          throw new Error("API Key không hợp lệ. Vui lòng kiểm tra lại cấu hình trong phần Quản lý tài khoản.");
+        }
+
+        throw err;
+      }
     }
+
+    throw new Error("Hệ thống không thể xử lý yêu cầu sau nhiều lần thử. Vui lòng thử lại sau.");
   }
 }

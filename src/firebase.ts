@@ -6,7 +6,8 @@ import {
   getDocFromServer, 
   terminate, 
   clearIndexedDbPersistence,
-  Firestore
+  Firestore,
+  memoryLocalCache
 } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
@@ -26,9 +27,9 @@ function createDbInstance(): Firestore {
   try {
     return initializeFirestore(app, {
       experimentalForceLongPolling: true,
-      // Explicitly disable local persistence to prevent "INTERNAL ASSERTION FAILED"
-      // which is often caused by multiple tabs or corrupted IndexedDB state.
-      localCache: undefined 
+      // Explicitly use memory-only cache to prevent "INTERNAL ASSERTION FAILED"
+      // which is usually caused by IndexedDB issues in iframe environments.
+      localCache: memoryLocalCache()
     }, initialDbId);
   } catch (error) {
     console.error('Firestore initialization error:', error);

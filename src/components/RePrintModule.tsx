@@ -1,8 +1,8 @@
 import React from 'react';
 import * as pdfjs from 'pdfjs-dist';
 
-// Use a reliable CDN for the worker to avoid local path resolution issues in the AI Studio environment
-pdfjs.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@5.6.205/build/pdf.worker.min.mjs`;
+// Use the official legacy worker for better compatibility in restricted environments like AI Studio
+pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs`;
 
 import { 
   Search, 
@@ -723,13 +723,14 @@ export function ThermalLabel({ order }: { order: any }) {
   const [imageError, setImageError] = React.useState(false);
   const [pdfRendering, setPdfRendering] = React.useState(false);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  const renderAttempted = React.useRef(false);
   
   const now = new Date();
   const dateStr = now.toLocaleDateString('vi-VN');
   const timeStr = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 
-  // If there's an original image scan, use it!
-  const imageSource = order.image_url || order.pdf_url || order.pdfUrl;
+  // Use all possible URL fields
+  const imageSource = order.image_url || order.pdf_url || order.pdfUrl || order.tracking_label_url;
   const isImageString = typeof imageSource === 'string' && imageSource.length > 10;
   
   // Check if it's a valid Image URL or data URI
@@ -743,28 +744,38 @@ export function ThermalLabel({ order }: { order: any }) {
   const isPDF = isImageString && (
     imageSource.toLowerCase().includes('.pdf') || 
     imageSource.includes('blob:') || 
-    imageSource.includes('application/pdf')
+    imageSource.includes('application/pdf') ||
+    (imageSource.includes('supabase.co') && !isImage)
   );
   
-  console.log('[ThermalLabel] order:', order.trackingCode || order.tracking_number, 'isImage:', isImage, 'isPDF:', isPDF, 'source:', imageSource);
+  console.log('[ThermalLabel] rendering order:', order.trackingCode || order.tracking_number, { isImage, isPDF, source: imageSource?.substring(0, 50) + '...' });
 
   // Effect to render PDF to canvas if it's a PDF and not an image
   React.useEffect(() => {
-    if (isPDF && !isImage && canvasRef.current && !imageError) {
+    if (isPDF && !isImage && canvasRef.current && !imageError && !renderAttempted.current) {
       const renderPdf = async () => {
         try {
+          console.log('[ThermalLabel] Starting PDF render for:', imageSource);
           setPdfRendering(true);
+          renderAttempted.current = true;
           const pdfData = imageSource;
-          let loadingTask;
           
-          if (pdfData.startsWith('blob:')) {
+          let loadingTask;
+          if (pdfData.startsWith('blob:') || pdfData.startsWith('data:application/pdf')) {
             loadingTask = pdfjs.getDocument(pdfData);
           } else {
-            loadingTask = pdfjs.getDocument({ url: pdfData, withCredentials: false });
+            // Add a timestamp to avoid caching issues and ensure fresh fetch
+            const fetchUrl = pdfData.includes('?') ? `${pdfData}&t=${Date.now()}` : `${pdfData}?t=${Date.now()}`;
+            loadingTask = pdfjs.getDocument({ 
+              url: fetchUrl, 
+              withCredentials: false,
+              disableRange: true,
+              disableAutoFetch: true
+            });
           }
           
           const pdf = await loadingTask.promise;
-          const page = await pdf.getPage(1); // Render first page
+          const page = await pdf.getPage(1);
           
           const canvas = canvasRef.current;
           if (!canvas) return;
@@ -772,7 +783,6 @@ export function ThermalLabel({ order }: { order: any }) {
           const context = canvas.getContext('2d');
           if (!context) return;
           
-          // Use high scale for better print quality (3.0 for 300dpi feel)
           const viewport = page.getViewport({ scale: 2.5 });
           canvas.height = viewport.height;
           canvas.width = viewport.width;
@@ -791,7 +801,8 @@ export function ThermalLabel({ order }: { order: any }) {
         }
       };
       
-      renderPdf();
+      const timer = setTimeout(renderPdf, 300);
+      return () => clearTimeout(timer);
     }
   }, [isPDF, isImage, imageSource, imageError]);
 

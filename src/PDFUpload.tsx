@@ -376,7 +376,7 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
         errMsg = 'Hệ thống chưa được cấu hình API Key. Admin vui lòng cài đặt trong Quản lý tài khoản.';
       }
       
-      setError(errMsg);
+      setError(`${errMsg} (Chi tiết: ${err.message || 'Lỗi bóc tách'})`);
       setStatus('error');
     } finally {
       setIsUploading(false);
@@ -618,7 +618,7 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
     } catch (err: any) {
       console.error('Batch processing fatal error:', err);
       logErrorToSupabase(err, 'pdf_batch_process', user?.uid);
-      setError(FRIENDLY_ERROR_MESSAGE);
+      setError(`${FRIENDLY_ERROR_MESSAGE} (Chi tiết: ${err.message || 'Lỗi hệ thống'})`);
       setStatus('error');
     } finally {
       setIsProcessingConfirmed(false);
