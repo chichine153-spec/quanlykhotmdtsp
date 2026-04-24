@@ -60,59 +60,67 @@
 }
 
 @media print {
-  /* 1. Hide everything by default using the most aggressive selector */
-  html, body {
+  /* 1. Reset everything first */
+  * {
     margin: 0 !important;
     padding: 0 !important;
-    background: white !important;
-    height: auto !important;
-    overflow: visible !important;
+    box-sizing: border-box !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 
-  /* 2. Hide common app root and UI elements */
+  /* 2. Hide everything in root and other UI markers */
   #root, 
   header, 
   nav, 
   aside, 
   footer,
-  .no-print {
+  .no-print,
+  [role="dialog"],
+  .fixed,
+  .absolute:not(.print-only) {
     display: none !important;
     visibility: hidden !important;
+    height: 0 !important;
+    overflow: hidden !important;
   }
 
-  /* 3. Specifically hide everything IN the body EXCEPT our portal */
+  /* 3. Aggressive hiding of all body children that are NOT the portal */
   body > *:not(.print-only) {
     display: none !important;
     visibility: hidden !important;
+    height: 0 !important;
+    width: 0 !important;
+    overflow: hidden !important;
   }
 
-  /* 4. Force show our print portal */
-  body > .print-only {
+  /* 4. Prepare html/body for single page output */
+  html, body {
+    width: 100mm !important;
+    height: 150mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    overflow: hidden !important;
+    display: block !important;
+  }
+
+  /* 5. Force show our print portal at the very top */
+  body > .print-only,
+  .print-only {
     display: block !important;
     visibility: visible !important;
+    opacity: 1 !important;
     position: absolute !important;
     left: 0 !important;
     top: 0 !important;
     width: 100mm !important;
     height: 150mm !important;
-    z-index: 999999 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    background: white !important;
+    z-index: 2147483647 !important;
+    background: #fff !important;
   }
 
-  /* 5. Ensure the thermal label content is visible */
-  .print-only, 
-  .print-only *,
-  .thermal-label,
-  .thermal-label *,
-  .thermal-label-container,
-  .thermal-label-container * {
-    visibility: visible !important;
-    opacity: 1 !important;
-  }
-
-  /* Fix for image display */
+  /* 6. Fix for image display - make sure it fills the area */
   .print-only img {
     display: block !important;
     width: 100mm !important;

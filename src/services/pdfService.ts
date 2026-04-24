@@ -996,7 +996,7 @@ export class PDFService {
               total_cost: Number(totalCostValue || 0),
               platform_fee: Number(platformFeeValue || 0),
               tax_fee: Number(taxFeeValue || 0),
-              packaging_fee: Number(packagingFeeValue || 0),
+              // packaging_fee: Number(packagingFeeValue || 0), // Removed as column doesn't exist in Supabase orders table
               profit: Number((totalRevenueValue || 0) - (totalCostValue || 0) - (platformFeeValue || 0) - (taxFeeValue || 0) - (packagingFeeValue || 0)),
               status: 'Processed',
               items: processedItemsResult, // Pass the array directly for JSONB column

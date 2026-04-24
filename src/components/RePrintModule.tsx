@@ -93,7 +93,7 @@ export default function RePrintModule() {
     console.log('[RePrintModule] No Shopee print IDs found, falling back to system thermal template');
     setIsPrinting(true);
     
-    // Give more time for the portal to mount and images to start loading
+    // Give more time for the portal to mount and images to fully render
     setTimeout(() => {
       try {
         window.focus();
@@ -102,9 +102,10 @@ export default function RePrintModule() {
         console.error("[RePrintModule] System print failed", err);
         alert("Không thể thực hiện in ấn. Vui lòng thử lại.");
       } finally {
-        setIsPrinting(false);
+        // Reset state after a delay to ensure print dialog has finished
+        setTimeout(() => setIsPrinting(false), 2000);
       }
-    }, 800);
+    }, 1500);
   };
 
   React.useEffect(() => {
@@ -741,6 +742,8 @@ export function ThermalLabel({ order }: { order: any }) {
           alt="Original Shipping Label" 
           className="w-full h-full object-contain print:object-fill"
           referrerPolicy="no-referrer"
+          crossOrigin="anonymous"
+          onLoad={() => console.log('Image loaded successfully for print')}
           onError={(e) => {
             console.error('Image load error in ThermalLabel for:', imageSource);
             setImageError(true);

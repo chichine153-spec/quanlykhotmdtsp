@@ -669,7 +669,7 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
     console.log('[PDFUpload] No Shopee print IDs found, falling back to system thermal template');
     setIsPrinting(true);
     
-    // Give more time for the portal to mount and images to start loading
+    // Give more time for the portal to mount and images to fully render
     setTimeout(() => {
       try {
         window.focus();
@@ -678,9 +678,10 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
         console.error("[PDFUpload] System print failed", err);
         addToast("Không thể in. Vui lòng thử lại.", "error");
       } finally {
-        setIsPrinting(false);
+        // Reset state after a delay to ensure print dialog has finished
+        setTimeout(() => setIsPrinting(false), 2000);
       }
-    }, 800);
+    }, 1500);
   };
 
   return (
