@@ -186,6 +186,7 @@ export class InventoryService {
           packagingFee: Number(o.packaging_fee || 0),
           profit: Number(o.profit || 0),
           image_url: o.image_url,
+          pdf_url: o.pdf_url,
           status: o.status,
           recipientName: o.customer_name,
           recipientPhone: o.recipient_phone || '',

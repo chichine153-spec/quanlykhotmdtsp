@@ -1,23 +1,58 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApp, getApps } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { initializeFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { 
+  initializeFirestore, 
+  doc, 
+  getDocFromServer, 
+  terminate, 
+  clearIndexedDbPersistence,
+  Firestore
+} from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
+// Initialize App only once
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 
 // Use the database ID from config, but fallback to default if needed
 const initialDbId = firebaseConfig.firestoreDatabaseId || '(default)';
 
-// Initialize Firestore with long-polling to prevent "INTERNAL ASSERTION FAILED" errors
-// and improve stability when hitting quota limits or in restricted network environments.
-// Note: "INTERNAL ASSERTION FAILED" is often a side-effect of hitting the daily free read quota.
-export const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
-}, initialDbId);
+/**
+ * Initialize Firestore instance with optimized settings for AI Studio environment.
+ * Using long-polling to prevent intermittent stream issues and assertions.
+ */
+function createDbInstance(): Firestore {
+  try {
+    return initializeFirestore(app, {
+      experimentalForceLongPolling: true,
+      // Explicitly disable local persistence to prevent "INTERNAL ASSERTION FAILED"
+      // which is often caused by multiple tabs or corrupted IndexedDB state.
+      localCache: undefined 
+    }, initialDbId);
+  } catch (error) {
+    console.error('Firestore initialization error:', error);
+    // Fallback if initializeFirestore fails (e.g. called twice)
+    return initializeFirestore(app, {}, initialDbId);
+  }
+}
 
+export const db = createDbInstance();
 export const storage = getStorage(app);
+
+/**
+ * Attempt to recover from Firestore assertions by clearing cache.
+ */
+export async function recoverFirestore() {
+  try {
+    await terminate(db);
+    await clearIndexedDbPersistence(db);
+    window.location.reload();
+  } catch (e) {
+    console.error('Failed to recover Firestore:', e);
+    window.location.reload();
+  }
+}
 
 // Test connection to Firestore
 async function testConnection() {
@@ -26,11 +61,14 @@ async function testConnection() {
     await getDocFromServer(doc(db, '_connection_test_', 'test'));
     console.log(`Firestore connection successful to database: ${initialDbId}`);
   } catch (error: any) {
-    if (error.message && error.message.includes('the client is offline')) {
-      console.error(`CRITICAL: Firestore connection failed to database: ${initialDbId}. Please check your Firebase configuration.`);
-    } else {
-      // Other errors (like permission denied) are fine for this test
-      console.log("Firestore connectivity test completed (with expected non-offline error).");
+    const errorStr = String(error);
+    if (errorStr.includes('the client is offline')) {
+      console.error(`CRITICAL: Firestore connection failed - Offline.`);
+    } else if (errorStr.includes('quota') || errorStr.includes('Quota')) {
+      console.warn(`QUOTA WARNING: Firestore is hitting limits.`);
+    } else if (errorStr.includes('assertion')) {
+      console.error(`ASSERTION FAILED detected. Attempting recovery...`);
+      // recoverFirestore(); // Avoid infinite reload loop
     }
   }
 }

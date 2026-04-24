@@ -528,7 +528,7 @@ export class PDFService {
 
             const totalQuantity = matchingOrder.items.reduce((sum, item) => sum + item.quantity, 0);
 
-            console.log(`[PDFService] Saving metadata to print_history for ${matchingOrder.trackingCode}...`);
+            console.log(`[PDFService] Saving metadata to print_history and updating order for ${matchingOrder.trackingCode}...`);
             // 3. Save to print_history table
             const { error: dbError } = await supabase
               .from('print_history')
@@ -544,38 +544,23 @@ export class PDFService {
 
             if (dbError) {
               console.error(`[PDFService] DB insert error (page ${i}):`, dbError);
-              if (dbError.message?.includes('Forbidden use of secret API key')) {
-                console.error('[PDFService] CRITICAL: You are using a Service Role Key in the browser. Please switch to the Anon Key in Settings.');
-              }
             } else {
-            console.log(`[PDFService] Successfully saved ${matchingOrder.trackingCode} to print_history.`);
-
-            // 4. ALSO update the main Firestore 'orders' collection if possible
-            // This ensures "Tra cứu" via Firestore fallback also gets the image_url
-            try {
-              const orderRef = doc(db, 'orders', matchingOrder.trackingCode);
-              const orderDoc = await getDoc(orderRef);
+              // 4. ALSO update the 'orders' table so the image is available for Re-Print
+              await supabase
+                .from('orders')
+                .update({ image_url: publicUrl })
+                .eq('tracking_code', matchingOrder.trackingCode)
+                .eq('user_id', userId);
               
-              if (orderDoc.exists()) {
+              // 5. Update Firestore order for consistency
+              try {
+                const orderRef = doc(db, 'orders', matchingOrder.trackingCode);
                 await updateDoc(orderRef, { image_url: publicUrl });
-                console.log(`[PDFService] Updated Firestore order ${matchingOrder.trackingCode} with image_url.`);
-              } else {
-                // Try searching by trackingCode field if ID is different
-                const ordersQuery = query(
-                  collection(db, 'orders'), 
-                  where('trackingCode', '==', matchingOrder.trackingCode)
-                );
-                const orderDocs = await getDocs(ordersQuery);
-                if (!orderDocs.empty) {
-                  const firstDocRef = doc(db, 'orders', orderDocs.docs[0].id);
-                  await updateDoc(firstDocRef, { image_url: publicUrl });
-                  console.log(`[PDFService] Updated Firestore order ${matchingOrder.trackingCode} (via query) with image_url.`);
-                }
+              } catch (err) {
+                // Silently fail if firestore update fails
+                console.warn('[PDFService] Firestore image_url update failed:', err);
               }
-            } catch (fsErr) {
-              console.error(`[PDFService] Failed to update Firestore order with image_url:`, fsErr);
             }
-          }
         } else {
           console.warn(`[PDFService] No matching order found for page ${i}. Page text snippet: ${normalizedPageText.substring(0, 100)}...`);
         }
@@ -1000,7 +985,8 @@ export class PDFService {
               profit: Number((totalRevenueValue || 0) - (totalCostValue || 0) - (platformFeeValue || 0) - (taxFeeValue || 0) - (packagingFeeValue || 0)),
               status: 'Processed',
               items: processedItemsResult, // Pass the array directly for JSONB column
-              image_url: downloadURL || '',
+              image_url: '', // Will be updated by background task generateAndUploadImages
+              pdf_url: downloadURL || '',
               processed_at: new Date().toISOString(),
               recipient_name: order.recipientName || '',
               recipient_phone: order.recipientPhone || '',

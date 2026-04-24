@@ -1,4 +1,9 @@
 import React from 'react';
+import * as pdfjs from 'pdfjs-dist';
+
+// Use a reliable CDN for the worker to avoid local path resolution issues in the AI Studio environment
+pdfjs.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@5.6.205/build/pdf.worker.min.mjs`;
+
 import { 
   Search, 
   Printer, 
@@ -716,39 +721,108 @@ export default function RePrintModule() {
 
 export function ThermalLabel({ order }: { order: any }) {
   const [imageError, setImageError] = React.useState(false);
+  const [pdfRendering, setPdfRendering] = React.useState(false);
+  const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  
   const now = new Date();
   const dateStr = now.toLocaleDateString('vi-VN');
   const timeStr = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 
   // If there's an original image scan, use it!
-  const imageSource = order.image_url || order.pdfUrl;
+  const imageSource = order.image_url || order.pdf_url || order.pdfUrl;
   const isImageString = typeof imageSource === 'string' && imageSource.length > 10;
   
-  // Check if it's a valid URL or data URI
+  // Check if it's a valid Image URL or data URI
   const isImage = isImageString && (
     imageSource.match(/\.(jpeg|jpg|gif|png|webp)/i) || 
     imageSource.includes('supabase.co/storage/v1/object/public') ||
     imageSource.startsWith('data:image/') ||
     imageSource.includes('firebasestorage.googleapis.com')
   );
-  
-  console.log('[ThermalLabel] order:', order.trackingCode || order.tracking_number, 'isImage:', isImage, 'source:', imageSource);
 
-  if (isImage && !imageError) {
+  const isPDF = isImageString && (
+    imageSource.toLowerCase().includes('.pdf') || 
+    imageSource.includes('blob:') || 
+    imageSource.includes('application/pdf')
+  );
+  
+  console.log('[ThermalLabel] order:', order.trackingCode || order.tracking_number, 'isImage:', isImage, 'isPDF:', isPDF, 'source:', imageSource);
+
+  // Effect to render PDF to canvas if it's a PDF and not an image
+  React.useEffect(() => {
+    if (isPDF && !isImage && canvasRef.current && !imageError) {
+      const renderPdf = async () => {
+        try {
+          setPdfRendering(true);
+          const pdfData = imageSource;
+          let loadingTask;
+          
+          if (pdfData.startsWith('blob:')) {
+            loadingTask = pdfjs.getDocument(pdfData);
+          } else {
+            loadingTask = pdfjs.getDocument({ url: pdfData, withCredentials: false });
+          }
+          
+          const pdf = await loadingTask.promise;
+          const page = await pdf.getPage(1); // Render first page
+          
+          const canvas = canvasRef.current;
+          if (!canvas) return;
+          
+          const context = canvas.getContext('2d');
+          if (!context) return;
+          
+          // Use high scale for better print quality (3.0 for 300dpi feel)
+          const viewport = page.getViewport({ scale: 2.5 });
+          canvas.height = viewport.height;
+          canvas.width = viewport.width;
+          
+          await page.render({
+            canvasContext: context,
+            viewport: viewport
+          }).promise;
+          
+          console.log('[ThermalLabel] PDF rendered to canvas successfully');
+        } catch (err) {
+          console.error('[ThermalLabel] PDF render error:', err);
+          setImageError(true);
+        } finally {
+          setPdfRendering(false);
+        }
+      };
+      
+      renderPdf();
+    }
+  }, [isPDF, isImage, imageSource, imageError]);
+
+  if ((isImage || (isPDF && !imageError)) && !imageError) {
     return (
-      <div className="thermal-label-container bg-white flex items-center justify-center p-0 overflow-hidden" style={{ width: '100mm', height: '150mm' }}>
-        <img 
-          src={imageSource} 
-          alt="Original Shipping Label" 
-          className="w-full h-full object-contain print:object-fill"
-          referrerPolicy="no-referrer"
-          crossOrigin="anonymous"
-          onLoad={() => console.log('Image loaded successfully for print')}
-          onError={(e) => {
-            console.error('Image load error in ThermalLabel for:', imageSource);
-            setImageError(true);
-          }}
-        />
+      <div className="thermal-label-container bg-white flex items-center justify-center p-0 overflow-hidden" 
+           style={{ width: '100mm', height: '150mm' }}>
+        {isImage ? (
+          <img 
+            src={imageSource} 
+            alt="Original Shipping Label" 
+            className="w-full h-full object-contain print:object-fill"
+            referrerPolicy="no-referrer"
+            crossOrigin="anonymous"
+            onLoad={() => console.log('Image loaded successfully for print')}
+            onError={(e) => {
+              console.error('Image load error in ThermalLabel for:', imageSource);
+              setImageError(true);
+            }}
+          />
+        ) : (
+          <div className="relative w-full h-full flex flex-col items-center justify-center">
+            {pdfRendering && (
+              <div className="absolute inset-0 flex items-center justify-center bg-white z-10">
+                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary"></div>
+                <span className="ml-3 text-xs font-bold font-sans">Đang xử lý PDF gốc...</span>
+              </div>
+            )}
+            <canvas ref={canvasRef} className="w-full h-full object-contain print:object-fill" />
+          </div>
+        )}
         <style>
           {`
             @media print {
@@ -776,8 +850,9 @@ export function ThermalLabel({ order }: { order: any }) {
                 position: fixed !important;
                 top: 0 !important;
                 left: 0 !important;
+                z-index: 9999 !important;
               }
-              img { 
+              img, canvas { 
                 width: 100mm !important; 
                 height: 150mm !important; 
                 display: block !important; 
