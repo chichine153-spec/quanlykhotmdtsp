@@ -35,6 +35,8 @@ interface PDFUploadProps {
   onScreenChange?: (screen: Screen) => void;
 }
 
+import { createPortal } from 'react-dom';
+
 export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
   const { 
     user, 
@@ -1489,10 +1491,13 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
           )}
         </AnimatePresence>
 
-        {/* Persistent Hidden Printable Area - Outside modal to ensure it's in DOM */}
-        <div className="print-only fixed inset-0 bg-white z-[9999]">
-          {selectedOrderToPrint && <ThermalLabel order={selectedOrderToPrint} />}
-        </div>
+        {/* Persistent Hidden Printable Area - Using Portal to body for clean isolation */}
+        {createPortal(
+          <div className="print-only">
+            {selectedOrderToPrint && <ThermalLabel order={selectedOrderToPrint} />}
+          </div>,
+          document.body
+        )}
 
         {/* Toast Notifications */}
       <div className="fixed bottom-6 right-6 z-[200] flex flex-col gap-3 pointer-events-none">

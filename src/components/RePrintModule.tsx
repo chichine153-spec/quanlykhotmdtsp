@@ -21,6 +21,7 @@ import Barcode from 'react-barcode';
 import { QRCodeSVG } from 'qrcode.react';
 import { GeminiService } from '../services/gemini';
 import { getDoc, doc, getDocs } from 'firebase/firestore';
+import { createPortal } from 'react-dom';
 
 import { getSupabase } from '../lib/supabase';
 
@@ -598,7 +599,6 @@ export default function RePrintModule() {
           </table>
         </div>
       </div>
-      {/* Hidden Print Container removed - using window.print() in modal */}
 
       {/* Delete Confirmation Modal */}
       <AnimatePresence>
@@ -638,11 +638,11 @@ export default function RePrintModule() {
         )}
       </AnimatePresence>
 
-      {/* Print Template Modal - Integrated from PDFUpload for consistency */}
+      {/* Print Template Modal */}
       <AnimatePresence>
         {showPrintTemplate && orderToPrint && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            {/* Modal Backdrop - Specifically no-print */}
+            {/* Modal Backdrop - Strictly no-print */}
             <div 
               className="absolute inset-0 bg-black/60 backdrop-blur-md no-print" 
               onClick={() => setShowPrintTemplate(false)}
@@ -702,10 +702,13 @@ export default function RePrintModule() {
               </div>
             </motion.div>
 
-            {/* Persistent Hidden Printable Area - Outside modal space */}
-            <div className="print-only">
-              {orderToPrint && <ThermalLabel order={orderToPrint} />}
-            </div>
+            {/* Persistent Hidden Printable Area - Using Portal to body for clean isolation */}
+            {createPortal(
+              <div className="print-only">
+                {orderToPrint && <ThermalLabel order={orderToPrint} />}
+              </div>,
+              document.body
+            )}
           </div>
         )}
       </AnimatePresence>

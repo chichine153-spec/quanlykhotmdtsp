@@ -490,7 +490,7 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
       </AnimatePresence>
 
       {/* Main Content */}
-      <main className="pt-24 pb-24 lg:pb-8 px-4 lg:ml-80">
+      <main className="pt-24 pb-24 lg:pb-8 px-4 lg:ml-80 no-print">
         <div className="max-w-7xl mx-auto">
           {children}
         </div>
