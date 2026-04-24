@@ -738,17 +738,42 @@ export class PDFService {
       // Use pre-fetched products if available, otherwise fetch once
       let allProducts = preFetchedProducts;
       if (!allProducts || allProducts.length === 0) {
-        console.log('[PDFService] No pre-fetched products, fetching from Firestore...');
-        const inventoryRef = collection(db, 'inventory');
-        const allProductsSnap = await getDocs(query(
-          inventoryRef, 
-          where('userId', '==', auth.currentUser?.uid)
-        ));
-        allProducts = allProductsSnap.docs.map(d => ({ 
-          id: d.id, 
-          ref: d.ref, 
-          ...d.data() as any 
-        }));
+        console.log('[PDFService] No pre-fetched products, fetching fresh data...');
+        const supabase = getSupabase();
+        if (supabase) {
+          const { data } = await supabase
+            .from('products')
+            .select('*')
+            .eq('user_id', auth.currentUser?.uid);
+          
+          if (data) {
+            allProducts = data.map(p => ({
+              id: p.id,
+              sku: p.sku,
+              name: p.name,
+              stock: Number(p.stock_quantity || 0),
+              variant: p.variant || '',
+              costPrice: Number(p.cost_price || 0),
+              sellingPrice: Number(p.selling_price || 0),
+              category: p.category || ''
+            }));
+          }
+        }
+
+        // Always merge with Firestore or use Firestore as fallback
+        if (!allProducts || allProducts.length === 0) {
+          console.log('[PDFService] Fetching from Firestore...');
+          const inventoryRef = collection(db, 'inventory');
+          const allProductsSnap = await getDocs(query(
+            inventoryRef, 
+            where('userId', '==', auth.currentUser?.uid)
+          ));
+          allProducts = allProductsSnap.docs.map(d => ({ 
+            id: d.id, 
+            ref: d.ref, 
+            ...d.data() as any 
+          }));
+        }
       }
       console.log(`[PDFService] Total products in inventory for matching: ${allProducts.length}`);
 
@@ -820,22 +845,24 @@ export class PDFService {
           const itemCostPrice = safeNum(extCost || matchedProduct.costPrice);
           const itemSellingPrice = safeNum(extSell || matchedProduct.sellingPrice);
 
+          const processedItem = {
+            sku: matchedProduct.sku,
+            variant: matchedProduct.variant || color || 'Mặc định',
+            quantity: itemQuantity,
+            productName: matchedProduct.name,
+            productId: matchedProduct.id, 
+            category: matchedProduct.category || '',
+            costPrice: itemCostPrice,
+            sellingPrice: itemSellingPrice
+          };
+          
+          processedItems.push(processedItem);
+          finalizedItemsResult.push(processedItem);
+          productNames.push(matchedProduct.name);
+
           if (!productDataInTransaction) {
             // FALLBACK: If not in Firestore but matched (likely from Supabase), we still need to record the sale
             console.warn(`[PDFService] Product ${matchedProduct.sku} matched but NOT in Firestore snaps. Proceeding without Firestore stock deduction for this item.`);
-            
-            const processedItem = {
-              sku: matchedProduct.sku,
-              variant: matchedProduct.variant || color || 'Mặc định',
-              quantity: itemQuantity,
-              productName: matchedProduct.name,
-              productId: matchedProduct.id, 
-              category: matchedProduct.category || '',
-              costPrice: itemCostPrice,
-              sellingPrice: itemSellingPrice
-            };
-            processedItems.push(processedItem);
-            productNames.push(matchedProduct.name);
             continue;
           }
           
@@ -874,21 +901,6 @@ export class PDFService {
             timestamp: Timestamp.now(),
             details: (extCost || extSell) ? 'Cập nhật giá từ PDF' : ''
           });
-
-          productNames.push(matchedProduct.name);
-          
-          const processedItem = {
-            sku: matchedProduct.sku,
-            variant: matchedProduct.variant || color || 'Mặc định',
-            quantity: itemQuantity,
-            productName: matchedProduct.name,
-            productId: productRef.id,
-            category: matchedProduct.category || '',
-            costPrice: itemCostPrice,
-            sellingPrice: itemSellingPrice
-          };
-          processedItems.push(processedItem);
-          finalizedItemsResult.push(processedItem); // Fixed: Populating for Supabase update
         }
 
         if (processedItems.length === 0) {

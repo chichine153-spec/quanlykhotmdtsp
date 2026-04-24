@@ -605,7 +605,11 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
         setStatus('success');
       }
       
-      // Auto-refresh data to get image_urls from background tasks
+      // Auto-refresh data to get image_urls from background tasks and update stock UI
+      if (successCount > 0) {
+        refreshData();
+      }
+      
       setTimeout(() => {
         refreshData();
       }, 5000);
