@@ -71,34 +71,7 @@ export default function ProfitDashboard() {
   });
   const [loading, setLoading] = React.useState(true);
   const [showConfig, setShowConfig] = React.useState(false);
-  const [uploading, setUploading] = React.useState(false);
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  const handleTransactionUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !user) return;
-
-    setUploading(true);
-    const toastId = toast.loading('Đang xử lý file giao dịch...');
-    try {
-      const result = await ProfitService.processTransactionExcel(file, user.uid);
-      if (result.updated > 0) {
-        toast.success(`Đã cập nhật ${result.updated} đơn hàng!`, { id: toastId });
-        refreshData();
-      } else {
-        toast.error('Không tìm thấy đơn hàng nào để cập nhật.', { id: toastId });
-      }
-      if (result.errors.length > 0) {
-        console.warn('Transaction update errors:', result.errors);
-      }
-    } catch (error: any) {
-      console.error('Upload error:', error);
-      toast.error('Lỗi khi xử lý file Excel: ' + (error.message || 'Unknown error'), { id: toastId });
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  };
 
   React.useEffect(() => {
     if (globalConfig) setConfig(globalConfig);
@@ -163,21 +136,8 @@ export default function ProfitDashboard() {
             <RefreshCw size={20} className={dataLoading ? 'animate-spin' : ''} />
           </button>
 
-          <input 
-            type="file" 
-            ref={fileInputRef}
-            onChange={handleTransactionUpload}
-            className="hidden"
-            accept=".xlsx, .xls, .csv"
-          />
-          <button 
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-blue-600 text-white font-bold hover:bg-blue-700 transition-all disabled:opacity-50"
-          >
-            {uploading ? <Loader2 size={20} className="animate-spin" /> : <FileSpreadsheet size={20} />}
-            <span>Quyết toán Shop</span>
-          </button>
+
+
 
           <div className="bg-surface-container-low p-1 rounded-2xl flex gap-1">
             {TIME_TABS.map(tab => (

@@ -93,24 +93,7 @@ export default function FinanceSettings({ onClose, initialConfig }: FinanceSetti
               />
             </div>
           </div>
-          <div className="space-y-2">
-            <label className="block text-[10px] font-black uppercase tracking-widest text-secondary">Giờ chốt ca (0-23)</label>
-            <div className="relative group">
-              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-secondary group-focus-within:text-primary transition-colors">
-                <Clock size={18} />
-              </div>
-              <input 
-                type="number"
-                min="0"
-                max="23"
-                value={config.cutoffHour}
-                onChange={(e) => setConfig({...config, cutoffHour: parseInt(e.target.value) || 0})}
-                className="w-full pl-12 pr-4 py-4 bg-surface-container-low border border-surface-container rounded-2xl focus:ring-2 focus:ring-primary/20 outline-none transition-all font-bold text-lg"
-                placeholder="Ví dụ: 15"
-                required
-              />
-            </div>
-          </div>
+
         </div>
 
         {/* Platform Fees */}
