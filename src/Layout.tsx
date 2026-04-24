@@ -179,7 +179,7 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
             <div className="w-8 h-8 rounded-lg bg-primary-container flex items-center justify-center text-white">
               <Package size={18} />
             </div>
-            <span className="text-lg font-black tracking-tighter text-primary font-headline">Zenith OMS</span>
+            <span className="text-lg font-black tracking-tighter text-primary font-headline">ZENITH OMS</span>
           </div>
         </div>
         
@@ -279,7 +279,7 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
               <Package size={24} />
             </div>
             <div>
-              <p className="text-xl font-black text-primary font-headline uppercase tracking-tight">Zenith OMS</p>
+              <p className="text-xl font-black text-primary font-headline uppercase tracking-tight">ZENITH OMS</p>
               <p className="text-[10px] uppercase tracking-widest text-secondary font-black">Hệ thống quản lý kho chuyên nghiệp</p>
             </div>
           </div>
@@ -404,7 +404,7 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
               className="fixed left-0 top-0 bottom-0 w-72 bg-white z-[80] lg:hidden p-4 flex flex-col gap-6 no-print"
             >
               <div className="flex justify-between items-center px-2">
-                <span className="text-lg font-black text-primary">Zenith OMS</span>
+                <span className="text-lg font-black text-primary">ZENITH OMS</span>
                 <button onClick={() => setIsSidebarOpen(false)} className="p-2">
                   <X size={20} />
                 </button>
@@ -534,7 +534,7 @@ export default function Layout({ children, activeScreen, onScreenChange }: Layou
 
       {/* Footer */}
       <footer className="hidden lg:flex flex-col items-center gap-2 mt-auto w-full py-8 lg:ml-40 no-print">
-        <p className="text-xs tracking-tighter opacity-50 text-secondary">© 2024 Zenith OMS - Hệ thống quản lý kho chuyên nghiệp</p>
+        <p className="text-xs tracking-tighter opacity-50 text-secondary">© 2024 ZENITH OMS - Hệ thống quản lý kho chuyên nghiệp</p>
         <div className="flex gap-6">
           <a href="#" className="text-xs text-secondary hover:opacity-100 transition-opacity">Support</a>
           <a href="#" className="text-xs text-secondary hover:opacity-100 transition-opacity">Privacy</a>

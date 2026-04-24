@@ -127,7 +127,7 @@ export default function Dashboard({ onScreenChange }: DashboardProps) {
           <LogIn size={40} />
         </div>
         <div className="max-w-md">
-          <h2 className="text-2xl font-black text-on-surface mb-2 uppercase tracking-tight font-headline">Zenith OMS - Vui lòng đăng nhập</h2>
+          <h2 className="text-2xl font-black text-on-surface mb-2 uppercase tracking-tight font-headline">ZENITH OMS - Vui lòng đăng nhập</h2>
           <p className="text-secondary mb-8">Bạn cần đăng nhập bằng tài khoản quản trị để xem báo cáo và quản lý kho hàng.</p>
           <button 
             onClick={login}
@@ -186,7 +186,7 @@ export default function Dashboard({ onScreenChange }: DashboardProps) {
             <Zap size={32} />
           </div>
           <div>
-            <h2 className="text-3xl font-black tracking-tight text-on-surface font-headline leading-tight uppercase">PITI STORE - BẢNG ĐIỀU KHIỂN</h2>
+            <h2 className="text-3xl font-black tracking-tight text-on-surface font-headline leading-tight uppercase">ZENITH OMS - BẢNG ĐIỀU KHIỂN</h2>
             <div className="flex items-center gap-3 mt-1">
               <div className="flex items-center gap-1.5 px-3 py-1 bg-success/10 text-success rounded-full text-[10px] font-black uppercase tracking-widest border border-success/20">
                 <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />

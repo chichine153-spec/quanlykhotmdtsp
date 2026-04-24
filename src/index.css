@@ -60,15 +60,34 @@
 }
 
 @media print {
-  .no-print {
-    display: none !important;
-  }
-  
-  #root {
-    display: none !important;
+  /* 1. Hide everything by default using the most aggressive selector */
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    height: auto !important;
+    overflow: visible !important;
   }
 
-  .print-only {
+  /* 2. Hide common app root and UI elements */
+  #root, 
+  header, 
+  nav, 
+  aside, 
+  footer,
+  .no-print {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  /* 3. Specifically hide everything IN the body EXCEPT our portal */
+  body > *:not(.print-only) {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  /* 4. Force show our print portal */
+  body > .print-only {
     display: block !important;
     visibility: visible !important;
     position: absolute !important;
@@ -76,26 +95,29 @@
     top: 0 !important;
     width: 100mm !important;
     height: 150mm !important;
+    z-index: 999999 !important;
     margin: 0 !important;
     padding: 0 !important;
-    z-index: 99999 !important;
     background: white !important;
   }
-  
-  /* Reset some common layout things for print */
-  body, html {
-    background-color: white !important;
-    margin: 0 !important;
-    padding: 0 !important;
+
+  /* 5. Ensure the thermal label content is visible */
+  .print-only, 
+  .print-only *,
+  .thermal-label,
+  .thermal-label *,
+  .thermal-label-container,
+  .thermal-label-container * {
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
+
+  /* Fix for image display */
+  .print-only img {
+    display: block !important;
     width: 100mm !important;
     height: 150mm !important;
-    overflow: hidden !important;
-  }
-  
-  /* Ensure colors are printed */
-  * {
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
+    object-fit: fill !important;
   }
 
   @page {

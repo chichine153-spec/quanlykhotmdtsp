@@ -110,7 +110,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
               </h2>
               <p className="text-sm text-secondary font-medium mt-1">
                 {mode === 'login' 
-                  ? 'Chào mừng bạn quay trở lại với Zenith OMS' 
+                  ? 'Chào mừng bạn quay trở lại với ZENITH OMS' 
                   : mode === 'signup' 
                   ? 'Bắt đầu quản lý kho chuyên nghiệp ngay hôm nay' 
                   : 'Chúng tôi sẽ gửi link cài lại mật khẩu qua email của bạn'}

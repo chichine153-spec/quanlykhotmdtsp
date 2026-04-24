@@ -211,7 +211,7 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
           <LogIn size={40} />
         </div>
         <div className="max-w-md">
-          <h2 className="text-2xl font-black text-on-surface mb-2 uppercase tracking-tight font-headline">Zenith OMS - Vui lòng đăng nhập</h2>
+          <h2 className="text-2xl font-black text-on-surface mb-2 uppercase tracking-tight font-headline">ZENITH OMS - Vui lòng đăng nhập</h2>
           <p className="text-secondary mb-8">Bạn cần đăng nhập để xem và quản lý danh sách sản phẩm trong kho.</p>
           <button 
             onClick={login}
@@ -1550,7 +1550,7 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
                       }}
                       className="w-full px-4 py-3 bg-surface-container-low border border-surface-container rounded-xl focus:ring-2 focus:ring-primary/20 outline-none transition-all font-mono"
                       required
-                      placeholder="Ví dụ: PITI-BINH-01"
+                      placeholder="Ví dụ: ZENITH-BINH-01"
                     />
                   </div>
 

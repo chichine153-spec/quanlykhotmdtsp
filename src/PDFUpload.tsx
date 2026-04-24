@@ -218,7 +218,7 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
           <LogIn size={40} />
         </div>
         <div className="max-w-md">
-          <h2 className="text-2xl font-black text-on-surface mb-2 uppercase tracking-tight font-headline">Zenith OMS - Vui lòng đăng nhập</h2>
+          <h2 className="text-2xl font-black text-on-surface mb-2 uppercase tracking-tight font-headline">ZENITH OMS - Vui lòng đăng nhập</h2>
           <p className="text-secondary mb-8">Bạn cần đăng nhập để thực hiện bóc tách vận đơn và cập nhật kho hàng.</p>
           <button 
             onClick={login}
@@ -669,21 +669,18 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
     console.log('[PDFUpload] No Shopee print IDs found, falling back to system thermal template');
     setIsPrinting(true);
     
-    // Ensure window has focus for printing
-    window.focus();
-    
+    // Give more time for the portal to mount and images to start loading
     setTimeout(() => {
       try {
+        window.focus();
         window.print();
-        addToast("Đang chuẩn bị bản in hệ thống...", "info");
       } catch (err) {
         console.error("[PDFUpload] System print failed", err);
         addToast("Không thể in. Vui lòng thử lại.", "error");
       } finally {
         setIsPrinting(false);
-        // Don't auto-close modal on fallback print as user might need to retry or see it
       }
-    }, 200);
+    }, 800);
   };
 
   return (
@@ -1523,15 +1520,6 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
         </AnimatePresence>
       </div>
 
-      <style>{`
-          @media print {
-            .no-print { display: none !important; }
-            .print-only { display: block !important; }
-            body { background: white !important; }
-            @page { margin: 0; size: 100mm 150mm; }
-          }
-          .print-only { display: none; }
-        `}</style>
       </div>
     </motion.div>
   );

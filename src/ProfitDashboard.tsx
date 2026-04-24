@@ -143,7 +143,7 @@ export default function ProfitDashboard() {
       {/* Header Section */}
       <header className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
-          <h1 className="text-4xl font-extrabold tracking-tight text-on-surface mb-2 uppercase">PITI STORE - PHÂN TÍCH LỢI NHUẬN</h1>
+          <h1 className="text-4xl font-extrabold tracking-tight text-on-surface mb-2 uppercase">ZENITH OMS - PHÂN TÍCH LỢI NHUẬN</h1>
           <div className="flex items-center gap-2">
             <p className="text-secondary font-medium">Báo cáo doanh thu, chi phí và lợi nhuận thực tế ngay khi bán ra.</p>
             {lastUpdated && (

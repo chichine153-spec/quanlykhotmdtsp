@@ -55,7 +55,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 
   if (isQuotaError || isAssertionError) {
     const quotaMsg = isQuotaError 
-      ? "Zenith OMS đã đạt giới hạn truy cập miễn phí trong ngày. Vui lòng quay lại sau 24h hoặc nâng cấp gói dịch vụ."
+      ? "ZENITH OMS đã đạt giới hạn truy cập miễn phí trong ngày. Vui lòng quay lại sau 24h hoặc nâng cấp gói dịch vụ."
       : "Hệ thống gặp sự cố kết nối với cơ sở dữ liệu. Vui lòng thử tải lại trang.";
     
     throw new Error(JSON.stringify({ ...errInfo, userFriendlyMessage: quotaMsg }));
