@@ -847,7 +847,7 @@ export class PDFService {
 
           const processedItem = {
             sku: matchedProduct.sku,
-            variant: matchedProduct.variant || color || 'Mặc định',
+            variant: matchedProduct.variant !== undefined && matchedProduct.variant !== null ? matchedProduct.variant : (color || 'Mặc định'),
             quantity: itemQuantity,
             productName: matchedProduct.name,
             productId: matchedProduct.id, 
@@ -1015,15 +1015,41 @@ export class PDFService {
           // B. Update Products Stock in Supabase
           for (const item of finalizedItemsResult) {
             try {
-              // Get current stock - Precise match using EXACT SKU and VARIANT from matched product
-              const { data: currentProd, error: fetchError } = await supabase
-                .from('products')
-                .select('stock_quantity, id')
-                .eq('sku', item.sku)
-                .eq('variant', item.variant || '') // Use empty string instead of 'Mặc định' for broad match
-                .maybeSingle();
+              // 1. Precise match using ID if it looks like a Supabase ID (UUID)
+              let currentProd = null;
+              
+              if (item.productId && item.productId.includes('-')) {
+                const { data } = await supabase
+                  .from('products')
+                  .select('stock_quantity, id')
+                  .eq('id', item.productId)
+                  .maybeSingle();
+                currentProd = data;
+              }
 
-              if (!fetchError && currentProd) {
+              // 2. Fallback to SKU and VARIANT match
+              if (!currentProd) {
+                const { data: skuVarProd } = await supabase
+                  .from('products')
+                  .select('stock_quantity, id')
+                  .eq('sku', item.sku)
+                  .eq('variant', item.variant || '')
+                  .maybeSingle();
+                currentProd = skuVarProd;
+              }
+
+              if (!currentProd) {
+                // 3. Fallback to SKU only
+                const { data: skuOnlyProd } = await supabase
+                  .from('products')
+                  .select('stock_quantity, id')
+                  .eq('sku', item.sku)
+                  .limit(1)
+                  .maybeSingle();
+                currentProd = skuOnlyProd;
+              }
+
+              if (currentProd) {
                 const newQty = Number(currentProd.stock_quantity || 0) - Number(item.quantity);
                 await supabase
                   .from('products')
@@ -1049,37 +1075,21 @@ export class PDFService {
                     timestamp: new Date().toISOString(),
                     details: `Trừ kho tự động Shopee: ${item.sku} - SL: ${item.quantity}`
                   });
-              } else if (!currentProd) {
-                // If not found by SKU+Variant, try SKU only as fallback
-                const { data: skuOnlyProd } = await supabase
+              } else {
+                // Final fallback: Create it if it really doesn't exist
+                console.log(`[PDFService] Creating missing product in Supabase: ${item.sku}`);
+                await supabase
                   .from('products')
-                  .select('stock_quantity, id')
-                  .eq('sku', item.sku)
-                  .limit(1)
-                  .maybeSingle();
-
-                if (skuOnlyProd) {
-                  const newQty = Number(skuOnlyProd.stock_quantity || 0) - Number(item.quantity);
-                  await supabase
-                    .from('products')
-                    .update({ stock_quantity: newQty })
-                    .eq('id', skuOnlyProd.id);
-                } else {
-                  // Final fallback: Create it
-                  console.log(`[PDFService] Creating new product in Supabase: ${item.sku}`);
-                  await supabase
-                    .from('products')
-                    .insert({
-                      user_id: auth.currentUser?.uid,
-                      sku: item.sku,
-                      name: item.productName || `Sản phẩm ${item.sku}`,
-                      variant: item.variant || '',
-                      stock_quantity: 0 - safeNum(item.quantity),
-                      cost_price: safeNum(item.costPrice),
-                      selling_price: safeNum(item.sellingPrice),
-                      updated_at: new Date().toISOString()
-                    });
-                }
+                  .insert({
+                    user_id: auth.currentUser?.uid,
+                    sku: item.sku,
+                    name: item.productName || `Sản phẩm ${item.sku}`,
+                    variant: item.variant || '',
+                    stock_quantity: 0 - Number(item.quantity),
+                    cost_price: Number(item.costPrice || 0),
+                    selling_price: Number(item.sellingPrice || 0),
+                    updated_at: new Date().toISOString()
+                  });
               }
             } catch (err) {
               console.error(`[PDFService] Supabase Inventory Update Error for ${item.sku}:`, err);

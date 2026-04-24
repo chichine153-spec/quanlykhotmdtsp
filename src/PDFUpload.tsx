@@ -1458,11 +1458,11 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
                   </div>
                 </div>
 
-                <div className="flex-grow overflow-y-auto p-8 bg-surface-container-low flex justify-center">
+                <div className="flex-grow overflow-y-auto p-4 md:p-8 bg-surface-container-low flex justify-center">
                   <div 
                     ref={printRef}
-                    className="bg-white p-4 shadow-lg border border-surface-container" 
-                    style={{ width: '100mm', minHeight: '150mm' }}
+                    className="bg-white shadow-2xl border border-surface-container overflow-hidden sticky top-0" 
+                    style={{ width: '100mm', height: '150mm', minWidth: '100mm', minHeight: '150mm' }}
                   >
                     <ThermalLabel order={selectedOrderToPrint} />
                   </div>

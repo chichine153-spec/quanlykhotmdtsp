@@ -617,12 +617,12 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
             // Vietnamese & English keywords - even more robust
             if (c.includes('tên') || c === 'name' || c.includes('product') || c === 'sp') nameIdx = idx;
             else if (c.includes('sku') || c.includes('mã') || c === 'code' || c.includes('id')) skuIdx = idx;
-            else if (c.includes('biến thể') || c.includes('màu') || c.includes('phân loại') || c.includes('variant') || c.includes('loại')) variantIdx = idx;
-            else if (c.includes('tồn') || c.includes('số lượng') || c.includes('stock') || c === 'qty' || c.includes('sl')) stockIdx = idx;
+            else if (c.includes('biến thể') || (c.includes('màu') && !c.includes('giá')) || c.includes('phân loại') || c.includes('variant') || c.includes('loại')) variantIdx = idx;
+            else if (c.includes('tồn') || c.includes('kho') || c.includes('số lượng') || c.includes('stock') || c === 'qty' || c === 'sl') stockIdx = idx;
             else if (c.includes('danh mục') || c.includes('category') || c === 'nhóm') catIdx = idx;
             else if (c.includes('giá nhập') || c.includes('giá vốn') || c.includes('cost') || c.includes('mua')) costIdx = idx;
-            else if (c.includes('giá bán') || c.includes('price') || c.includes('niêm yết') || c.includes('bán')) sellIdx = idx;
-            else if (c.includes('nơi đến') || c.includes('destination') || c.includes('kho')) destIdx = idx;
+            else if (c.includes('giá bán') || c.includes('selling') || c.includes('price') || c.includes('niêm yết') || c.includes('bán')) sellIdx = idx;
+            else if (c.includes('nơi đến') || c.includes('đích') || c === 'đến' || c.includes('destination')) destIdx = idx;
           });
         }
 
@@ -755,9 +755,15 @@ export default function Inventory({ onScreenChange }: InventoryProps) {
 
         await refreshData();
         addToast(`Đã nhập thành công vào Supabase!`, 'success');
-      } catch (error) {
+      } catch (error: any) {
         console.error("Bulk Import Error:", error);
-        addToast('Lỗi khi nhập dữ liệu từ file. Vui lòng kiểm tra định dạng file Excel/CSV.', 'error');
+        let errMsg = 'Lỗi khi nhập dữ liệu từ file. Vui lòng kiểm tra định dạng file Excel/CSV.';
+        
+        if (error.message) {
+          errMsg = error.message;
+        }
+        
+        addToast(errMsg, 'error');
       } finally {
         setIsImporting(false);
         if (bulkImportRef.current) bulkImportRef.current.value = '';

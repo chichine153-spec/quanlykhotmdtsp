@@ -674,11 +674,11 @@ export default function RePrintModule() {
                 </button>
               </div>
 
-              <div className="flex-grow overflow-y-auto p-8 bg-surface-container-low flex justify-center">
+              <div className="flex-grow overflow-y-auto p-4 md:p-8 bg-surface-container-low flex justify-center">
                 <div 
                   ref={printRef}
-                  className="bg-white p-4 shadow-lg border border-surface-container" 
-                  style={{ width: '100mm', minHeight: '150mm' }}
+                  className="bg-white shadow-2xl border border-surface-container overflow-hidden sticky top-0" 
+                  style={{ width: '100mm', height: '150mm', minWidth: '100mm', minHeight: '150mm' }}
                 >
                   <ThermalLabel order={orderToPrint} />
                 </div>
@@ -703,7 +703,7 @@ export default function RePrintModule() {
             </motion.div>
 
             {/* Persistent Hidden Printable Area - Outside modal space */}
-            <div className="print-only fixed inset-0 bg-white z-[9999]">
+            <div className="print-only">
               {orderToPrint && <ThermalLabel order={orderToPrint} />}
             </div>
           </div>
@@ -739,7 +739,7 @@ export function ThermalLabel({ order }: { order: any }) {
         <img 
           src={imageSource} 
           alt="Original Shipping Label" 
-          className="w-[100%] h-[100%] object-contain"
+          className="w-full h-full object-contain print:object-fill"
           referrerPolicy="no-referrer"
           onError={(e) => {
             console.error('Image load error in ThermalLabel for:', imageSource);
@@ -749,8 +749,16 @@ export function ThermalLabel({ order }: { order: any }) {
         <style>
           {`
             @media print {
-              @page { size: 100mm 150mm; margin: 0; }
-              body { margin: 0; padding: 0; }
+              @page { 
+                size: 100mm 150mm; 
+                margin: 0; 
+              }
+              body { 
+                margin: 0 !important; 
+                padding: 0 !important; 
+                width: 100mm !important;
+                height: 150mm !important;
+              }
               .thermal-label-container { 
                 width: 100mm !important; 
                 height: 150mm !important; 
@@ -759,12 +767,14 @@ export function ThermalLabel({ order }: { order: any }) {
                 justify-content: center !important;
                 padding: 0 !important;
                 margin: 0 !important;
+                background: white !important;
+                overflow: hidden !important;
               }
               img { 
-                width: 100% !important; 
-                height: 100% !important; 
+                width: 100mm !important; 
+                height: 150mm !important; 
                 display: block !important; 
-                object-fit: contain !important;
+                object-fit: fill !important;
               }
             }
           `}
@@ -799,14 +809,19 @@ export function ThermalLabel({ order }: { order: any }) {
               margin: 0;
             }
             body {
-              margin: 0;
-              padding: 0;
+              margin: 0 !important;
+              padding: 0 !important;
+              width: 100mm !important;
+              height: 150mm !important;
               -webkit-print-color-adjust: exact;
             }
             .thermal-label {
               width: 100mm !important;
               height: 150mm !important;
               padding: 6mm !important;
+              margin: 0 !important;
+              background: white !important;
+              box-sizing: border-box !important;
             }
             /* Hide browser default header/footer if possible */
             header, footer { display: none !important; }
