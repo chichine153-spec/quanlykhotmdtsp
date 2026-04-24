@@ -417,6 +417,114 @@ export class InventoryService {
       console.warn('[InventoryService] Firebase stock-in failed (likely quota or missing product):', err);
     }
   }
+  /**
+   * Deducts inventory for an order if it hasn't been deducted yet.
+   */
+  static async updateInventory(userId: string, order: any) {
+    if (!order || !order.items) return;
+    const trackingCode = order.trackingCode || order.tracking_number;
+    if (!trackingCode) return;
+
+    const supabase = getSupabase();
+    
+    // 1. Check if already deducted in logs to avoid double counting
+    if (supabase) {
+      const { data: logs } = await supabase
+        .from('inventory_logs')
+        .select('id')
+        .eq('tracking_code', trackingCode)
+        .eq('type', 'deduction')
+        .limit(1);
+      
+      if (logs && logs.length > 0) {
+        console.log(`[InventoryService] Order ${trackingCode} already deducted in logs. Skipping.`);
+        return;
+      }
+    }
+
+    const items = Array.isArray(order.items) ? order.items : [];
+    
+    for (const item of items) {
+      try {
+        const sku = item.sku;
+        const variant = item.variant || item.color || '';
+        const qty = Number(item.quantity || 1);
+
+        if (supabase) {
+          // Find product
+          const { data: product } = await supabase
+            .from('products')
+            .select('id, stock_quantity')
+            .eq('sku', sku)
+            .eq('variant', variant)
+            .maybeSingle();
+
+          if (product) {
+            const newQty = Number(product.stock_quantity || 0) - qty;
+            await supabase
+              .from('products')
+              .update({ 
+                stock_quantity: newQty,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', product.id);
+
+            // Log it
+            await supabase.from('inventory_logs').insert({
+              user_id: userId,
+              sku: sku,
+              product_name: item.productName || item.name || sku,
+              variant: variant,
+              quantity_change: -qty,
+              type: 'deduction',
+              tracking_code: trackingCode,
+              details: `Trừ kho khi in nhiệt: ${trackingCode}`
+            });
+          }
+        }
+
+        // Also update Firestore for consistency
+        const inventoryRef = collection(db, 'inventory');
+        const q = query(inventoryRef, where('userId', '==', userId), where('sku', '==', sku));
+        const snap = await getDocs(q);
+        const docMatch = snap.docs.find(d => {
+          const data = d.data();
+          return (data.variant || '') === variant;
+        }) || snap.docs[0];
+
+        if (docMatch) {
+          await runTransaction(db, async (transaction) => {
+            const pDoc = await transaction.get(docMatch.ref);
+            if (!pDoc.exists()) return;
+            const currentStock = pDoc.data().stock || 0;
+            const newStock = currentStock - qty;
+            transaction.update(docMatch.ref, { 
+              stock: newStock,
+              status: newStock >= 10 ? 'in_stock' : (newStock >= 5 ? 'low_stock' : 'out_of_stock'),
+              updatedAt: serverTimestamp()
+            });
+
+            // Avoid double logging in Firestore if we already did Supabase, but let's be safe
+            const logRef = doc(collection(db, 'inventory_logs'));
+            transaction.set(logRef, {
+              timestamp: serverTimestamp(),
+              sku,
+              productName: item.productName || item.name || sku,
+              variant,
+              change: -qty,
+              type: 'deduction',
+              trackingCode,
+              userId,
+              details: `Trừ kho khi in nhiệt: ${trackingCode}`
+            });
+          });
+        }
+      } catch (err) {
+        console.error(`[InventoryService] Error updating inventory for item ${item.sku}:`, err);
+      }
+    }
+  }
+
   static groupOrdersByDate(orders: OrderRecord[]) {
     const groups: Record<string, OrderRecord[]> = {};
     orders.forEach(order => {

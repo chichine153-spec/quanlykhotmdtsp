@@ -36,6 +36,7 @@ interface PDFUploadProps {
 }
 
 import { createPortal } from 'react-dom';
+import { InventoryService } from './services/inventoryService';
 
 export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
   const { 
@@ -632,17 +633,26 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
 
   const [isPrinting, setIsPrinting] = React.useState(false);
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
     if (!selectedOrderToPrint) {
       addToast("Không tìm thấy thông tin đơn hàng để in.", "error");
       return;
+    }
+
+    setIsPrinting(true);
+    
+    // 1. Critical: Perform inventory update/deduction simultaneously
+    try {
+      console.log('[PDFUpload] Syncing inventory stock...');
+      await InventoryService.updateInventory(user.uid, selectedOrderToPrint);
+    } catch (err) {
+      console.warn('[PDFUpload] Inventory sync non-blocking warning:', err);
     }
 
     const { trackingCode, orderId, job_id, shop_id } = selectedOrderToPrint;
 
     // Shopee URL logic: If we have both IDs, try to open Shopee Print Page
     if (job_id && shop_id && job_id !== 'null' && shop_id !== 'null') {
-      setIsPrinting(true);
       const shopee_print_url = `https://banhang.shopee.vn/api/v3/settings/print_awb/?job_id=${job_id}&shop_id=${shop_id}&lang=vi`;
       
       try {
@@ -662,12 +672,12 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
         return;
       } catch (err) {
         console.error("[PDFUpload] Opening Shopee print URL failed", err);
+        setIsPrinting(false);
       }
     }
 
     // Fallback logic: Use system thermal template (window.print)
     console.log('[PDFUpload] No Shopee print IDs found, falling back to system thermal template');
-    setIsPrinting(true);
     
     // Give more time for the portal to mount and images to fully render
     setTimeout(() => {
@@ -679,9 +689,9 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
         addToast("Không thể in. Vui lòng thử lại.", "error");
       } finally {
         // Reset state after a delay to ensure print dialog has finished
-        setTimeout(() => setIsPrinting(false), 2000);
+        setTimeout(() => setIsPrinting(false), 1000);
       }
-    }, 1500);
+    }, 1200);
   };
 
   return (
@@ -1461,10 +1471,25 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
                 <div className="flex-grow overflow-y-auto p-4 md:p-8 bg-surface-container-low flex justify-center">
                   <div 
                     ref={printRef}
-                    className="bg-white shadow-2xl border border-surface-container overflow-hidden sticky top-0" 
+                    className="bg-white shadow-2xl border border-surface-container overflow-hidden sticky top-0 flex items-center justify-center" 
                     style={{ width: '100mm', height: '150mm', minWidth: '100mm', minHeight: '150mm' }}
                   >
-                    <ThermalLabel order={selectedOrderToPrint} />
+                    {/* Priority PDF Iframe Preview for Thermal Label */}
+                    {(() => {
+                      const pdfUrl = selectedOrderToPrint.pdfUrl || selectedOrderToPrint.image_url;
+                      const isPDF = pdfUrl && (pdfUrl.toLowerCase().includes('.pdf') || pdfUrl.includes('application/pdf') || pdfUrl.includes('blob:'));
+                      
+                      if (isPDF) {
+                        return (
+                          <iframe 
+                            src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`} 
+                            className="w-full h-full border-none"
+                            title="PDF Preview"
+                          />
+                        );
+                      }
+                      return <ThermalLabel order={selectedOrderToPrint} />;
+                    })()}
                   </div>
                 </div>
 
@@ -1478,7 +1503,7 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
                   <button 
                     onClick={handlePrint}
                     disabled={isPrinting}
-                    className="flex-1 py-4 bg-primary text-white rounded-2xl font-black shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                    className={`flex-1 py-4 rounded-2xl font-black shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-50 ${isPrinting ? 'bg-orange-400 text-white' : 'bg-[#CC3300] text-white'}`}
                   >
                     {isPrinting ? <Loader2 className="animate-spin" size={20} /> : <Printer size={20} />}
                     {isPrinting ? 'ĐANG CHUẨN BỊ...' : 'IN NHIỆT NGAY'}
