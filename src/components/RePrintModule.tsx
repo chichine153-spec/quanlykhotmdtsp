@@ -28,6 +28,7 @@ import { GeminiService } from '../services/gemini';
 import { getDoc, doc, getDocs } from 'firebase/firestore';
 import { createPortal } from 'react-dom';
 import { InventoryService } from '../services/inventoryService';
+import { printComponent } from '../lib/printUtils';
 
 import { getSupabase } from '../lib/supabase';
 
@@ -62,7 +63,6 @@ export default function RePrintModule() {
   const printRef = React.useRef<HTMLDivElement>(null);
 
   const [isPrinting, setIsPrinting] = React.useState(false);
-  const printReadyRef = React.useRef(false);
 
   const handleThermalPrint = async () => {
     if (!orderToPrint) {
@@ -104,43 +104,20 @@ export default function RePrintModule() {
       }
     }
 
-    // Fallback logic: Use system thermal template (window.print)
-    console.log('[RePrintModule] No Shopee print IDs found or blocked, falling back to system thermal template');
+    // Fallback logic: Use system thermal template via iframe print utility
+    console.log('[RePrintModule] Using hidden iframe for reliable thermal printing');
     
-    // Give more time for the portal to mount and images to fully render
-    const attemptPrint = () => {
-      // Small additional delay to ensure browser has painted the current frame
-      setTimeout(() => {
-        try {
-          window.focus();
-          window.print();
-        } catch (err) {
-          console.error("[RePrintModule] System print failed", err);
-          alert("Không thể thực hiện in ấn. Vui lòng thử lại.");
-        } finally {
-          // Reset state after a delay to ensure print dialog has finished
-          setTimeout(() => {
-            setIsPrinting(false);
-            printReadyRef.current = false;
-          }, 1500);
-        }
-      }, 500);
-    };
-
-    if (printReadyRef.current) {
-      attemptPrint();
-    } else {
-      // Wait for the ready signal from ThermalLabel with a limit
-      let checkCount = 0;
-      const checker = setInterval(() => {
-        checkCount++;
-        console.log(`[RePrintModule] Waiting for print readiness... (try ${checkCount})`);
-        if (printReadyRef.current || checkCount > 30) { // Max 6 seconds
-          clearInterval(checker);
-          if (!printReadyRef.current) console.warn('[RePrintModule] Print readiness timed out, attempting anyway');
-          attemptPrint();
-        }
-      }, 200);
+    try {
+      await printComponent(
+        <ThermalLabel order={orderToPrint} />,
+        `Print-Label-${orderToPrint.trackingCode || orderToPrint.tracking_number}`
+      );
+    } catch (err) {
+      console.error("[RePrintModule] Print utility failed", err);
+      alert("Không thể thực hiện in ấn. Vui lòng thử lại.");
+    } finally {
+      setIsPrinting(false);
+      setShowPrintTemplate(false);
     }
   };
 
@@ -148,10 +125,9 @@ export default function RePrintModule() {
     setIsIframe(window.self !== window.top);
   }, []);
 
-  // Reset print readiness when order change or modal closes
+  // Reset isPrinting when modal closes
   React.useEffect(() => {
     if (!showPrintTemplate) {
-      printReadyRef.current = false;
       setIsPrinting(false);
     }
   }, [showPrintTemplate]);
@@ -725,7 +701,6 @@ export default function RePrintModule() {
                   {/* Use ThermalLabel for both preview and print for consistency and PDF rendering reliability */}
                   <ThermalLabel 
                     order={orderToPrint} 
-                    onReady={() => { printReadyRef.current = true; }}
                   />
                 </div>
               </div>
@@ -747,19 +722,6 @@ export default function RePrintModule() {
                 </button>
               </div>
             </motion.div>
-
-            {/* Persistent Hidden Printable Area - Using Portal to body for clean isolation */}
-            {createPortal(
-              <div className="print-only">
-                {orderToPrint && (
-                  <ThermalLabel 
-                    order={orderToPrint} 
-                    onReady={() => { printReadyRef.current = true; }}
-                  />
-                )}
-              </div>,
-              document.body
-            )}
           </div>
         )}
       </AnimatePresence>

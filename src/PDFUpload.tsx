@@ -26,17 +26,16 @@ import { db, storage } from './firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { GeminiService } from './services/gemini';
 import { ThermalLabel } from './components/RePrintModule';
-import { OrderRecord } from './services/inventoryService';
+import { OrderRecord, InventoryService } from './services/inventoryService';
 import { logErrorToSupabase, FRIENDLY_ERROR_MESSAGE } from './lib/error-logging';
 import { Printer, X, ExternalLink } from 'lucide-react';
 import { Screen } from './types';
 
+import { printComponent } from './lib/printUtils';
+
 interface PDFUploadProps {
   onScreenChange?: (screen: Screen) => void;
 }
-
-import { createPortal } from 'react-dom';
-import { InventoryService } from './services/inventoryService';
 
 export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
   const { 
@@ -96,10 +95,9 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
     setIsIframe(window.self !== window.top);
   }, []);
 
-  // Reset print readiness when modal closes
+  // Reset isPrinting when modal closes
   React.useEffect(() => {
     if (!showPrintTemplate) {
-      printReadyRef.current = false;
       setIsPrinting(false);
     }
   }, [showPrintTemplate]);
@@ -640,7 +638,6 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
   };
 
   const [isPrinting, setIsPrinting] = React.useState(false);
-  const printReadyRef = React.useRef(false);
 
   const handlePrint = async () => {
     if (!selectedOrderToPrint) {
@@ -683,42 +680,20 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
       }
     }
 
-    // Fallback logic: Use system thermal template (window.print)
-    console.log('[PDFUpload] No Shopee print IDs found or blocked, falling back to system thermal template');
+    // Fallback logic: Use system thermal template via iframe print utility
+    console.log('[PDFUpload] Using hidden iframe for reliable thermal printing');
     
-    const attemptPrint = () => {
-      // Small additional delay to ensure browser has painted the current frame
-      setTimeout(() => {
-        try {
-          window.focus();
-          window.print();
-        } catch (err) {
-          console.error("[PDFUpload] System print failed", err);
-          addToast("Không thể in. Vui lòng thử lại.", "error");
-        } finally {
-          // Reset state after a delay to ensure print dialog has finished
-          setTimeout(() => {
-            setIsPrinting(false);
-            printReadyRef.current = false;
-          }, 1500);
-        }
-      }, 500);
-    };
-
-    if (printReadyRef.current) {
-      attemptPrint();
-    } else {
-      // Wait for the ready signal from ThermalLabel
-      let checkCount = 0;
-      const checker = setInterval(() => {
-        checkCount++;
-        console.log(`[PDFUpload] Waiting for print readiness... (try ${checkCount})`);
-        if (printReadyRef.current || checkCount > 30) {
-          clearInterval(checker);
-          if (!printReadyRef.current) console.warn('[PDFUpload] Print readiness timed out, attempting anyway');
-          attemptPrint();
-        }
-      }, 200);
+    try {
+      await printComponent(
+        <ThermalLabel order={selectedOrderToPrint} />,
+        `Print-Label-${selectedOrderToPrint.trackingCode || selectedOrderToPrint.id}`
+      );
+    } catch (err) {
+      console.error("[PDFUpload] Print utility failed", err);
+      addToast("Không thể in. Vui lòng thử lại.", "error");
+    } finally {
+      setIsPrinting(false);
+      setShowPrintTemplate(false);
     }
   };
 
@@ -1505,7 +1480,6 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
                     {/* Use ThermalLabel for both preview and print for consistency and PDF rendering reliability */}
                     <ThermalLabel 
                       order={selectedOrderToPrint} 
-                      onReady={() => { printReadyRef.current = true; }}
                     />
                   </div>
                 </div>
@@ -1530,19 +1504,6 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
             </div>
           )}
         </AnimatePresence>
-
-        {/* Persistent Hidden Printable Area - Using Portal to body for clean isolation */}
-        {createPortal(
-          <div className="print-only">
-            {selectedOrderToPrint && (
-              <ThermalLabel 
-                order={selectedOrderToPrint} 
-                onReady={() => { printReadyRef.current = true; }}
-              />
-            )}
-          </div>,
-          document.body
-        )}
 
         {/* Toast Notifications */}
       <div className="fixed bottom-6 right-6 z-[200] flex flex-col gap-3 pointer-events-none">
