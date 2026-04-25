@@ -924,8 +924,8 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
       display: 'flex',
       flexDirection: 'column',
       fontSize: '12pt',
-      color: 'black',
-      backgroundColor: 'white',
+      color: '#000000',
+      backgroundColor: '#ffffff',
       minHeight: '150mm',
       fontFamily: '"Inter", "Be Vietnam Pro", sans-serif'
     }}>
@@ -934,73 +934,78 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
           @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Be+Vietnam+Pro:wght@400;700;900&display=swap');
           .thermal-label * {
              font-family: "Inter", "Be Vietnam Pro", sans-serif !important;
+             color: #000000 !important;
+             -webkit-font-smoothing: antialiased;
+             -moz-osx-font-smoothing: grayscale;
           }
           .thermal-label table td {
-             border-top: 1px solid black;
+             border-top: 1.5px solid #000000;
           }
           @media print {
             body { background: white !important; }
+            * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
           }
         `}
       </style>
       
       {/* Top Header */}
       <div className="flex justify-between items-start mb-0.5">
-        <div className="text-[9px] font-bold">Vận đơn: {barcodeValue || 'N/A'}</div>
-        <div className="text-[10px] font-black">{timeStr} {dateStr}</div>
+        <div className="text-[10px] font-black">Vận đơn: {barcodeValue || 'N/A'}</div>
+        <div className="text-[11px] font-black">{timeStr} {dateStr}</div>
       </div>
 
       <div className="flex justify-between items-end mb-1">
         <div>
-          <div className="text-xl font-black tracking-tight leading-none">Shopee</div>
-          <div className="text-[9px] font-bold mt-0.5">Ngày đặt: {dateStr}</div>
+          <div className="text-2xl font-black tracking-tighter leading-none">Shopee</div>
+          <div className="text-[10px] font-black mt-1">Ngày đặt: {dateStr}</div>
         </div>
-        <div className="text-2xl font-black border-2 border-black px-3 py-1 bg-white">
+        <div className="text-3xl font-black border-[3px] border-black px-4 py-1.5 bg-white">
           {order.region || 'Đồng Nai'}
         </div>
       </div>
 
       {/* Barcode Section */}
-      <div className="flex flex-col items-center py-3 border-y-2 border-black mb-2 overflow-hidden">
+      <div className="flex flex-col items-center py-4 border-y-[2.5px] border-black mb-2 overflow-hidden">
         {barcodeValue ? (
           <>
-            <div className="scale-x-[1.3] scale-y-[1.4] origin-center -my-1" style={{ display: 'block' }}>
+            <div className="scale-x-[1.4] scale-y-[1.6] origin-center -my-2" style={{ display: 'block' }}>
               <Barcode 
                 value={barcodeValue} 
                 width={1.6} 
-                height={45} 
+                height={50} 
                 fontSize={12} 
                 margin={0}
                 displayValue={false}
+                lineColor="#000000"
               />
             </div>
-            <div className="text-sm font-black tracking-[0.2em] mt-2">
+            <div className="text-lg font-black tracking-[0.3em] mt-3">
               {barcodeValue}
             </div>
           </>
         ) : (
-          <div className="text-xs italic py-2">Chưa có mã vận đơn</div>
+          <div className="text-sm italic py-2 font-black">Chưa có mã vận đơn</div>
         )}
       </div>
 
       {/* QR Code */}
       <div className="flex justify-center mb-3">
-        {barcodeValue && <QRCodeSVG value={barcodeValue} size={120} />}
+        {barcodeValue && <QRCodeSVG value={barcodeValue} size={140} fgColor="#000000" bgColor="#ffffff" />}
       </div>
 
       {/* Recipient Info */}
-      <div className="border-t-2 border-black pt-2 mb-2">
-        <div className="text-[10px] font-black uppercase opacity-60 mb-1">Người nhận:</div>
-        <div className="text-lg font-black mb-0.5 leading-tight">{order.recipientName || 'KHÁCH HÀNG'}</div>
-        {displayPhone && <div className="text-sm font-bold mb-1">{displayPhone}</div>}
-        <div className="text-xs font-medium leading-tight mt-1 max-h-[3em] overflow-hidden">
+      <div className="border-t-[2.5px] border-black pt-2.5 mb-2">
+        <div className="text-[11px] font-black uppercase mb-1">Người nhận:</div>
+        <div className="text-xl font-black mb-1 leading-tight">{order.recipientName || 'KHÁCH HÀNG'}</div>
+        {displayPhone && <div className="text-base font-black mb-1">{displayPhone}</div>}
+        <div className="text-[13px] font-bold leading-snug mt-1 max-h-[3.5em] overflow-hidden">
           {order.recipientAddress || 'Vui lòng xem địa chỉ chi tiết trên vận đơn gốc'}
         </div>
       </div>
 
       {/* Item List Section */}
-      <div className="mt-1 flex-grow overflow-hidden border-t border-black pt-1">
-        <div className="text-[10px] font-black uppercase mb-1 flex justify-between">
+      <div className="mt-1 flex-grow overflow-hidden border-t-[2px] border-black pt-1.5">
+        <div className="text-[11px] font-black uppercase mb-1.5 flex justify-between">
           <span>Sản phẩm</span>
           <span>SL</span>
         </div>
@@ -1008,32 +1013,32 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
           <tbody>
             {items.length > 0 ? (
               items.slice(0, 5).map((item: any, idx: number) => (
-                <tr key={idx} className="border-t border-black/10">
-                  <td className="py-1 pr-2 align-top text-[11px]">
-                    <div className="font-bold truncate max-w-[200px]">{item.sku}</div>
-                    <div className="text-[10px] opacity-70 italic truncate max-w-[200px]">{item.variant || ''}</div>
+                <tr key={idx} className="border-t border-black">
+                  <td className="py-1.5 pr-2 align-top text-[12px]">
+                    <div className="font-black truncate max-w-[220px]">{item.sku}</div>
+                    <div className="text-[11px] font-bold italic truncate max-w-[220px]">{item.variant || ''}</div>
                   </td>
-                  <td className="py-1 text-right align-top font-black text-sm w-8">
+                  <td className="py-1.5 text-right align-top font-black text-base w-10">
                     {item.quantity}
                   </td>
                 </tr>
               ))
             ) : itemsString ? (
-              <tr className="border-t border-black/10">
-                <td colSpan={2} className="py-2 text-[10px] font-bold leading-tight">
+              <tr className="border-t border-black">
+                <td colSpan={2} className="py-2.5 text-[11px] font-black leading-tight">
                   {itemsString}
                 </td>
               </tr>
             ) : (
-              <tr className="border-t border-black/20">
-                <td colSpan={2} className="py-2 text-[10px] italic text-center">
+              <tr className="border-t border-black">
+                <td colSpan={2} className="py-3 text-[11px] font-black italic text-center">
                   Xem chi tiết trên ứng dụng Shopee
                 </td>
               </tr>
             )}
             {items.length > 5 && (
               <tr>
-                <td colSpan={2} className="text-[9px] italic pt-1">...và {items.length - 5} sản phẩm khác</td>
+                <td colSpan={2} className="text-[10px] font-black italic pt-1.5">...và {items.length - 5} sản phẩm khác</td>
               </tr>
             )}
           </tbody>
@@ -1041,13 +1046,14 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
       </div>
 
       {/* Footer */}
-      <div className="mt-auto pt-2 border-t border-black/50 flex justify-between items-center opacity-60">
-        <div className="text-[7px]">Generated by ZENITH OMS</div>
-        <div className="flex items-center gap-1">
-           <div className="text-[8px] font-bold">SPX Express</div>
-           <div className="text-xs font-black border border-black px-2 py-0.5">SPX</div>
+      <div className="mt-auto pt-2.5 border-t-2 border-black flex justify-between items-center">
+        <div className="text-[8px] font-bold">Generated by ZENITH OMS</div>
+        <div className="flex items-center gap-2">
+           <div className="text-[9px] font-black">SPX Express</div>
+           <div className="text-sm font-black border-2 border-black px-2.5 py-1">SPX</div>
         </div>
       </div>
+
     </div>
   );
 }
