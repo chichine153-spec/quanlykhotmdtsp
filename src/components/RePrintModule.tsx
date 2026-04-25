@@ -905,6 +905,7 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
   }
 
   const items = Array.isArray(order.items) ? order.items : [];
+  const itemsString = typeof order.items === 'string' ? order.items : '';
   
   // Format phone number to avoid "null"
   const rawPhone = String(order.recipientPhone || '');
@@ -986,27 +987,34 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
         </div>
         <table className="w-full border-collapse">
           <tbody>
-            {items.slice(0, 5).map((item: any, idx: number) => (
-              <tr key={idx} className="border-t border-black/10">
-                <td className="py-1 pr-2 align-top text-[11px]">
-                  <div className="font-bold truncate max-w-[200px]">{item.sku}</div>
-                  <div className="text-[10px] opacity-70 italic truncate max-w-[200px]">{item.variant || ''}</div>
-                </td>
-                <td className="py-1 text-right align-top font-black text-sm w-8">
-                  {item.quantity}
+            {items.length > 0 ? (
+              items.slice(0, 5).map((item: any, idx: number) => (
+                <tr key={idx} className="border-t border-black/10">
+                  <td className="py-1 pr-2 align-top text-[11px]">
+                    <div className="font-bold truncate max-w-[200px]">{item.sku}</div>
+                    <div className="text-[10px] opacity-70 italic truncate max-w-[200px]">{item.variant || ''}</div>
+                  </td>
+                  <td className="py-1 text-right align-top font-black text-sm w-8">
+                    {item.quantity}
+                  </td>
+                </tr>
+              ))
+            ) : itemsString ? (
+              <tr className="border-t border-black/10">
+                <td colSpan={2} className="py-2 text-[10px] font-bold leading-tight">
+                  {itemsString}
                 </td>
               </tr>
-            ))}
-            {items.length > 5 && (
-              <tr>
-                <td colSpan={2} className="text-[9px] italic pt-1">...và {items.length - 5} sản phẩm khác</td>
-              </tr>
-            )}
-            {items.length === 0 && (
+            ) : (
               <tr className="border-t border-black/20">
                 <td colSpan={2} className="py-2 text-[10px] italic text-center">
                   Xem chi tiết trên ứng dụng Shopee
                 </td>
+              </tr>
+            )}
+            {items.length > 5 && (
+              <tr>
+                <td colSpan={2} className="text-[9px] italic pt-1">...và {items.length - 5} sản phẩm khác</td>
               </tr>
             )}
           </tbody>

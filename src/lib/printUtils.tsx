@@ -37,6 +37,13 @@ export const printComponent = async (Component: React.ReactElement, title: strin
     // 4. Add specialized print styles for thermal labels
     const printStyles = document.createElement('style');
     printStyles.innerHTML = `
+      /* Force visibility in the hidden iframe so images/content can load */
+      .print-only {
+        display: block !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+      }
+      
       body { 
         margin: 0 !important; 
         padding: 0 !important; 
@@ -44,14 +51,18 @@ export const printComponent = async (Component: React.ReactElement, title: strin
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
       }
+      
       @page {
         size: 100mm 150mm;
         margin: 0;
       }
+      
       canvas, img, iframe {
         max-width: 100% !important;
         height: auto !important;
+        display: block !important;
       }
+      
       .thermal-label-container, .thermal-label {
         width: 100mm !important;
         height: 150mm !important;
@@ -63,16 +74,18 @@ export const printComponent = async (Component: React.ReactElement, title: strin
 
     // 5. Create container and render component
     const container = iframeDoc.createElement('div');
+    container.className = 'print-only'; 
     iframeDoc.body.appendChild(container);
 
     const root = createRoot(container);
     root.render(Component);
 
     // 6. Wait for content to load (images, etc.)
-    // We give it a generous delay to ensure React has finished rendering and images have started loading
+    // We give it a generous delay to ensure React has finished rendering and images have loaded
     setTimeout(() => {
       // 7. Trigger print
       try {
+        console.log('[PrintUtils] Triggering print for iframe');
         iframe.contentWindow?.focus();
         iframe.contentWindow?.print();
       } catch (err) {
@@ -84,6 +97,6 @@ export const printComponent = async (Component: React.ReactElement, title: strin
         document.body.removeChild(iframe);
         resolve();
       }, 500);
-    }, 1500); // Wait 1.5s for PDF rendering/images
+    }, 2000); // Wait 2s for PDF rendering/images
   });
 };
