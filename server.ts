@@ -22,7 +22,7 @@ async function startServer() {
     try {
       const genAI = new GoogleGenAI({ apiKey });
       const result = await genAI.models.generateContent({
-        model: model || "gemini-3-flash-preview",
+        model: model || "gemini-1.5-flash",
         contents: typeof contents === 'string' ? [{ role: 'user', parts: [{ text: contents }]}] : contents,
         config: {
           systemInstruction: systemInstruction,
