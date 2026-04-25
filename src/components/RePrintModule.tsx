@@ -62,6 +62,7 @@ export default function RePrintModule() {
   const printRef = React.useRef<HTMLDivElement>(null);
 
   const [isPrinting, setIsPrinting] = React.useState(false);
+  const [printReady, setPrintReady] = React.useState(false);
 
   const handleThermalPrint = async () => {
     if (!orderToPrint) {
@@ -70,7 +71,7 @@ export default function RePrintModule() {
     }
 
     setIsPrinting(true);
-    const { job_id, shop_id, trackingCode, orderId } = orderToPrint;
+    const { job_id, shop_id } = orderToPrint;
 
     // 1. Critical: Perform inventory update/deduction simultaneously
     try {
@@ -88,27 +89,27 @@ export default function RePrintModule() {
         const newWindow = window.open(shopee_print_url, '_blank');
         
         if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
-          alert("Trình duyệt đã chặn cửa sổ bật lên. Vui lòng cho phép trình duyệt mở tab mới hoặc sử dụng nút 'Mở tab mới' ở đầu trang.");
-          setIsPrinting(false);
+          // If popup blocked, we continue to fallback so user can still print something
+          console.warn("[RePrintModule] Popup blocked, using fallback template");
         } else {
           // Success
           setTimeout(() => {
             setShowPrintTemplate(false);
             setIsPrinting(false);
           }, 800);
+          return;
         }
-        return;
       } catch (err) {
         console.error("[RePrintModule] Opening Shopee print URL failed", err);
-        setIsPrinting(false);
       }
     }
 
     // Fallback logic: Use system thermal template (window.print)
-    console.log('[RePrintModule] No Shopee print IDs found, falling back to system thermal template');
+    console.log('[RePrintModule] No Shopee print IDs found or blocked, falling back to system thermal template');
     
     // Give more time for the portal to mount and images to fully render
-    setTimeout(() => {
+    // Use a longer delay or wait for ready signal
+    const attemptPrint = () => {
       try {
         window.focus();
         window.print();
@@ -117,9 +118,26 @@ export default function RePrintModule() {
         alert("Không thể thực hiện in ấn. Vui lòng thử lại.");
       } finally {
         // Reset state after a delay to ensure print dialog has finished
-        setTimeout(() => setIsPrinting(false), 1000);
+        setTimeout(() => {
+          setIsPrinting(false);
+          setPrintReady(false);
+        }, 1500);
       }
-    }, 1200);
+    };
+
+    if (printReady) {
+      attemptPrint();
+    } else {
+      // Wait for the ready signal from ThermalLabel with a limit
+      let checkCount = 0;
+      const checker = setInterval(() => {
+        checkCount++;
+        if (printReady || checkCount > 20) { // Max 4 seconds
+          clearInterval(checker);
+          attemptPrint();
+        }
+      }, 200);
+    }
   };
 
   React.useEffect(() => {
@@ -689,25 +707,14 @@ export default function RePrintModule() {
               <div className="flex-grow overflow-y-auto p-4 md:p-8 bg-surface-container-low flex justify-center">
                 <div 
                   ref={printRef}
-                  className="bg-white shadow-2xl border border-surface-container overflow-hidden sticky top-0 flex items-center justify-center" 
+                  className="bg-white shadow-2xl border border-surface-container overflow-hidden sticky top-0 flex items-center justify-center p-0" 
                   style={{ width: '100mm', height: '150mm', minWidth: '100mm', minHeight: '150mm' }}
                 >
-                  {/* Priority PDF Iframe Preview */}
-                  {(() => {
-                    const pdfUrl = orderToPrint.pdfUrl || orderToPrint.image_url;
-                    const isPDF = pdfUrl && (pdfUrl.toLowerCase().includes('.pdf') || pdfUrl.includes('application/pdf') || pdfUrl.includes('blob:'));
-                    
-                    if (isPDF) {
-                      return (
-                        <iframe 
-                          src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`} 
-                          className="w-full h-full border-none"
-                          title="PDF Preview"
-                        />
-                      );
-                    }
-                    return <ThermalLabel order={orderToPrint} />;
-                  })()}
+                  {/* Use ThermalLabel for both preview and print for consistency and PDF rendering reliability */}
+                  <ThermalLabel 
+                    order={orderToPrint} 
+                    onReady={() => setPrintReady(true)}
+                  />
                 </div>
               </div>
 
@@ -732,7 +739,12 @@ export default function RePrintModule() {
             {/* Persistent Hidden Printable Area - Using Portal to body for clean isolation */}
             {createPortal(
               <div className="print-only">
-                {orderToPrint && <ThermalLabel order={orderToPrint} />}
+                {orderToPrint && (
+                  <ThermalLabel 
+                    order={orderToPrint} 
+                    onReady={() => setPrintReady(true)}
+                  />
+                )}
               </div>,
               document.body
             )}
@@ -743,9 +755,10 @@ export default function RePrintModule() {
   );
 }
 
-export function ThermalLabel({ order }: { order: any }) {
+export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => void }) {
   const [imageError, setImageError] = React.useState(false);
   const [pdfRendering, setPdfRendering] = React.useState(false);
+  const [forceFallback, setForceFallback] = React.useState(false);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const renderAttempted = React.useRef(false);
   
@@ -758,26 +771,33 @@ export function ThermalLabel({ order }: { order: any }) {
   const isImageString = typeof imageSource === 'string' && imageSource.length > 10;
   
   // Check if it's a valid Image URL or data URI
-  const isImage = isImageString && (
+  const isImage = !forceFallback && isImageString && (
     imageSource.match(/\.(jpeg|jpg|gif|png|webp)/i) || 
     imageSource.includes('supabase.co/storage/v1/object/public') ||
     imageSource.startsWith('data:image/') ||
     imageSource.includes('firebasestorage.googleapis.com')
   );
 
-  const isPDF = isImageString && (
+  const isPDF = !forceFallback && isImageString && (
     imageSource.toLowerCase().includes('.pdf') || 
     imageSource.includes('blob:') || 
     imageSource.includes('application/pdf') ||
-    (imageSource.includes('supabase.co') && !isImage)
+    (imageSource.includes('supabase.co') && !isImage) ||
+    (imageSource.includes('banhang.shopee.vn') && imageSource.includes('print_awb'))
   );
   
-  console.log('[ThermalLabel] rendering order:', order.trackingCode || order.tracking_number, { isImage, isPDF, source: imageSource?.substring(0, 50) + '...' });
+  console.log('[ThermalLabel] rendering order:', order.trackingCode || order.tracking_number, { isImage, isPDF, forceFallback, source: imageSource?.substring(0, 50) + '...' });
 
   // Effect to render PDF to canvas if it's a PDF and not an image
   React.useEffect(() => {
-    if (isPDF && !isImage && canvasRef.current && !imageError && !renderAttempted.current) {
+    if (isPDF && !isImage && !imageError && !renderAttempted.current) {
       const renderPdf = async () => {
+        // Wait for canvas to exist in DOM
+        if (!canvasRef.current) {
+          setTimeout(renderPdf, 100);
+          return;
+        }
+
         try {
           console.log('[ThermalLabel] Starting PDF render for:', imageSource);
           setPdfRendering(true);
@@ -788,7 +808,7 @@ export function ThermalLabel({ order }: { order: any }) {
           if (pdfData.startsWith('blob:') || pdfData.startsWith('data:application/pdf')) {
             loadingTask = pdfjs.getDocument(pdfData);
           } else {
-            // Add a timestamp to avoid caching issues and ensure fresh fetch
+            // Shopee URLs usually fail CORS, catch it
             const fetchUrl = pdfData.includes('?') ? `${pdfData}&t=${Date.now()}` : `${pdfData}?t=${Date.now()}`;
             loadingTask = pdfjs.getDocument({ 
               url: fetchUrl, 
@@ -817,22 +837,31 @@ export function ThermalLabel({ order }: { order: any }) {
           }).promise;
           
           console.log('[ThermalLabel] PDF rendered to canvas successfully');
+          if (onReady) onReady();
         } catch (err) {
-          console.error('[ThermalLabel] PDF render error:', err);
+          console.warn('[ThermalLabel] PDF render error (likely CORS for Shopee URL):', err);
           setImageError(true);
+          setForceFallback(true);
+          if (onReady) onReady(); // Still signal ready so it can print the fallback
         } finally {
           setPdfRendering(false);
         }
       };
       
-      const timer = setTimeout(renderPdf, 300);
+      const timer = setTimeout(renderPdf, 200);
       return () => clearTimeout(timer);
+    } else if (isImage && !imageError) {
+      // For image mode, we just need to wait for it to load
+      // We signal ready in the onLoad of the img tag
+    } else {
+      // Manual template mode, signal ready immediately
+      if (onReady) onReady();
     }
-  }, [isPDF, isImage, imageSource, imageError]);
+  }, [isPDF, isImage, imageSource, imageError, forceFallback]);
 
-  if ((isImage || (isPDF && !imageError)) && !imageError) {
+  if ((isImage || (isPDF && !imageError)) && !imageError && !forceFallback) {
     return (
-      <div className="thermal-label-container bg-white flex items-center justify-center p-0 overflow-hidden" 
+      <div className="thermal-label-container bg-white flex flex-col items-center justify-center p-0 overflow-hidden" 
            style={{ width: '100mm', height: '150mm' }}>
         {isImage ? (
           <img 
@@ -841,10 +870,15 @@ export function ThermalLabel({ order }: { order: any }) {
             className="w-full h-full object-contain print:object-fill"
             referrerPolicy="no-referrer"
             crossOrigin="anonymous"
-            onLoad={() => console.log('Image loaded successfully for print')}
+            onLoad={() => {
+              console.log('Image loaded successfully for print');
+              if (onReady) onReady();
+            }}
             onError={(e) => {
               console.error('Image load error in ThermalLabel for:', imageSource);
               setImageError(true);
+              setForceFallback(true);
+              if (onReady) onReady();
             }}
           />
         ) : (
@@ -852,12 +886,20 @@ export function ThermalLabel({ order }: { order: any }) {
             {pdfRendering && (
               <div className="absolute inset-0 flex items-center justify-center bg-white z-10">
                 <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary"></div>
-                <span className="ml-3 text-xs font-bold font-sans">Đang xử lý PDF gốc...</span>
+                <span className="ml-3 text-xs font-bold font-sans text-black">Đang xử lý PDF gốc...</span>
               </div>
             )}
             <canvas ref={canvasRef} className="w-full h-full object-contain print:object-fill" />
           </div>
         )}
+        
+        {/* Helper to switch to template if image/pdf fails or is hard to see */}
+        <button 
+          onClick={() => setForceFallback(true)}
+          className="absolute bottom-2 right-2 p-2 bg-black/10 hover:bg-black/20 rounded text-[8px] font-bold no-print"
+        >
+          Dùng mẫu in hệ thống
+        </button>
         <style>
           {`
             @media print {

@@ -632,6 +632,7 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
   };
 
   const [isPrinting, setIsPrinting] = React.useState(false);
+  const [printReady, setPrintReady] = React.useState(false);
 
   const handlePrint = async () => {
     if (!selectedOrderToPrint) {
@@ -649,7 +650,7 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
       console.warn('[PDFUpload] Inventory sync non-blocking warning:', err);
     }
 
-    const { trackingCode, orderId, job_id, shop_id } = selectedOrderToPrint;
+    const { job_id, shop_id } = selectedOrderToPrint;
 
     // Shopee URL logic: If we have both IDs, try to open Shopee Print Page
     if (job_id && shop_id && job_id !== 'null' && shop_id !== 'null') {
@@ -659,8 +660,7 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
         const newWindow = window.open(shopee_print_url, '_blank');
         
         if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
-          addToast("Trình duyệt đã chặn cửa sổ bật lên. Vui lòng cho phép trình duyệt mở tab mới hoặc nhấn 'Mở tab mới' ở trên.", "error");
-          setIsPrinting(false);
+          console.warn("[PDFUpload] Popup blocked, using fallback template");
         } else {
           addToast("Đang chuyển sang trang in Shopee...", "success");
           setTimeout(() => {
@@ -668,19 +668,17 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
             setIsPrinting(false);
             if (onScreenChange) onScreenChange('reprint');
           }, 800);
+          return;
         }
-        return;
       } catch (err) {
         console.error("[PDFUpload] Opening Shopee print URL failed", err);
-        setIsPrinting(false);
       }
     }
 
     // Fallback logic: Use system thermal template (window.print)
-    console.log('[PDFUpload] No Shopee print IDs found, falling back to system thermal template');
+    console.log('[PDFUpload] No Shopee print IDs found or blocked, falling back to system thermal template');
     
-    // Give more time for the portal to mount and images to fully render
-    setTimeout(() => {
+    const attemptPrint = () => {
       try {
         window.focus();
         window.print();
@@ -689,9 +687,26 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
         addToast("Không thể in. Vui lòng thử lại.", "error");
       } finally {
         // Reset state after a delay to ensure print dialog has finished
-        setTimeout(() => setIsPrinting(false), 1000);
+        setTimeout(() => {
+          setIsPrinting(false);
+          setPrintReady(false);
+        }, 1500);
       }
-    }, 1200);
+    };
+
+    if (printReady) {
+      attemptPrint();
+    } else {
+      // Wait for the ready signal from ThermalLabel
+      let checkCount = 0;
+      const checker = setInterval(() => {
+        checkCount++;
+        if (printReady || checkCount > 20) {
+          clearInterval(checker);
+          attemptPrint();
+        }
+      }, 200);
+    }
   };
 
   return (
@@ -1471,25 +1486,14 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
                 <div className="flex-grow overflow-y-auto p-4 md:p-8 bg-surface-container-low flex justify-center">
                   <div 
                     ref={printRef}
-                    className="bg-white shadow-2xl border border-surface-container overflow-hidden sticky top-0 flex items-center justify-center" 
+                    className="bg-white shadow-2xl border border-surface-container overflow-hidden sticky top-0 flex items-center justify-center p-0" 
                     style={{ width: '100mm', height: '150mm', minWidth: '100mm', minHeight: '150mm' }}
                   >
-                    {/* Priority PDF Iframe Preview for Thermal Label */}
-                    {(() => {
-                      const pdfUrl = selectedOrderToPrint.pdfUrl || selectedOrderToPrint.image_url;
-                      const isPDF = pdfUrl && (pdfUrl.toLowerCase().includes('.pdf') || pdfUrl.includes('application/pdf') || pdfUrl.includes('blob:'));
-                      
-                      if (isPDF) {
-                        return (
-                          <iframe 
-                            src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`} 
-                            className="w-full h-full border-none"
-                            title="PDF Preview"
-                          />
-                        );
-                      }
-                      return <ThermalLabel order={selectedOrderToPrint} />;
-                    })()}
+                    {/* Use ThermalLabel for both preview and print for consistency and PDF rendering reliability */}
+                    <ThermalLabel 
+                      order={selectedOrderToPrint} 
+                      onReady={() => setPrintReady(true)}
+                    />
                   </div>
                 </div>
 
@@ -1517,7 +1521,12 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
         {/* Persistent Hidden Printable Area - Using Portal to body for clean isolation */}
         {createPortal(
           <div className="print-only">
-            {selectedOrderToPrint && <ThermalLabel order={selectedOrderToPrint} />}
+            {selectedOrderToPrint && (
+              <ThermalLabel 
+                order={selectedOrderToPrint} 
+                onReady={() => setPrintReady(true)}
+              />
+            )}
           </div>,
           document.body
         )}
