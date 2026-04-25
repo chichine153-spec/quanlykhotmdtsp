@@ -214,8 +214,8 @@ export class GeminiService {
     let attempt = 0;
     let currentKey = useKey;
     
-    // Model rotation: Try flash-preview first, then stable flash
-    const models = ["gemini-3-flash-preview", "gemini-1.5-flash", "gemini-2.0-flash-exp"];
+    // Model rotation: Prioritize stable and experimentally supported models
+    const models = ["gemini-1.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b"];
     let modelIdx = 0;
 
     while (attempt < maxRetries) {
