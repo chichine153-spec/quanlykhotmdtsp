@@ -9,12 +9,15 @@ export const printComponent = async (Component: React.ReactElement, title: strin
   return new Promise<void>((resolve) => {
     // 1. Create hidden iframe but technically visible for print engine
     const iframe = document.createElement('iframe');
-    iframe.style.position = 'absolute';
-    iframe.style.left = '-9999px';
-    iframe.style.top = '-9999px';
+    iframe.style.position = 'fixed';
+    iframe.style.left = '0';
+    iframe.style.top = '0';
     iframe.style.width = '100mm';
     iframe.style.height = '150mm';
     iframe.style.border = '0';
+    iframe.style.zIndex = '-9999';
+    iframe.style.opacity = '0';
+    iframe.style.pointerEvents = 'none';
     iframe.title = title;
     
     document.body.appendChild(iframe);
@@ -38,8 +41,8 @@ export const printComponent = async (Component: React.ReactElement, title: strin
           <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
           <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Be+Vietnam+Pro:wght@400;700;900&display=swap" rel="stylesheet">
         </head>
-        <body style="margin: 0; padding: 0; background: white;">
-          <div id="print-root" class="print-only"></div>
+        <body style="margin: 0; padding: 0; background-color: white !important;">
+          <div id="print-engine-label-root"></div>
         </body>
       </html>
     `);
@@ -56,20 +59,31 @@ export const printComponent = async (Component: React.ReactElement, title: strin
     // 4. Add specialized print styles that OVERRIDE everything
     const printStyles = document.createElement('style');
     printStyles.innerHTML = `
-      #print-root, #print-root * {
+      #print-engine-label-root, #print-engine-label-root * {
         visibility: visible !important;
         opacity: 1 !important;
         box-sizing: border-box !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
       }
       
-      /* Reset specifically for table-related elements */
-      #print-root table { display: table !important; }
-      #print-root tr { display: table-row !important; }
-      #print-root td, #print-root th { display: table-cell !important; }
-      #print-root tbody { display: table-row-group !important; }
-      
-      /* Barcode fix: Barcode renders as SVG usually */
-      #print-root svg {
+      .thermal-label {
+        background-color: white !important;
+        color: black !important;
+        display: block !important;
+        width: 100mm !important;
+        height: 150mm !important;
+        margin: 0 !important;
+        padding: 6mm !important;
+      }
+
+      #print-engine-label-root table { display: table !important; width: 100% !important; }
+      #print-engine-label-root tr { display: table-row !important; }
+      #print-engine-label-root td, #print-engine-label-root th { display: table-cell !important; }
+
+      #print-engine-label-root svg, 
+      #print-engine-label-root canvas, 
+      #print-engine-label-root img {
         display: block !important;
         max-width: 100% !important;
         margin: 0 auto !important;
@@ -78,35 +92,18 @@ export const printComponent = async (Component: React.ReactElement, title: strin
       body { 
         margin: 0 !important; 
         padding: 0 !important; 
-        background: white !important;
-        width: 100mm !important;
-        height: 150mm !important;
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
+        background-color: white !important;
       }
       
-      #print-root {
-        display: block !important;
+      #print-engine-label-root {
         width: 100mm !important;
         height: 150mm !important;
         margin: 0 !important;
         padding: 0 !important;
-        background: white !important;
+        background-color: white !important;
         overflow: hidden !important;
       }
 
-      .thermal-label {
-        background: white !important;
-        color: black !important;
-        width: 100mm !important;
-        height: 150mm !important;
-        padding: 6mm !important;
-      }
-      
-      .thermal-label * {
-        font-family: Inter, "Be Vietnam Pro", sans-serif !important;
-      }
-      
       @page {
         size: 100mm 150mm;
         margin: 0;
@@ -115,7 +112,7 @@ export const printComponent = async (Component: React.ReactElement, title: strin
     head.appendChild(printStyles);
 
     // 5. Render component
-    const container = iframeDoc.getElementById('print-root');
+    const container = iframeDoc.getElementById('print-engine-label-root');
     if (!container) {
       document.body.removeChild(iframe);
       resolve();

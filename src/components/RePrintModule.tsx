@@ -925,10 +925,16 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
       flexDirection: 'column',
       fontSize: '12pt',
       color: 'black',
-      backgroundColor: 'white'
+      backgroundColor: 'white',
+      minHeight: '150mm',
+      fontFamily: '"Inter", "Be Vietnam Pro", sans-serif'
     }}>
       <style>
         {`
+          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Be+Vietnam+Pro:wght@400;700;900&display=swap');
+          .thermal-label * {
+             font-family: "Inter", "Be Vietnam Pro", sans-serif !important;
+          }
           .thermal-label table td {
              border-top: 1px solid black;
           }
