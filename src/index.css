@@ -131,16 +131,22 @@
     padding: 0 !important;
   }
 
-  /* 6. Fix for image and canvas display - make sure it fills the area */
+  /* 6. Fix for image and canvas display - ensure they are visible but not forced to full label size */
   .print-only img,
   .print-only canvas,
-  .print-only iframe,
+  .print-only svg {
+    max-width: 100% !important;
+    height: auto !important;
+    display: block !important;
+    margin: 0 auto !important;
+  }
+
   .print-only .thermal-label-container,
   .print-only .thermal-label {
     display: block !important;
     width: 100mm !important;
     height: 150mm !important;
-    object-fit: fill !important;
+    overflow: hidden !important;
     margin: 0 !important;
     padding: 0 !important;
     border: none !important;
