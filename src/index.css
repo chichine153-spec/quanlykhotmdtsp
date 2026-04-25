@@ -107,10 +107,14 @@
 
   /* 5. Force show our print portal at the very top */
   body > .print-only,
-  .print-only {
+  .print-only,
+  .print-only * {
     display: block !important;
     visibility: visible !important;
     opacity: 1 !important;
+  }
+
+  .print-only {
     position: absolute !important;
     left: 0 !important;
     top: 0 !important;
@@ -118,14 +122,22 @@
     height: 150mm !important;
     z-index: 2147483647 !important;
     background: #fff !important;
+    margin: 0 !important;
+    padding: 0 !important;
   }
 
-  /* 6. Fix for image display - make sure it fills the area */
-  .print-only img {
+  /* 6. Fix for image and canvas display - make sure it fills the area */
+  .print-only img,
+  .print-only canvas,
+  .print-only .thermal-label-container,
+  .print-only .thermal-label {
     display: block !important;
     width: 100mm !important;
     height: 150mm !important;
     object-fit: fill !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
   }
 
   @page {

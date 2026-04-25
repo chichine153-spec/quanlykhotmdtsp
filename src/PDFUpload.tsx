@@ -632,7 +632,7 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
   };
 
   const [isPrinting, setIsPrinting] = React.useState(false);
-  const [printReady, setPrintReady] = React.useState(false);
+  const printReadyRef = React.useRef(false);
 
   const handlePrint = async () => {
     if (!selectedOrderToPrint) {
@@ -679,30 +679,35 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
     console.log('[PDFUpload] No Shopee print IDs found or blocked, falling back to system thermal template');
     
     const attemptPrint = () => {
-      try {
-        window.focus();
-        window.print();
-      } catch (err) {
-        console.error("[PDFUpload] System print failed", err);
-        addToast("Không thể in. Vui lòng thử lại.", "error");
-      } finally {
-        // Reset state after a delay to ensure print dialog has finished
-        setTimeout(() => {
-          setIsPrinting(false);
-          setPrintReady(false);
-        }, 1500);
-      }
+      // Small additional delay to ensure browser has painted the current frame
+      setTimeout(() => {
+        try {
+          window.focus();
+          window.print();
+        } catch (err) {
+          console.error("[PDFUpload] System print failed", err);
+          addToast("Không thể in. Vui lòng thử lại.", "error");
+        } finally {
+          // Reset state after a delay to ensure print dialog has finished
+          setTimeout(() => {
+            setIsPrinting(false);
+            printReadyRef.current = false;
+          }, 1500);
+        }
+      }, 500);
     };
 
-    if (printReady) {
+    if (printReadyRef.current) {
       attemptPrint();
     } else {
       // Wait for the ready signal from ThermalLabel
       let checkCount = 0;
       const checker = setInterval(() => {
         checkCount++;
-        if (printReady || checkCount > 20) {
+        console.log(`[PDFUpload] Waiting for print readiness... (try ${checkCount})`);
+        if (printReadyRef.current || checkCount > 30) {
           clearInterval(checker);
+          if (!printReadyRef.current) console.warn('[PDFUpload] Print readiness timed out, attempting anyway');
           attemptPrint();
         }
       }, 200);
@@ -1492,7 +1497,7 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
                     {/* Use ThermalLabel for both preview and print for consistency and PDF rendering reliability */}
                     <ThermalLabel 
                       order={selectedOrderToPrint} 
-                      onReady={() => setPrintReady(true)}
+                      onReady={() => { printReadyRef.current = true; }}
                     />
                   </div>
                 </div>
@@ -1524,7 +1529,7 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
             {selectedOrderToPrint && (
               <ThermalLabel 
                 order={selectedOrderToPrint} 
-                onReady={() => setPrintReady(true)}
+                onReady={() => { printReadyRef.current = true; }}
               />
             )}
           </div>,

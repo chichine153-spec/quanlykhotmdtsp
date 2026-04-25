@@ -62,7 +62,7 @@ export default function RePrintModule() {
   const printRef = React.useRef<HTMLDivElement>(null);
 
   const [isPrinting, setIsPrinting] = React.useState(false);
-  const [printReady, setPrintReady] = React.useState(false);
+  const printReadyRef = React.useRef(false);
 
   const handleThermalPrint = async () => {
     if (!orderToPrint) {
@@ -108,32 +108,36 @@ export default function RePrintModule() {
     console.log('[RePrintModule] No Shopee print IDs found or blocked, falling back to system thermal template');
     
     // Give more time for the portal to mount and images to fully render
-    // Use a longer delay or wait for ready signal
     const attemptPrint = () => {
-      try {
-        window.focus();
-        window.print();
-      } catch (err) {
-        console.error("[RePrintModule] System print failed", err);
-        alert("Không thể thực hiện in ấn. Vui lòng thử lại.");
-      } finally {
-        // Reset state after a delay to ensure print dialog has finished
-        setTimeout(() => {
-          setIsPrinting(false);
-          setPrintReady(false);
-        }, 1500);
-      }
+      // Small additional delay to ensure browser has painted the current frame
+      setTimeout(() => {
+        try {
+          window.focus();
+          window.print();
+        } catch (err) {
+          console.error("[RePrintModule] System print failed", err);
+          alert("Không thể thực hiện in ấn. Vui lòng thử lại.");
+        } finally {
+          // Reset state after a delay to ensure print dialog has finished
+          setTimeout(() => {
+            setIsPrinting(false);
+            printReadyRef.current = false;
+          }, 1500);
+        }
+      }, 500);
     };
 
-    if (printReady) {
+    if (printReadyRef.current) {
       attemptPrint();
     } else {
       // Wait for the ready signal from ThermalLabel with a limit
       let checkCount = 0;
       const checker = setInterval(() => {
         checkCount++;
-        if (printReady || checkCount > 20) { // Max 4 seconds
+        console.log(`[RePrintModule] Waiting for print readiness... (try ${checkCount})`);
+        if (printReadyRef.current || checkCount > 30) { // Max 6 seconds
           clearInterval(checker);
+          if (!printReadyRef.current) console.warn('[RePrintModule] Print readiness timed out, attempting anyway');
           attemptPrint();
         }
       }, 200);
@@ -713,7 +717,7 @@ export default function RePrintModule() {
                   {/* Use ThermalLabel for both preview and print for consistency and PDF rendering reliability */}
                   <ThermalLabel 
                     order={orderToPrint} 
-                    onReady={() => setPrintReady(true)}
+                    onReady={() => { printReadyRef.current = true; }}
                   />
                 </div>
               </div>
@@ -742,7 +746,7 @@ export default function RePrintModule() {
                 {orderToPrint && (
                   <ThermalLabel 
                     order={orderToPrint} 
-                    onReady={() => setPrintReady(true)}
+                    onReady={() => { printReadyRef.current = true; }}
                   />
                 )}
               </div>,
@@ -861,7 +865,7 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
 
   if ((isImage || (isPDF && !imageError)) && !imageError && !forceFallback) {
     return (
-      <div className="thermal-label-container bg-white flex flex-col items-center justify-center p-0 overflow-hidden" 
+      <div className="thermal-label-container bg-white flex flex-col items-center justify-center p-0 overflow-hidden relative" 
            style={{ width: '100mm', height: '150mm' }}>
         {isImage ? (
           <img 
@@ -900,44 +904,6 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
         >
           Dùng mẫu in hệ thống
         </button>
-        <style>
-          {`
-            @media print {
-              @page { 
-                size: 100mm 150mm !important; 
-                margin: 0 !important; 
-              }
-              html, body {
-                margin: 0 !important; 
-                padding: 0 !important; 
-                width: 100mm !important;
-                height: 150mm !important;
-                background: #fff !important;
-              }
-              .thermal-label-container { 
-                width: 100mm !important; 
-                height: 150mm !important; 
-                display: flex !important;
-                align-items: center !important;
-                justify-content: center !important;
-                padding: 0 !important;
-                margin: 0 !important;
-                background: white !important;
-                overflow: hidden !important;
-                position: fixed !important;
-                top: 0 !important;
-                left: 0 !important;
-                z-index: 9999 !important;
-              }
-              img, canvas { 
-                width: 100mm !important; 
-                height: 150mm !important; 
-                display: block !important; 
-                object-fit: fill !important;
-              }
-            }
-          `}
-        </style>
       </div>
     );
   }
@@ -951,7 +917,7 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
     : '';
 
   return (
-    <div className="thermal-label text-black font-sans bg-white" style={{ 
+    <div className="thermal-label text-black font-sans bg-white relative" style={{ 
       width: '100mm', 
       height: '150mm', 
       padding: '6mm',
@@ -962,29 +928,6 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
     }}>
       <style>
         {`
-          @media print {
-            @page {
-              size: 100mm 150mm;
-              margin: 0;
-            }
-            body {
-              margin: 0 !important;
-              padding: 0 !important;
-              width: 100mm !important;
-              height: 150mm !important;
-              -webkit-print-color-adjust: exact;
-            }
-            .thermal-label {
-              width: 100mm !important;
-              height: 150mm !important;
-              padding: 6mm !important;
-              margin: 0 !important;
-              background: white !important;
-              box-sizing: border-box !important;
-            }
-            /* Hide browser default header/footer if possible */
-            header, footer { display: none !important; }
-          }
           .thermal-label table td {
              border-top: 1px solid black;
           }
