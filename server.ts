@@ -19,23 +19,48 @@ async function startServer() {
       return res.status(400).json({ error: "Missing API Key" });
     }
 
-    try {
-      const genAI = new GoogleGenAI({ apiKey });
-      const result = await genAI.models.generateContent({
-        model: model || "gemini-1.5-flash",
-        contents: typeof contents === 'string' ? [{ role: 'user', parts: [{ text: contents }]}] : contents,
-        config: {
-          systemInstruction: systemInstruction,
-          ...config?.generationConfig
-        }
-      });
+    const tryGenerate = async (modelName: string) => {
+      try {
+        const ai = new GoogleGenAI({ apiKey });
+        
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: typeof contents === 'string' ? [{ role: 'user', parts: [{ text: contents }]}] : contents,
+          config: {
+            systemInstruction: typeof systemInstruction === 'string' ? systemInstruction : undefined,
+            ...config?.generationConfig
+          }
+        });
 
-      res.json({ text: result.text });
+        return response.text;
+      } catch (error: any) {
+        throw error;
+      }
+    };
+
+    try {
+      // Try requested model first
+      const text = await tryGenerate(model || "gemini-3-flash-preview");
+      res.json({ text });
     } catch (error: any) {
       console.error('Gemini Proxy Error:', error.message);
-      res.status(error.response?.status || 500).json({ 
+      
+      // If 404 (model not found), try fallbacks
+      const isNotFound = error.message?.includes('404') || error.status === 404 || error.message?.includes('not found');
+      
+      if (isNotFound) {
+        console.log('[Gemini Proxy] Model not found, trying fallback to gemini-1.5-flash-8b...');
+        try {
+          const fallbackText = await tryGenerate("gemini-1.5-flash-8b");
+          return res.json({ text: fallbackText });
+        } catch (fallbackError: any) {
+          console.error('[Gemini Proxy] Fallback failed:', fallbackError.message);
+        }
+      }
+
+      res.status(error.status || 500).json({ 
         error: error.message,
-        details: error.response?.data
+        details: error.response?.data || error.stack
       });
     }
   });

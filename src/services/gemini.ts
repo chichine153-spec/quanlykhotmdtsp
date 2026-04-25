@@ -4,9 +4,6 @@ import { doc, updateDoc, increment } from 'firebase/firestore';
 import { db } from '../firebase';
 import { toast } from 'react-hot-toast';
 
-// Safe access to environment variables in both Node and Browser
-const GEMINI_API_KEY = (typeof process !== 'undefined' ? process.env?.GEMINI_API_KEY : '') || '';
-
 /**
  * Centralized Gemini API configuration and initialization.
  */
@@ -43,7 +40,7 @@ export class GeminiService {
 
       // 3. Fallback to other possible names or env
       if (!apiKey) {
-        apiKey = localStorage.getItem('global_gemini_key') || GEMINI_API_KEY;
+        apiKey = localStorage.getItem('global_gemini_key') || process.env.GEMINI_API_KEY || '';
       }
     }
 
@@ -111,7 +108,7 @@ export class GeminiService {
       responseSchema 
     } = params;
 
-    const useKey = shopKey || fallbackKey || GEMINI_API_KEY;
+    const useKey = shopKey || fallbackKey || process.env.GEMINI_API_KEY || '';
     
     if (!useKey) {
       throw new Error('MISSING_API_KEY');
@@ -122,8 +119,8 @@ export class GeminiService {
     let attempt = 0;
     let currentKey = useKey;
     
-    // Model rotation: Prioritize stable and experimentally supported models
-    const models = ["gemini-1.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b"];
+    // Model rotation: Prioritize models configured for the modern SDK
+    const models = ["gemini-3-flash-preview", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b"];
     let modelIdx = 0;
 
     while (attempt < maxRetries) {
@@ -179,21 +176,22 @@ export class GeminiService {
           }
         };
 
-        const callDirectWithModel = async (apiKey: string, model: string) => {
-          console.log(`[GeminiService] Calling direct with model: ${model}`);
+        const callDirectWithModel = async (apiKey: string, modelName: string) => {
+          console.log(`[GeminiService] Calling direct with model: ${modelName}`);
           try {
-            const genAI = new GoogleGenAI({ apiKey });
-            const modelToUse = model.replace('-preview', ''); // Some clients don't like -preview in SDK
-            const result = await genAI.models.generateContent({
-              model: modelToUse,
-              contents: typeof prompt === 'string' ? [{ role: 'user', parts: [{ text: prompt }]}] : prompt as any,
+            const ai = new GoogleGenAI({ apiKey });
+            
+            const response = await ai.models.generateContent({
+              model: modelName,
+              contents: typeof prompt === 'string' ? prompt : (prompt as any),
               config: {
                 systemInstruction: typeof systemInstruction === 'string' ? systemInstruction : undefined,
                 responseMimeType: responseMimeType as any,
                 responseSchema
               }
             });
-            return result.text || '';
+
+            return response.text || '';
           } catch (directErr: any) {
             const errStr = directErr.message || '';
             if (errStr.includes('429') || errStr.includes('Quota') || errStr.includes('RESOURCE_EXHAUSTED')) throw new Error('GEMINI_QUOTA_EXCEEDED');

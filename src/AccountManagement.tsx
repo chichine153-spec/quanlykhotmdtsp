@@ -183,13 +183,13 @@ export default function AccountManagement() {
       if (!ai) throw new Error('Không thể khởi tạo Gemini instance');
       
       const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-3-flash-preview",
         contents: "Hello, are you active? Reply with OK only.",
       });
       
       const text = response.text || '';
       
-      if (text.includes('OK')) {
+      if (text.toUpperCase().includes('OK')) {
         toast.success('API Key hoạt động tốt!');
       } else {
         toast.error(`Kết quả không mong đợi: ${text}`);
@@ -199,8 +199,8 @@ export default function AccountManagement() {
       let errorMsg = error.message || 'Lỗi không xác định';
       if (errorMsg.includes('429') || errorMsg.includes('quota')) {
         errorMsg = 'API Key này đã HẾT HẠN MỨC (429 Quota Exceeded). Hãy tạo mã mới!';
-      } else if (errorMsg.includes('400') || errorMsg.includes('API_KEY_INVALID')) {
-        errorMsg = 'API Key KHÔNG HỢP LỆ. Vui lòng kiểm tra lại.';
+      } else if (errorMsg.includes('400') || errorMsg.includes('API_KEY_INVALID') || errorMsg.includes('systemInstruction')) {
+        errorMsg = 'API Key KHÔNG HỢP LỆ hoặc định dạng sai. Vui lòng kiểm tra lại.';
       }
       toast.error(`Lỗi: ${errorMsg}`);
     } finally {
@@ -221,7 +221,7 @@ export default function AccountManagement() {
       if (ai) {
         try {
           const response = await ai.models.generateContent({
-            model: "gemini-1.5-flash",
+            model: "gemini-3-flash-preview",
             contents: "hi",
           });
           if (response.text) isValid = true;
