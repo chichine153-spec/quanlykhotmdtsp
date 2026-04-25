@@ -916,7 +916,7 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
   const barcodeValue = String(order.trackingCode || order.tracking_number || '').trim();
 
   return (
-    <div className="thermal-label text-black font-sans bg-white relative" style={{ 
+    <div className="thermal-label text-black bg-white relative" style={{ 
       width: '100mm', 
       height: '150mm', 
       padding: '5mm',
@@ -927,19 +927,19 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
       color: '#000000',
       backgroundColor: '#ffffff',
       minHeight: '150mm',
-      fontFamily: '"Inter", "Be Vietnam Pro", sans-serif'
+      fontFamily: 'Arial, sans-serif'
     }}>
       <style>
         {`
-          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Be+Vietnam+Pro:wght@400;700;900&display=swap');
           .thermal-label * {
-             font-family: "Inter", "Be Vietnam Pro", sans-serif !important;
+             font-family: Arial, "Helvetica Neue", Helvetica, sans-serif !important;
              color: #000000 !important;
-             -webkit-font-smoothing: antialiased;
-             -moz-osx-font-smoothing: grayscale;
+             font-weight: 900 !important;
+             -webkit-font-smoothing: initial !important;
+             -moz-osx-font-smoothing: initial !important;
           }
           .thermal-label table td {
-             border-top: 2.5px solid #000000;
+             border-top: 3px solid #000000;
           }
           @media print {
             body { background: white !important; }
@@ -954,20 +954,20 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
       
       {/* Top Header */}
       <div className="flex justify-between items-start mb-1 uppercase">
-        <div className="text-[11px] font-black">Vận đơn: {barcodeValue || 'N/A'}</div>
-        <div className="text-[11px] font-black">{timeStr} {dateStr}</div>
+        <div className="text-[12px] font-black">Vận đơn: {barcodeValue || 'N/A'}</div>
+        <div className="text-[12px] font-black">{timeStr} {dateStr}</div>
       </div>
 
-      <div className="flex justify-between items-end mb-2 border-b-[3px] border-black pb-2">
+      <div className="flex justify-between items-end mb-2 border-b-[4px] border-black pb-2">
         <div>
-          <div className="text-[42px] font-black tracking-tighter leading-none italic uppercase -ml-1">Shopee</div>
-          <div className="text-[28px] font-black italic tracking-tighter leading-none mt-1">SPX EXPRESS</div>
-          <div className="text-[12px] font-black mt-2">Mã vận đơn: {barcodeValue}</div>
-          <div className="text-[12px] font-black">Mã đơn hàng: {order.orderId || '2604051U45Y9GT'}</div>
+          <div className="text-[48px] font-black tracking-tighter leading-none italic uppercase -ml-1">Shopee</div>
+          <div className="text-[32px] font-black italic tracking-tighter leading-none mt-1">SPX EXPRESS</div>
+          <div className="text-[13px] font-black mt-2">Mã vận đơn: {barcodeValue}</div>
+          <div className="text-[13px] font-black">Mã đơn hàng: {order.orderId || '2604051U45Y9GT'}</div>
         </div>
         <div className="flex flex-col items-end">
-           <div className="text-[10px] font-black mb-1">Đến:</div>
-           <div className="text-[36px] font-black border-[4.5px] border-black px-4 py-1.5 bg-white leading-none">
+           <div className="text-[12px] font-black mb-1">Đến:</div>
+           <div className="text-[42px] font-black border-[5px] border-black px-5 py-2 bg-white leading-none">
              {order.region || 'ĐN-01'}
            </div>
         </div>

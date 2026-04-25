@@ -37,13 +37,11 @@ export const printComponent = async (Component: React.ReactElement, title: strin
       <html>
         <head>
           <title>${title}</title>
-          <link rel="preconnect" href="https://fonts.googleapis.com">
-          <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-          <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Be+Vietnam+Pro:wght@400;700;900&display=swap" rel="stylesheet">
           <style>
-            /* Force visibility for the print engine specifically */
+            /* Force Arial for the print engine */
             @media print {
-              html, body {
+              html, body, body * {
+                font-family: Arial, Helvetica, sans-serif !important;
                 visibility: visible !important;
                 display: block !important;
                 background-color: white !important;
