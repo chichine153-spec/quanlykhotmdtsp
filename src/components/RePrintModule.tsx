@@ -919,7 +919,7 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
     <div className="thermal-label text-black font-sans bg-white relative" style={{ 
       width: '100mm', 
       height: '150mm', 
-      padding: '6mm',
+      padding: '5mm',
       boxSizing: 'border-box',
       display: 'flex',
       flexDirection: 'column',
@@ -939,48 +939,54 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
              -moz-osx-font-smoothing: grayscale;
           }
           .thermal-label table td {
-             border-top: 1.5px solid #000000;
+             border-top: 2.5px solid #000000;
           }
           @media print {
             body { background: white !important; }
-            * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+            * { 
+              -webkit-print-color-adjust: exact !important; 
+              print-color-adjust: exact !important;
+              color: #000000 !important;
+            }
           }
         `}
       </style>
       
       {/* Top Header */}
-      <div className="flex justify-between items-start mb-0.5">
-        <div className="text-[10px] font-black">Vận đơn: {barcodeValue || 'N/A'}</div>
+      <div className="flex justify-between items-start mb-1 uppercase">
+        <div className="text-[11px] font-black">Vận đơn: {barcodeValue || 'N/A'}</div>
         <div className="text-[11px] font-black">{timeStr} {dateStr}</div>
       </div>
 
-      <div className="flex justify-between items-end mb-1">
+      <div className="flex justify-between items-end mb-2 border-b-[3px] border-black pb-2">
         <div>
-          <div className="text-2xl font-black tracking-tighter leading-none">Shopee</div>
-          <div className="text-[10px] font-black mt-1">Ngày đặt: {dateStr}</div>
+          <div className="text-[42px] font-black tracking-tighter leading-none italic uppercase -ml-1">Shopee</div>
+          <div className="text-[28px] font-black italic tracking-tighter leading-none mt-1">SPX EXPRESS</div>
+          <div className="text-[12px] font-black mt-2">Mã vận đơn: {barcodeValue}</div>
+          <div className="text-[12px] font-black">Mã đơn hàng: {order.orderId || '2604051U45Y9GT'}</div>
         </div>
-        <div className="text-3xl font-black border-[3px] border-black px-4 py-1.5 bg-white">
-          {order.region || 'Đồng Nai'}
+        <div className="flex flex-col items-end">
+           <div className="text-[10px] font-black mb-1">Đến:</div>
+           <div className="text-[36px] font-black border-[4.5px] border-black px-4 py-1.5 bg-white leading-none">
+             {order.region || 'ĐN-01'}
+           </div>
         </div>
       </div>
 
       {/* Barcode Section */}
-      <div className="flex flex-col items-center py-4 border-y-[2.5px] border-black mb-2 overflow-hidden">
+      <div className="flex flex-col items-center py-4 border-b-[3px] border-black mb-3 overflow-hidden">
         {barcodeValue ? (
           <>
-            <div className="scale-x-[1.4] scale-y-[1.6] origin-center -my-2" style={{ display: 'block' }}>
+            <div className="scale-x-[1.4] scale-y-[1.8] origin-center -my-2" style={{ display: 'block' }}>
               <Barcode 
                 value={barcodeValue} 
                 width={1.6} 
-                height={50} 
-                fontSize={12} 
+                height={55} 
+                fontSize={14} 
                 margin={0}
                 displayValue={false}
                 lineColor="#000000"
               />
-            </div>
-            <div className="text-lg font-black tracking-[0.3em] mt-3">
-              {barcodeValue}
             </div>
           </>
         ) : (
@@ -988,70 +994,87 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
         )}
       </div>
 
-      {/* QR Code */}
-      <div className="flex justify-center mb-3">
-        {barcodeValue && <QRCodeSVG value={barcodeValue} size={140} fgColor="#000000" bgColor="#ffffff" />}
-      </div>
-
-      {/* Recipient Info */}
-      <div className="border-t-[2.5px] border-black pt-2.5 mb-2">
-        <div className="text-[11px] font-black uppercase mb-1">Người nhận:</div>
-        <div className="text-xl font-black mb-1 leading-tight">{order.recipientName || 'KHÁCH HÀNG'}</div>
-        {displayPhone && <div className="text-base font-black mb-1">{displayPhone}</div>}
-        <div className="text-[13px] font-bold leading-snug mt-1 max-h-[3.5em] overflow-hidden">
-          {order.recipientAddress || 'Vui lòng xem địa chỉ chi tiết trên vận đơn gốc'}
+      {/* Main Info Grid */}
+      <div className="grid grid-cols-2 gap-2 mb-3 border-b-[3px] border-black pb-3">
+        <div className="border-r-[2.5px] border-dashed border-black pr-2">
+          <div className="text-[11px] font-black mb-0.5 uppercase">Từ:</div>
+          <div className="text-[11px] font-black leading-tight">
+            {order.senderName || 'COSTA - THẾ GIỚI BÌNH NƯỚC'}<br />
+            {order.senderAddress || 'sn 27 thôn đông, Xã Vạn Ninh, Thành Phố Móng Cái, Quảng Ninh'}<br />
+            SĐT: {order.senderPhone || '84904029094'}
+          </div>
+        </div>
+        <div className="pl-2">
+          <div className="text-[11px] font-black mb-0.5 uppercase">Đến:</div>
+          <div className="text-[13px] font-black leading-tight">
+            {order.recipientName || 'KHÁCH HÀNG'}<br />
+            {order.recipientAddress || 'Vui lòng xem địa chỉ chi tiết trên vận đơn gốc'}<br />
+            {order.recipientEmail ? `Email: ${order.recipientEmail}` : ''}
+          </div>
         </div>
       </div>
 
-      {/* Item List Section */}
-      <div className="mt-1 flex-grow overflow-hidden border-t-[2px] border-black pt-1.5">
-        <div className="text-[11px] font-black uppercase mb-1.5 flex justify-between">
-          <span>Sản phẩm</span>
-          <span>SL</span>
-        </div>
-        <table className="w-full border-collapse">
-          <tbody>
-            {items.length > 0 ? (
-              items.slice(0, 5).map((item: any, idx: number) => (
-                <tr key={idx} className="border-t border-black">
-                  <td className="py-1.5 pr-2 align-top text-[12px]">
-                    <div className="font-black truncate max-w-[220px]">{item.sku}</div>
-                    <div className="text-[11px] font-bold italic truncate max-w-[220px]">{item.variant || ''}</div>
-                  </td>
-                  <td className="py-1.5 text-right align-top font-black text-base w-10">
-                    {item.quantity}
-                  </td>
-                </tr>
-              ))
-            ) : itemsString ? (
-              <tr className="border-t border-black">
-                <td colSpan={2} className="py-2.5 text-[11px] font-black leading-tight">
-                  {itemsString}
-                </td>
-              </tr>
-            ) : (
-              <tr className="border-t border-black">
-                <td colSpan={2} className="py-3 text-[11px] font-black italic text-center">
-                  Xem chi tiết trên ứng dụng Shopee
-                </td>
-              </tr>
-            )}
-            {items.length > 5 && (
-              <tr>
-                <td colSpan={2} className="text-[10px] font-black italic pt-1.5">...và {items.length - 5} sản phẩm khác</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+      {/* Middle Code Section */}
+      <div className="flex border-b-[3px] border-black mb-3">
+          <div className="flex-1 border-r-[3px] border-black p-2 flex flex-col items-center justify-center">
+             <div className="text-[34px] font-black uppercase tracking-tighter leading-none py-1">
+                {order.routeCode || 'CT-73-21-RG02'}
+             </div>
+          </div>
+          <div className="flex-1 p-2 flex flex-col items-center justify-center">
+             <div className="text-[30px] font-black uppercase tracking-tighter leading-none py-1">
+                {order.binCode || '1ANH-04'}
+             </div>
+          </div>
       </div>
 
-      {/* Footer */}
-      <div className="mt-auto pt-2.5 border-t-2 border-black flex justify-between items-center">
-        <div className="text-[8px] font-bold">Generated by ZENITH OMS</div>
-        <div className="flex items-center gap-2">
-           <div className="text-[9px] font-black">SPX Express</div>
-           <div className="text-sm font-black border-2 border-black px-2.5 py-1">SPX</div>
+      {/* QR & Secondary Info */}
+      <div className="flex gap-4 mb-3 border-b-[3px] border-black pb-3">
+        <div className="w-[145px] flex-shrink-0">
+          {barcodeValue && <QRCodeSVG value={barcodeValue} size={145} fgColor="#000000" bgColor="#ffffff" />}
+          <div className="text-[14px] font-black tracking-widest text-center mt-1 uppercase">
+             {order.routeCode?.split('-').pop() || 'MC03R'}
+          </div>
         </div>
+        <div className="flex-grow flex flex-col justify-start">
+           <div className="text-[12px] font-black border-b-[2.5px] border-dashed border-black pb-2">
+              <div className="uppercase">Nội dung hàng (Tổng SL sản phẩm: {items.reduce((acc: number, item: any) => acc + (item.quantity || 0), 0)})</div>
+              <div className="mt-1 line-clamp-4 leading-tight">
+                 {items.length > 0 
+                    ? items.map((i: any) => `${i.sku} (${i.variant || 'Mặc định'}): ${i.quantity}`).join(', ') 
+                    : itemsString || 'Xem chi tiết trên vận đơn gốc'}
+              </div>
+           </div>
+           <div className="mt-2">
+              <div className="text-[11px] font-black uppercase">Ngày đặt hàng:</div>
+               <div className="text-[20px] font-black mt-1 leading-none">{dateStr} {timeStr}</div>
+           </div>
+        </div>
+      </div>
+
+      {/* Recipient Details & COD */}
+      <div className="grid grid-cols-2 border-b-[3px] border-black pb-2 mb-2 flex-grow">
+         <div className="border-r-[3px] border-black pr-2">
+             <div className="text-[11px] font-black uppercase">Tiền thu người nhận:</div>
+             <div className="text-[32px] font-black mt-1 leading-none">
+                {order.totalAmount ? Number(order.totalAmount).toLocaleString('vi-VN') + ' VND' : '179,536 VND'}
+             </div>
+             <div className="text-[13px] font-black mt-3 leading-tight">
+                Chỉ dẫn giao hàng: <b>ĐƯỢC ĐỒNG KIỂM</b>
+             </div>
+         </div>
+         <div className="pl-2 flex flex-col justify-between">
+             <div>
+                <div className="text-[11px] font-black uppercase">Khối lượng tối đa: {order.weight || '500g'}</div>
+                <div className="text-[11px] font-black uppercase mt-2">Chữ ký người nhận:</div>
+             </div>
+             <div className="text-[11px] font-black italic text-center pb-1">Xác nhận hàng nguyên vẹn, không móp/méo, bể/vỡ</div>
+         </div>
+      </div>
+
+      <div className="flex justify-between items-center pt-1 mt-auto">
+          <div className="text-[10px] font-black italic">Giao hàng toàn quốc/ Chú ý: Mã vận đơn được tạo bởi ZENITH OMS</div>
+          <div className="text-sm font-black border-2 border-black px-3 py-0.5">SPX</div>
       </div>
 
     </div>
