@@ -30,7 +30,7 @@ export const printComponent = async (Component: React.ReactElement, title: strin
       return;
     }
 
-    // Write a basic HTML structure
+    // Write a robust HTML structure with explicit reset for print media
     iframeDoc.open();
     iframeDoc.write(`
       <!DOCTYPE html>
@@ -40,23 +40,46 @@ export const printComponent = async (Component: React.ReactElement, title: strin
           <link rel="preconnect" href="https://fonts.googleapis.com">
           <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
           <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Be+Vietnam+Pro:wght@400;700;900&display=swap" rel="stylesheet">
+          <style>
+            /* Force visibility for the print engine specifically */
+            @media print {
+              html, body {
+                visibility: visible !important;
+                display: block !important;
+                background-color: white !important;
+              }
+              body * {
+                visibility: visible !important;
+              }
+              #print-engine-label-root {
+                display: block !important;
+                visibility: visible !important;
+              }
+            }
+            
+            body {
+              margin: 0;
+              padding: 0;
+              background-color: white !important;
+            }
+          </style>
         </head>
-        <body style="margin: 0; padding: 0; background-color: white !important;">
+        <body>
           <div id="print-engine-label-root"></div>
         </body>
       </html>
     `);
     iframeDoc.close();
 
-    // 3. Inject styles from the main document
+    // 3. Inject styles from the main document (carefully)
     const head = iframeDoc.head;
     document.querySelectorAll('style, link[rel="stylesheet"]').forEach(style => {
-      // Don't re-inject the fonts we just added manually
+      // Avoid duplicating fonts or re-injecting the reset we just wrote
       if (style.tagName === 'LINK' && (style as HTMLLinkElement).href.includes('fonts.googleapis.com')) return;
       head.appendChild(style.cloneNode(true));
     });
 
-    // 4. Add specialized print styles that OVERRIDE everything
+    // 4. Add specialized print styles that OVERRIDE everything with max priority
     const printStyles = document.createElement('style');
     printStyles.innerHTML = `
       #print-engine-label-root, #print-engine-label-root * {
@@ -70,14 +93,15 @@ export const printComponent = async (Component: React.ReactElement, title: strin
       .thermal-label {
         background-color: white !important;
         color: black !important;
-        display: block !important;
+        display: flex !important;
+        flex-direction: column !important;
         width: 100mm !important;
         height: 150mm !important;
         margin: 0 !important;
         padding: 6mm !important;
       }
 
-      #print-engine-label-root table { display: table !important; width: 100% !important; }
+      #print-engine-label-root table { display: table !important; width: 100% !important; border-collapse: collapse !important; }
       #print-engine-label-root tr { display: table-row !important; }
       #print-engine-label-root td, #print-engine-label-root th { display: table-cell !important; }
 
@@ -86,13 +110,8 @@ export const printComponent = async (Component: React.ReactElement, title: strin
       #print-engine-label-root img {
         display: block !important;
         max-width: 100% !important;
+        height: auto !important;
         margin: 0 auto !important;
-      }
-
-      body { 
-        margin: 0 !important; 
-        padding: 0 !important; 
-        background-color: white !important;
       }
       
       #print-engine-label-root {
@@ -103,7 +122,7 @@ export const printComponent = async (Component: React.ReactElement, title: strin
         background-color: white !important;
         overflow: hidden !important;
       }
-
+      
       @page {
         size: 100mm 150mm;
         margin: 0;
@@ -123,37 +142,43 @@ export const printComponent = async (Component: React.ReactElement, title: strin
     root.render(Component);
 
     // 6. Wait for content to load
-    const images = iframeDoc.getElementsByTagName('img');
-    const imagePromises = Array.from(images).map(img => {
-      if (img.complete) return Promise.resolve();
-      return new Promise(resolveImg => {
-        img.onload = resolveImg;
-        img.onerror = resolveImg;
+    const checkReady = () => {
+      const images = iframeDoc.getElementsByTagName('img');
+      const imagePromises = Array.from(images).map(img => {
+        if (img.complete) return Promise.resolve();
+        return new Promise(resolveImg => {
+          img.onload = resolveImg;
+          img.onerror = resolveImg;
+        });
       });
-    });
 
-    // Wait for all images + a fixed safety delay for React rendering/Barcode gen
-    Promise.all(imagePromises).then(() => {
-      // Use requestAnimationFrame to ensure the browser has painted the content
-      window.requestAnimationFrame(() => {
-        setTimeout(() => {
-          try {
-            console.log('[PrintUtils] Triggering print command');
-            iframe.contentWindow?.focus();
-            iframe.contentWindow?.print();
-          } catch (err) {
-            console.error('[PrintUtils] Print failed:', err);
-          }
-          
-          // 8. Cleanup
-          setTimeout(() => {
-            if (document.body.contains(iframe)) {
-              document.body.removeChild(iframe);
-            }
-            resolve();
-          }, 1500); // Wait longer before removing iframe
-        }, 1200); // 1.2s safety margin after images load
+      Promise.all(imagePromises).then(() => {
+        // Multi-frame delay to ensure React commits and browser paints
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            setTimeout(() => {
+              try {
+                console.log('[PrintUtils] Triggering print command');
+                iframe.contentWindow?.focus();
+                iframe.contentWindow?.print();
+              } catch (err) {
+                console.error('[PrintUtils] Print failed:', err);
+              }
+              
+              // 8. Cleanup
+              setTimeout(() => {
+                if (document.body.contains(iframe)) {
+                  document.body.removeChild(iframe);
+                }
+                resolve();
+              }, 1200);
+            }, 1000); // 1s safety margin
+          });
+        });
       });
-    });
+    };
+
+    // Initial delay to let React start rendering before checking images
+    setTimeout(checkReady, 500);
   });
 };
