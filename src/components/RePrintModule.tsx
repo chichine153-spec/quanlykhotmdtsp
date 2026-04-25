@@ -913,6 +913,8 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
     ? rawPhone 
     : '';
 
+  const barcodeValue = String(order.trackingCode || order.tracking_number || '').trim();
+
   return (
     <div className="thermal-label text-black font-sans bg-white relative" style={{ 
       width: '100mm', 
@@ -921,19 +923,24 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
       boxSizing: 'border-box',
       display: 'flex',
       flexDirection: 'column',
-      fontSize: '12pt'
+      fontSize: '12pt',
+      color: 'black',
+      backgroundColor: 'white'
     }}>
       <style>
         {`
           .thermal-label table td {
              border-top: 1px solid black;
           }
+          @media print {
+            body { background: white !important; }
+          }
         `}
       </style>
       
       {/* Top Header */}
       <div className="flex justify-between items-start mb-0.5">
-        <div className="text-[9px] font-bold">Vận đơn: {order.trackingCode || order.tracking_number}</div>
+        <div className="text-[9px] font-bold">Vận đơn: {barcodeValue || 'N/A'}</div>
         <div className="text-[10px] font-black">{timeStr} {dateStr}</div>
       </div>
 
@@ -949,24 +956,30 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
 
       {/* Barcode Section */}
       <div className="flex flex-col items-center py-3 border-y-2 border-black mb-2 overflow-hidden">
-        <div className="scale-x-[1.3] scale-y-[1.4] origin-center -my-1">
-          <Barcode 
-            value={order.trackingCode || order.tracking_number || ''} 
-            width={1.6} 
-            height={45} 
-            fontSize={12} 
-            margin={0}
-            displayValue={false}
-          />
-        </div>
-        <div className="text-sm font-black tracking-[0.2em] mt-2">
-          {order.trackingCode || order.tracking_number}
-        </div>
+        {barcodeValue ? (
+          <>
+            <div className="scale-x-[1.3] scale-y-[1.4] origin-center -my-1" style={{ display: 'block' }}>
+              <Barcode 
+                value={barcodeValue} 
+                width={1.6} 
+                height={45} 
+                fontSize={12} 
+                margin={0}
+                displayValue={false}
+              />
+            </div>
+            <div className="text-sm font-black tracking-[0.2em] mt-2">
+              {barcodeValue}
+            </div>
+          </>
+        ) : (
+          <div className="text-xs italic py-2">Chưa có mã vận đơn</div>
+        )}
       </div>
 
       {/* QR Code */}
       <div className="flex justify-center mb-3">
-        <QRCodeSVG value={order.trackingCode || order.tracking_number} size={120} />
+        {barcodeValue && <QRCodeSVG value={barcodeValue} size={120} />}
       </div>
 
       {/* Recipient Info */}

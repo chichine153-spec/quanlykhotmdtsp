@@ -107,9 +107,14 @@
 
   /* 5. Force show our print portal at the very top */
   body > .print-only,
-  .print-only,
-  .print-only * {
+  .print-only {
     display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
+
+  /* Don't force block on everything, just ensure visibility */
+  .print-only * {
     visibility: visible !important;
     opacity: 1 !important;
   }
