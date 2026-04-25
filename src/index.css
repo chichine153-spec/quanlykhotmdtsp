@@ -129,6 +129,7 @@
   /* 6. Fix for image and canvas display - make sure it fills the area */
   .print-only img,
   .print-only canvas,
+  .print-only iframe,
   .print-only .thermal-label-container,
   .print-only .thermal-label {
     display: block !important;

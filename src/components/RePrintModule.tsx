@@ -148,6 +148,14 @@ export default function RePrintModule() {
     setIsIframe(window.self !== window.top);
   }, []);
 
+  // Reset print readiness when order change or modal closes
+  React.useEffect(() => {
+    if (!showPrintTemplate) {
+      printReadyRef.current = false;
+      setIsPrinting(false);
+    }
+  }, [showPrintTemplate]);
+
   // Auto-refresh when printing modal opens to catch background image_url updates
   React.useEffect(() => {
     if (showPrintTemplate && orderToPrint && user) {
@@ -763,6 +771,7 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
   const [imageError, setImageError] = React.useState(false);
   const [pdfRendering, setPdfRendering] = React.useState(false);
   const [forceFallback, setForceFallback] = React.useState(false);
+  const [useIframe, setUseIframe] = React.useState(false);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const renderAttempted = React.useRef(false);
   
@@ -771,7 +780,7 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
   const timeStr = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 
   // Use all possible URL fields
-  const imageSource = order.image_url || order.pdf_url || order.pdfUrl || order.tracking_label_url;
+  const imageSource = order.image_url || order.pdf_url || order.pdfUrl || order.tracking_label_url || order.pdf_path;
   const isImageString = typeof imageSource === 'string' && imageSource.length > 10;
   
   // Check if it's a valid Image URL or data URI
@@ -789,12 +798,27 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
     (imageSource.includes('supabase.co') && !isImage) ||
     (imageSource.includes('banhang.shopee.vn') && imageSource.includes('print_awb'))
   );
-  
-  console.log('[ThermalLabel] rendering order:', order.trackingCode || order.tracking_number, { isImage, isPDF, forceFallback, source: imageSource?.substring(0, 50) + '...' });
 
-  // Effect to render PDF to canvas if it's a PDF and not an image
+  // Auto-detect if we should use iframe for PDF
   React.useEffect(() => {
-    if (isPDF && !isImage && !imageError && !renderAttempted.current) {
+    if (isPDF && !isImage && !imageError) {
+      // For local blobs or trusted URLs, iframe is often better
+      if (imageSource.startsWith('blob:') || imageSource.startsWith('http')) {
+        setUseIframe(true);
+        // Signal ready after a short delay for iframe to initialize
+        const timer = setTimeout(() => {
+          if (onReady) onReady();
+        }, 1200);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [isPDF, isImage, imageSource, imageError]);
+  
+  console.log('[ThermalLabel] rendering order:', order.trackingCode || order.tracking_number, { isImage, isPDF, useIframe, forceFallback, source: imageSource?.substring(0, 50) + '...' });
+
+  // Effect to render PDF to canvas as fallback if iframe fails or is not supported
+  React.useEffect(() => {
+    if (isPDF && !isImage && !imageError && !useIframe && !renderAttempted.current) {
       const renderPdf = async () => {
         // Wait for canvas to exist in DOM
         if (!canvasRef.current) {
@@ -882,6 +906,16 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
               console.error('Image load error in ThermalLabel for:', imageSource);
               setImageError(true);
               setForceFallback(true);
+              if (onReady) onReady();
+            }}
+          />
+        ) : useIframe ? (
+          <iframe 
+            src={`${imageSource}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`} 
+            className="w-full h-full border-none"
+            title="PDF Preview"
+            onLoad={() => {
+              console.log('Iframe loaded successfully for print');
               if (onReady) onReady();
             }}
           />

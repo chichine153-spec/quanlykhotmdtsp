@@ -96,6 +96,14 @@ export default function PDFUpload({ onScreenChange }: PDFUploadProps) {
     setIsIframe(window.self !== window.top);
   }, []);
 
+  // Reset print readiness when modal closes
+  React.useEffect(() => {
+    if (!showPrintTemplate) {
+      printReadyRef.current = false;
+      setIsPrinting(false);
+    }
+  }, [showPrintTemplate]);
+
   // Auto-refresh when printing modal opens to catch background image_url updates
   React.useEffect(() => {
     if (showPrintTemplate && selectedOrderToPrint) {
