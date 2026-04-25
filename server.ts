@@ -21,7 +21,7 @@ async function startServer() {
 
     const tryGenerate = async (modelName: string) => {
       try {
-        const ai = new GoogleGenAI({ apiKey });
+        const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1' });
         
         const response = await ai.models.generateContent({
           model: modelName,
@@ -40,7 +40,7 @@ async function startServer() {
 
     try {
       // Try requested model first
-      const text = await tryGenerate(model || "gemini-3-flash-preview");
+      const text = await tryGenerate(model || "gemini-1.5-flash");
       res.json({ text });
     } catch (error: any) {
       console.error('Gemini Proxy Error:', error.message);

@@ -51,12 +51,12 @@ export class GeminiService {
 
     if (customKey) {
       // Return a fresh instance for testing, don't cache
-      return new GoogleGenAI({ apiKey });
+      return new GoogleGenAI({ apiKey, apiVersion: 'v1' });
     }
 
     // Cache the standard instance
     console.log('[GeminiService] Initializing new instance with key source:', customKey ? 'custom' : 'stored');
-    this.instance = new GoogleGenAI({ apiKey });
+    this.instance = new GoogleGenAI({ apiKey, apiVersion: 'v1' });
     return this.instance;
   }
 
@@ -119,8 +119,8 @@ export class GeminiService {
     let attempt = 0;
     let currentKey = useKey;
     
-    // Model rotation: Prioritize models configured for the modern SDK
-    const models = ["gemini-3-flash-preview", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b"];
+    // Model rotation: Prioritize stable models
+    const models = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-2.0-flash-exp"];
     let modelIdx = 0;
 
     while (attempt < maxRetries) {
@@ -179,7 +179,7 @@ export class GeminiService {
         const callDirectWithModel = async (apiKey: string, modelName: string) => {
           console.log(`[GeminiService] Calling direct with model: ${modelName}`);
           try {
-            const ai = new GoogleGenAI({ apiKey });
+            const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1' });
             
             const response = await ai.models.generateContent({
               model: modelName,
