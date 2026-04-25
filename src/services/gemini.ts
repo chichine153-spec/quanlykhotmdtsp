@@ -128,10 +128,12 @@ export class GeminiService {
 
     while (attempt < maxRetries) {
       const currentModel = models[modelIdx];
+      console.log(`[GeminiService] Attempt ${attempt + 1}: Using model ${currentModel}`);
       
       try {
         // Wrap callProxy to include the model
         const callWithModel = async (apiKey: string, model: string) => {
+          console.log(`[GeminiService] Calling proxy with model: ${model}`);
           try {
             const response = await fetch('/api/gemini/proxy', {
               method: 'POST',
@@ -178,6 +180,7 @@ export class GeminiService {
         };
 
         const callDirectWithModel = async (apiKey: string, model: string) => {
+          console.log(`[GeminiService] Calling direct with model: ${model}`);
           try {
             const genAI = new GoogleGenAI({ apiKey });
             const modelToUse = model.replace('-preview', ''); // Some clients don't like -preview in SDK
