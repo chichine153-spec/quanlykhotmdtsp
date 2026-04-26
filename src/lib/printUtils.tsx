@@ -88,6 +88,9 @@ export const printComponent = async (Component: React.ReactElement, title: strin
         print-color-adjust: exact !important;
         color: #000000 !important;
         text-shadow: none !important;
+        -webkit-font-smoothing: antialiased !important;
+        -moz-osx-font-smoothing: grayscale !important;
+        text-rendering: geometricPrecision !important;
       }
       
       .thermal-label {
@@ -98,9 +101,9 @@ export const printComponent = async (Component: React.ReactElement, title: strin
         width: 100mm !important;
         height: 150mm !important;
         margin: 0 !important;
-        padding: 6mm !important;
-        -webkit-filter: contrast(1.2) !important;
-        filter: contrast(1.2) !important;
+        padding: 5mm !important;
+        -webkit-filter: contrast(1.5) !important;
+        filter: contrast(1.5) !important;
       }
 
       #print-engine-label-root table { display: table !important; width: 100% !important; border-collapse: collapse !important; }

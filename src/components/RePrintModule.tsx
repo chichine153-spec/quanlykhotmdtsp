@@ -893,13 +893,7 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
           </div>
         )}
         
-        {/* Helper to switch to template if image/pdf fails or is hard to see */}
-        <button 
-          onClick={() => setForceFallback(true)}
-          className="absolute bottom-2 right-2 p-2 bg-black/10 hover:bg-black/20 rounded text-[8px] font-bold no-print"
-        >
-          Dùng mẫu in hệ thống
-        </button>
+
       </div>
     );
   }
@@ -934,9 +928,9 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
           .thermal-label * {
              font-family: Arial, "Helvetica Neue", Helvetica, sans-serif !important;
              color: #000000 !important;
-             font-weight: 900 !important;
-             -webkit-font-smoothing: initial !important;
-             -moz-osx-font-smoothing: initial !important;
+             -webkit-font-smoothing: antialiased !important;
+             -moz-osx-font-smoothing: grayscale !important;
+             text-rendering: geometricPrecision !important;
           }
           .thermal-label table td {
              border-top: 3px solid #000000;
@@ -1068,12 +1062,12 @@ export function ThermalLabel({ order, onReady }: { order: any, onReady?: () => v
                 <div className="text-[11px] font-black uppercase">Khối lượng tối đa: {order.weight || '500g'}</div>
                 <div className="text-[11px] font-black uppercase mt-2">Chữ ký người nhận:</div>
              </div>
-             <div className="text-[11px] font-black italic text-center pb-1">Xác nhận hàng nguyên vẹn, không móp/méo, bể/vỡ</div>
+             <div className="text-[11px] font-black text-center pb-1">Xác nhận hàng nguyên vẹn, không móp/méo, bể/vỡ</div>
          </div>
       </div>
 
       <div className="flex justify-between items-center pt-1 mt-auto">
-          <div className="text-[10px] font-black italic">Giao hàng toàn quốc/ Chú ý: Mã vận đơn được tạo bởi ZENITH OMS</div>
+          <div className="text-[10px] font-black">Giao hàng toàn quốc/ Chú ý: Mã vận đơn được tạo bởi ZENITH OMS</div>
           <div className="text-sm font-black border-2 border-black px-3 py-0.5">SPX</div>
       </div>
 

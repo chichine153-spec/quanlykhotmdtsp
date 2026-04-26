@@ -21,7 +21,7 @@ async function startServer() {
 
     const tryGenerate = async (modelName: string) => {
       try {
-        const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1' });
+        const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
         
         const response = await ai.models.generateContent({
           model: modelName,
@@ -34,33 +34,43 @@ async function startServer() {
 
         return response.text;
       } catch (error: any) {
+        console.error(`[Gemini Proxy] Model ${modelName} failed:`, error.message);
         throw error;
       }
     };
 
+    let targetModel = model || "gemini-3-flash-preview";
+    if (targetModel.includes("1.5-flash") || targetModel.includes("2.0-flash")) {
+      targetModel = "gemini-3-flash-preview";
+    }
+
     try {
-      // Try requested model first
-      const text = await tryGenerate(model || "gemini-1.5-flash");
+      const text = await tryGenerate(targetModel);
       res.json({ text });
     } catch (error: any) {
-      console.error('Gemini Proxy Error:', error.message);
+      const statusCode = error.status || error.response?.status || 500;
+      console.error('Gemini Proxy Error full details:', {
+        message: error.message,
+        status: statusCode,
+        details: error.response?.data
+      });
       
       // If 404 (model not found), try fallbacks
-      const isNotFound = error.message?.includes('404') || error.status === 404 || error.message?.includes('not found');
+      const isNotFound = error.message?.includes('404') || statusCode === 404 || error.message?.includes('not found');
       
-      if (isNotFound) {
-        console.log('[Gemini Proxy] Model not found, trying fallback to gemini-1.5-flash-8b...');
+      if (isNotFound && targetModel !== "gemini-flash-latest") {
+        console.log('[Gemini Proxy] Model not found, trying fallback to gemini-flash-latest...');
         try {
-          const fallbackText = await tryGenerate("gemini-1.5-flash-8b");
+          const fallbackText = await tryGenerate("gemini-flash-latest");
           return res.json({ text: fallbackText });
         } catch (fallbackError: any) {
           console.error('[Gemini Proxy] Fallback failed:', fallbackError.message);
         }
       }
 
-      res.status(error.status || 500).json({ 
+      res.status(statusCode).json({ 
         error: error.message,
-        details: error.response?.data || error.stack
+        details: error.response?.data
       });
     }
   });

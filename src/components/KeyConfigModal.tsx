@@ -30,8 +30,18 @@ export default function KeyConfigModal({ isOpen, onClose }: KeyConfigModalProps)
     }
   }, [isOpen, initialKey]);
 
+  const sanitizeKey = (key: string) => {
+    let cleanKey = key.trim();
+    // Remove "API Key: " or similar prefixes if users copied labels
+    cleanKey = cleanKey.replace(/^(API\s*Key|Key|Gemini\s*Key):\s*/i, '');
+    // Remove any quotes if users copied "AIza..."
+    cleanKey = cleanKey.replace(/^["']|["']$/g, '');
+    return cleanKey;
+  };
+
   const handleTestKey = async () => {
-    if (!apiKey.trim()) {
+    const cleanKey = sanitizeKey(apiKey);
+    if (!cleanKey) {
       toast.error('Vui lòng nhập API Key');
       return;
     }
@@ -46,7 +56,7 @@ export default function KeyConfigModal({ isOpen, onClose }: KeyConfigModalProps)
       const result = await GeminiService.handleAIRequest({
         prompt,
         systemInstruction: "You are a test assistant. Always reply with READY.",
-        shopKey: apiKey,
+        shopKey: cleanKey,
         fallbackKey: null,
         shopPlan: 'pro',
         userId: user?.uid || 'anonymous',
@@ -64,18 +74,8 @@ export default function KeyConfigModal({ isOpen, onClose }: KeyConfigModalProps)
       console.error('[KeyTest] Error:', error);
       setTestResult('error');
       
-      let msg = 'Lỗi kết nối AI. Vui lòng kiểm tra lại mã API Key.';
-      const errorStr = (error.response?.data?.error || error.message || '').toString();
-      
-      if (errorStr.includes('GEMINI_QUOTA_EXCEEDED') || errorStr.includes('429') || errorStr.includes('quota')) {
-        msg = 'Hạn mức (Quota) của Key này đã hết. Vui lòng tạo API Key mới.';
-      } else if (errorStr.includes('API_KEY_INVALID') || errorStr.includes('400')) {
-        msg = 'Mã API Key không hợp lệ. Vui lòng kiểm tra lại tại Google AI Studio.';
-      } else if (error.message) {
-        msg = error.message;
-      }
-      
-      toast.error(msg);
+      const errorStr = (error.message || '').toString();
+      toast.error(errorStr.length > 100 ? errorStr.substring(0, 100) + '...' : errorStr);
     } finally {
       setIsTesting(false);
     }
@@ -84,23 +84,27 @@ export default function KeyConfigModal({ isOpen, onClose }: KeyConfigModalProps)
   const handleSave = async () => {
     if (!user) return;
     
+    const cleanKey = sanitizeKey(apiKey);
+    const cleanSupaUrl = supabaseUrl.trim();
+    const cleanSupaKey = supabaseKey.trim();
+
     setIsSaving(true);
     try {
       const userRef = doc(db, 'users', user.uid);
       await updateDoc(userRef, {
-        geminiApiKey: apiKey.trim() || null,
-        supabaseUrl: supabaseUrl.trim() || null,
-        supabaseKey: supabaseKey.trim() || null
+        geminiApiKey: cleanKey || null,
+        supabaseUrl: cleanSupaUrl || null,
+        supabaseKey: cleanSupaKey || null
       });
       
       // Update local storage for immediate use
-      localStorage.setItem('gemini_api_key', apiKey.trim());
-      localStorage.setItem('supabase_url', supabaseUrl.trim());
-      localStorage.setItem('supabase_anon_key', supabaseKey.trim());
-      localStorage.setItem('global_supabase_url', supabaseUrl.trim());
-      localStorage.setItem('global_supabase_key', supabaseKey.trim());
+      localStorage.setItem('gemini_api_key', cleanKey);
+      localStorage.setItem('supabase_url', cleanSupaUrl);
+      localStorage.setItem('supabase_anon_key', cleanSupaKey);
+      localStorage.setItem('global_supabase_url', cleanSupaUrl);
+      localStorage.setItem('global_supabase_key', cleanSupaKey);
       
-      setGeminiApiKey(apiKey.trim() || null);
+      setGeminiApiKey(cleanKey || null);
       GeminiService.resetInstance();
       
       toast.success('Đã lưu cấu hình API');

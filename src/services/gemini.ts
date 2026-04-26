@@ -22,10 +22,10 @@ export class GeminiService {
     let apiKey = '';
 
     if (customKey) {
-      apiKey = customKey;
+      apiKey = customKey.trim();
     } else {
       // 1. Check direct localStorage
-      apiKey = localStorage.getItem('gemini_api_key') || '';
+      apiKey = (localStorage.getItem('gemini_api_key') || '').trim();
       
       // 2. Check global config cache from DataContext
       if (!apiKey) {
@@ -33,14 +33,14 @@ export class GeminiService {
           const cachedGlobal = localStorage.getItem('cache_global_config');
           if (cachedGlobal) {
             const parsed = JSON.parse(cachedGlobal);
-            apiKey = parsed.geminiApiKey || '';
+            apiKey = (parsed.geminiApiKey || '').trim();
           }
         } catch (e) {}
       }
 
       // 3. Fallback to other possible names or env
       if (!apiKey) {
-        apiKey = localStorage.getItem('global_gemini_key') || process.env.GEMINI_API_KEY || '';
+        apiKey = (localStorage.getItem('global_gemini_key') || process.env.GEMINI_API_KEY || '').trim();
       }
     }
 
@@ -51,12 +51,12 @@ export class GeminiService {
 
     if (customKey) {
       // Return a fresh instance for testing, don't cache
-      return new GoogleGenAI({ apiKey, apiVersion: 'v1' });
+      return new GoogleGenAI({ apiKey });
     }
 
     // Cache the standard instance
     console.log('[GeminiService] Initializing new instance with key source:', customKey ? 'custom' : 'stored');
-    this.instance = new GoogleGenAI({ apiKey, apiVersion: 'v1' });
+    this.instance = new GoogleGenAI({ apiKey });
     return this.instance;
   }
 
@@ -119,8 +119,8 @@ export class GeminiService {
     let attempt = 0;
     let currentKey = useKey;
     
-    // Model rotation: Prioritize stable models
-    const models = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-2.0-flash-exp"];
+    // Model rotation: Prioritize stable models suggested by the SDK documentation
+    const models = ["gemini-3-flash-preview", "gemini-flash-latest"];
     let modelIdx = 0;
 
     while (attempt < maxRetries) {
@@ -179,11 +179,11 @@ export class GeminiService {
         const callDirectWithModel = async (apiKey: string, modelName: string) => {
           console.log(`[GeminiService] Calling direct with model: ${modelName}`);
           try {
-            const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1' });
+            const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
             
             const response = await ai.models.generateContent({
               model: modelName,
-              contents: typeof prompt === 'string' ? prompt : (prompt as any),
+              contents: typeof prompt === 'string' ? [{ role: 'user', parts: [{ text: prompt }]}] : (prompt as any),
               config: {
                 systemInstruction: typeof systemInstruction === 'string' ? systemInstruction : undefined,
                 responseMimeType: responseMimeType as any,
@@ -196,7 +196,7 @@ export class GeminiService {
             const errStr = directErr.message || '';
             if (errStr.includes('429') || errStr.includes('Quota') || errStr.includes('RESOURCE_EXHAUSTED')) throw new Error('GEMINI_QUOTA_EXCEEDED');
             if (errStr.includes('503') || errStr.includes('UNAVAILABLE')) throw new Error('GEMINI_SERVICE_UNAVAILABLE');
-            if (errStr.includes('API_KEY_INVALID')) throw new Error('API_KEY_INVALID');
+            if (errStr.includes('API_KEY_INVALID') || errStr.includes('401') || errStr.includes('403')) throw new Error('API_KEY_INVALID');
             throw directErr;
           }
         };
@@ -206,7 +206,14 @@ export class GeminiService {
         const errorMsg = err.message || '';
         const isQuotaError = errorMsg === 'GEMINI_QUOTA_EXCEEDED';
         const isServiceBusy = errorMsg === 'GEMINI_SERVICE_UNAVAILABLE';
-        const isAuthError = errorMsg === 'API_KEY_INVALID' || errorMsg.includes('401') || errorMsg.includes('Unauthorized') || errorMsg.includes('INVALID_ARGUMENT');
+        const isAuthError = 
+          errorMsg === 'API_KEY_INVALID' || 
+          errorMsg.includes('401') || 
+          errorMsg.includes('Unauthorized') || 
+          errorMsg.includes('INVALID_ARGUMENT') ||
+          errorMsg.includes('API key not valid') ||
+          errorMsg.includes('not authorized') ||
+          errorMsg.includes('API_KEY_EXPIRED');
         
         // If Quota Error, try next model first before retrying same model
         if (isQuotaError && modelIdx < models.length - 1) {
@@ -238,16 +245,16 @@ export class GeminiService {
 
         // Final specific error messages
         if (isQuotaError) {
-          throw new Error("Lượt sử dụng AI hôm nay của bạn đã hết. Vui lòng nâng cấp gói hoặc thử lại vào ngày mai.");
+          throw new Error("Lượt sử dụng AI hôm nay của bạn đã hết (429 Quota). Vui lòng nâng cấp gói hoặc thử lại vào ngày mai.");
         }
         if (isServiceBusy) {
-          throw new Error("Dịch vụ Google AI đang quá tải. Vui lòng thử lại sau vài giây.");
+          throw new Error("Dịch vụ Google AI đang quá tải (503). Vui lòng thử lại sau vài giây.");
         }
         if (isAuthError) {
-          throw new Error("API Key không hợp lệ. Vui lòng kiểm tra lại cấu hình trong phần Quản lý tài khoản.");
+          throw new Error(`API Key lỗi xác thực: ${errorMsg}. Vui lòng kiểm tra lại cấu hình.`);
         }
 
-        throw err;
+        throw new Error(`Lỗi kết nối AI (${errorMsg}). Vui lòng thử lại.`);
       }
     }
 

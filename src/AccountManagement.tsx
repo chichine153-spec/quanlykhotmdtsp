@@ -179,15 +179,17 @@ export default function AccountManagement() {
 
     setIsTestLoading(true);
     try {
-      const ai = GeminiService.getInstance(geminiKey);
-      if (!ai) throw new Error('Không thể khởi tạo Gemini instance');
-      
-      const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
-        contents: "Hello, are you active? Reply with OK only.",
+      const result = await GeminiService.handleAIRequest({
+        prompt: "Say OK",
+        systemInstruction: "Reply with OK only.",
+        shopKey: geminiKey.trim(),
+        fallbackKey: null,
+        shopPlan: 'pro',
+        userId: currentUser?.uid || 'admin',
+        feature: 'verify_key'
       });
       
-      const text = response.text || '';
+      const text = result || '';
       
       if (text.toUpperCase().includes('OK')) {
         toast.success('API Key hoạt động tốt!');
@@ -196,64 +198,71 @@ export default function AccountManagement() {
       }
     } catch (error: any) {
       console.error('Test Gemini Key error:', error);
-      let errorMsg = error.message || 'Lỗi không xác định';
-      if (errorMsg.includes('429') || errorMsg.includes('quota')) {
-        errorMsg = 'API Key này đã HẾT HẠN MỨC (429 Quota Exceeded). Hãy tạo mã mới!';
-      } else if (errorMsg.includes('400') || errorMsg.includes('API_KEY_INVALID') || errorMsg.includes('systemInstruction')) {
-        errorMsg = 'API Key KHÔNG HỢP LỆ hoặc định dạng sai. Vui lòng kiểm tra lại.';
-      }
-      toast.error(`Lỗi: ${errorMsg}`);
+      const errMsg = error.message || 'Lỗi không xác định';
+      toast.error(`Lỗi: ${errMsg}`);
     } finally {
       setIsTestLoading(false);
     }
   };
 
+  const sanitizeKey = (key: string) => {
+    let cleanKey = key.trim();
+    cleanKey = cleanKey.replace(/^(API\s*Key|Key|Gemini\s*Key):\s*/i, '');
+    cleanKey = cleanKey.replace(/^["']|["']$/g, '');
+    return cleanKey;
+  };
+
   const handleUpdateShopKey = async () => {
     if (!currentUser) return;
+    const cleanKey = sanitizeKey(shopKey);
+    if (!cleanKey) {
+      toast.error('Vui lòng nhập API Key');
+      return;
+    }
+
     setIsSavingKey(true);
     setIsKeyValid(null);
 
     try {
-      // Perform ping test first
-      const ai = GeminiService.getInstance(shopKey);
-      let isValid = false;
+      // Use handleAIRequest for better validation (handles proxy/fallback/specific error msgs)
+      const result = await GeminiService.handleAIRequest({
+        prompt: "Say OK",
+        systemInstruction: "Reply with OK only.",
+        shopKey: cleanKey,
+        fallbackKey: null,
+        shopPlan: 'pro',
+        userId: currentUser.uid,
+        feature: 'verify_key'
+      });
       
-      if (ai) {
-        try {
-          const response = await ai.models.generateContent({
-            model: "gemini-1.5-flash",
-            contents: "hi",
-          });
-          if (response.text) isValid = true;
-        } catch (e) {
-          isValid = false;
-        }
-      }
-
+      const isValid = result.toUpperCase().includes('OK') || result.length > 0;
       setIsKeyValid(isValid);
 
       if (!isValid) {
-        toast.error('Key không hợp lệ. Vui lòng kiểm tra lại.');
+        toast.error('Key không hoạt động đúng. Vui lòng kiểm tra lại.');
         setIsSavingKey(false);
         return;
       }
 
       const userRef = doc(db, 'users', currentUser.uid);
       await updateDoc(userRef, {
-        geminiApiKey: shopKey,
+        geminiApiKey: cleanKey,
         updatedAt: new Date().toISOString()
       });
       toast.success('Đã cấu hình & Kích hoạt Key Shop!');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Save Shop Key error:', error);
-      toast.error('Lỗi khi lưu API Key Shop');
+      setIsKeyValid(false);
+      const errMsg = error.message || 'Lỗi không xác định';
+      toast.error(`Lỗi: ${errMsg}`);
     } finally {
       setIsSavingKey(false);
     }
   };
 
   const testKey = async (key: string) => {
-    if (!key.trim()) {
+    const cleanKey = sanitizeKey(key);
+    if (!cleanKey) {
       toast.error('Vui lòng nhập API Key để test');
       return;
     }
@@ -263,7 +272,7 @@ export default function AccountManagement() {
       const result = await GeminiService.handleAIRequest({
         prompt: "Say READY",
         systemInstruction: "Always reply with READY.",
-        shopKey: key,
+        shopKey: cleanKey,
         fallbackKey: null,
         shopPlan: 'pro',
         userId: currentUser?.uid || 'admin',
@@ -277,13 +286,8 @@ export default function AccountManagement() {
       }
     } catch (error: any) {
       console.error('Test API Key error:', error);
-      let errorMsg = error.message || 'Lỗi không xác định';
-      if (errorMsg.includes('429') || errorMsg.includes('quota')) {
-        errorMsg = 'API Key này đã HẾT HẠN MỨC (429 Quota Exceeded).';
-      } else if (errorMsg.includes('400') || errorMsg.includes('API_KEY_INVALID')) {
-        errorMsg = 'API Key KHÔNG HỢP LỆ. Vui lòng kiểm tra lại.';
-      }
-      toast.error(`Lỗi: ${errorMsg}`);
+      const errMsg = error.message || 'Lỗi không xác định';
+      toast.error(`Lỗi: ${errMsg}`);
     } finally {
       setIsTestLoading(false);
     }
