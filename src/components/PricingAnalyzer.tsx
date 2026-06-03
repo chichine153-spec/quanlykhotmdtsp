@@ -9,7 +9,8 @@ import {
   Percent, 
   Flame, 
   CheckCircle2, 
-  AlertCircle 
+  AlertCircle,
+  Save
 } from 'lucide-react';
 // Recharts removed to use custom custom-tailored stacked pillar chart
 
@@ -107,8 +108,49 @@ const DEFAULT_CATEGORIES: CategoryConfig[] = [
 ];
 
 export default function PricingAnalyzer() {
-  const [categories, setCategories] = React.useState<CategoryConfig[]>(DEFAULT_CATEGORIES);
+  const [categories, setCategories] = React.useState<CategoryConfig[]>(() => {
+    const saved = localStorage.getItem('piti_pricing_categories');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const validated = parsed.map(c => {
+            const def = DEFAULT_CATEGORIES.find(d => d.id === c.id);
+            if (def) {
+              return { ...def, ...c };
+            }
+            return c;
+          });
+          return validated;
+        }
+      } catch (e) {
+        console.error('Error parsing categories:', e);
+      }
+    }
+    return DEFAULT_CATEGORIES;
+  });
   const [selectedCategoryId, setSelectedCategoryId] = React.useState<string>('coc-giu-nhiet');
+  const [showSavedAlert, setShowSavedAlert] = React.useState(false);
+  const [showResetAlert, setShowResetAlert] = React.useState(false);
+
+  const handleSaveConfig = () => {
+    localStorage.setItem('piti_pricing_categories', JSON.stringify(categories));
+    setShowSavedAlert(true);
+    setTimeout(() => {
+      setShowSavedAlert(false);
+    }, 3000);
+  };
+
+  const handleResetConfig = () => {
+    const original = DEFAULT_CATEGORIES.find(c => c.id === selectedCategoryId) || DEFAULT_CATEGORIES[0];
+    const updated = categories.map(c => c.id === selectedCategoryId ? { ...original } : c);
+    setCategories(updated);
+    localStorage.setItem('piti_pricing_categories', JSON.stringify(updated));
+    setShowResetAlert(true);
+    setTimeout(() => {
+      setShowResetAlert(false);
+    }, 3000);
+  };
 
   const activeCategory = React.useMemo(() => {
     return categories.find(c => c.id === selectedCategoryId) || categories[0];
@@ -617,6 +659,51 @@ export default function PricingAnalyzer() {
             <span>Tổng tỷ lệ chi phí Marketing & Thuế:</span>
             <span className="font-bold text-slate-700 text-sm">{(taxPercent + adsPercent + riskPercent).toFixed(1)}%</span>
           </div>
+        </div>
+
+        {/* NÚT LƯU CỐ ĐỊNH CHI PHÍ SÀN & MARKETING */}
+        <div id="save-pricing-config-card" className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm space-y-3.5">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center text-orange-600 shrink-0 mt-0.5">
+              <Save size={16} />
+            </div>
+            <div className="space-y-1">
+              <h4 className="font-bold text-slate-800 text-sm">Lưu cấu hình chi phí cố định</h4>
+              <p className="text-[11px] text-slate-400 leading-normal">
+                Lưu lại các tỷ lệ phí sàn (<span className="font-semibold text-slate-600">{platformFeePercent}%</span>) và chi phí Marketing (<span className="font-semibold text-slate-600">{adsPercent}%</span>) của ngành hàng <strong className="text-slate-700 font-bold">"{activeCategory.name}"</strong> để tự động áp dụng trong các lần truy cập sau.
+              </p>
+            </div>
+          </div>
+          
+          <div className="flex flex-col sm:flex-row gap-2 justify-end pt-1">
+            <button
+              onClick={handleResetConfig}
+              className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 active:scale-95 text-[11px] font-bold text-slate-500 rounded-lg transition-all"
+            >
+              Đặt lại mặc định ban đầu
+            </button>
+            <button
+              onClick={handleSaveConfig}
+              className="px-4 py-1.5 bg-orange-600 hover:bg-orange-500 text-white font-bold text-[11px] rounded-lg shadow-sm shadow-orange-600/15 flex items-center justify-center gap-1.5 active:scale-95 transition-all"
+            >
+              <Save size={12} />
+              Lưu cố định chi phí
+            </button>
+          </div>
+
+          {showSavedAlert && (
+            <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-100 text-emerald-700 text-xs font-bold flex items-center gap-2">
+              <CheckCircle2 size={14} className="text-emerald-550 shrink-0" />
+              <span>Đã lưu cố định tỉ lệ Phí sàn ({platformFeePercent}%) & Marketing ({adsPercent}%) của "{activeCategory.name}" thành công!</span>
+            </div>
+          )}
+
+          {showResetAlert && (
+            <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-100 text-amber-800 text-xs font-bold flex items-center gap-2">
+              <Info size={14} className="text-amber-600 shrink-0" />
+              <span>Đã khôi phục cài đặt gốc của "{activeCategory.name}" ban đầu thành công!</span>
+            </div>
+          )}
         </div>
 
         {/* TARGET CONFIGS & SIMULATOR CONTROL */}

@@ -3,6 +3,7 @@ import { Settings, Save, Loader2, Package, Clock } from 'lucide-react';
 import { ProfitConfig } from '../types';
 import { ProfitService } from '../services/profitService';
 import { useAuth } from '../contexts/AuthContext';
+import { useData } from '../contexts/DataContext';
 
 interface FinanceSettingsProps {
   onClose: () => void;
@@ -11,6 +12,7 @@ interface FinanceSettingsProps {
 
 export default function FinanceSettings({ onClose, initialConfig }: FinanceSettingsProps) {
   const { user } = useAuth();
+  const { updateConfig } = useData();
   const [isSaving, setIsSaving] = React.useState(false);
   const [config, setConfig] = React.useState<ProfitConfig>({
     cutoffHour: 15,
@@ -36,7 +38,7 @@ export default function FinanceSettings({ onClose, initialConfig }: FinanceSetti
     if (!user) return;
     setIsSaving(true);
     try {
-      await ProfitService.saveConfig(user.uid, config);
+      await updateConfig(config);
       onClose();
     } catch (error) {
       console.error('Save Config Error:', error);

@@ -28,6 +28,7 @@ interface DataContextType {
   globalConfig: { geminiApiKey?: string } | null;
   loading: boolean;
   refreshData: () => Promise<void>;
+  updateConfig: (newConfig: ProfitConfig) => Promise<void>;
   lastUpdated: Date | null;
   quotaExceeded: boolean;
 }
@@ -213,8 +214,15 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const updateConfig = async (newConfig: ProfitConfig) => {
+    if (!user) return;
+    await ProfitService.saveConfig(user.uid, newConfig);
+    setConfig(newConfig);
+    localStorage.setItem(`cache_config_${user.uid}`, JSON.stringify(newConfig));
+  };
+
   return (
-    <DataContext.Provider value={{ inventory, orders, returns, problematicOrders, config, globalConfig, loading, refreshData, lastUpdated, quotaExceeded }}>
+    <DataContext.Provider value={{ inventory, orders, returns, problematicOrders, config, globalConfig, loading, refreshData, updateConfig, lastUpdated, quotaExceeded }}>
       {children}
     </DataContext.Provider>
   );
