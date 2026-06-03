@@ -13,64 +13,63 @@ async function startServer() {
 
   // API Route to proxy Gemini AI requests (Security feature)
   app.post("/api/gemini/proxy", async (req, res) => {
-    const { apiKey, model, contents, config, systemInstruction } = req.body;
+    const { apiKey: clientApiKey, model, contents, config, systemInstruction } = req.body;
+    const apiKey = clientApiKey || process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
       return res.status(400).json({ error: "Missing API Key" });
     }
 
     const tryGenerate = async (modelName: string) => {
-      try {
-        const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
-        
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents: typeof contents === 'string' ? [{ role: 'user', parts: [{ text: contents }]}] : contents,
-          config: {
-            systemInstruction: typeof systemInstruction === 'string' ? systemInstruction : undefined,
-            ...config?.generationConfig
+      const ai = new GoogleGenAI({ 
+        apiKey: apiKey.trim(),
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
           }
-        });
+        }
+      });
+      
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: typeof contents === 'string' ? [{ role: 'user', parts: [{ text: contents }]}] : contents,
+        config: {
+          systemInstruction: systemInstruction,
+          ...config?.generationConfig
+        }
+      });
 
-        return response.text;
-      } catch (error: any) {
-        console.error(`[Gemini Proxy] Model ${modelName} failed:`, error.message);
-        throw error;
-      }
+      return response.text;
     };
 
-    let targetModel = model || "gemini-3-flash-preview";
-    if (targetModel.includes("1.5-flash") || targetModel.includes("2.0-flash")) {
-      targetModel = "gemini-3-flash-preview";
-    }
+    let targetModel = model || "gemini-3.5-flash";
 
     try {
       const text = await tryGenerate(targetModel);
       res.json({ text });
     } catch (error: any) {
-      const statusCode = error.status || error.response?.status || 500;
-      console.error('Gemini Proxy Error full details:', {
-        message: error.message,
+      const statusCode = error.status || 500;
+      const errorMsg = error.message || '';
+      
+      console.error('Gemini Proxy Error:', {
+        message: errorMsg,
         status: statusCode,
-        details: error.response?.data
+        model: targetModel
       });
       
-      // If 404 (model not found), try fallbacks
-      const isNotFound = error.message?.includes('404') || statusCode === 404 || error.message?.includes('not found');
-      
-      if (isNotFound && targetModel !== "gemini-flash-latest") {
-        console.log('[Gemini Proxy] Model not found, trying fallback to gemini-flash-latest...');
+      // Fallback if specific model is not found
+      if ((errorMsg.includes('404') || errorMsg.includes('not found')) && targetModel !== "gemini-3.1-flash-lite") {
+        console.log('[Gemini Proxy] Attempting fallback to gemini-3.1-flash-lite...');
         try {
-          const fallbackText = await tryGenerate("gemini-flash-latest");
+          const fallbackText = await tryGenerate("gemini-3.1-flash-lite");
           return res.json({ text: fallbackText });
-        } catch (fallbackError: any) {
-          console.error('[Gemini Proxy] Fallback failed:', fallbackError.message);
+        } catch (fbErr) {
+          // ignore fb error
         }
       }
 
-      res.status(statusCode).json({ 
-        error: error.message,
-        details: error.response?.data
+      res.status(statusCode === 200 ? 500 : statusCode).json({ 
+        error: error.message
       });
     }
   });

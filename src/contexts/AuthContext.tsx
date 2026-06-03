@@ -13,6 +13,7 @@ import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { logErrorToSupabase, FRIENDLY_ERROR_MESSAGE } from '../lib/error-logging';
 import { UsageService } from '../services/usageService';
+import { GeminiService } from '../services/gemini';
 
 interface AuthContextType {
   user: User | null;
@@ -103,6 +104,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setPaymentStatus(data.paymentStatus || 'none');
             setPlanType(data.planType || (data.role === 'admin' ? 'pro' : 'free'));
             setGeminiApiKey(data.geminiApiKey || null);
+            if (data.geminiApiKey) localStorage.setItem('gemini_api_key', data.geminiApiKey);
+            else localStorage.removeItem('gemini_api_key');
+            GeminiService.resetInstance();
+            
             setFailoverEnabled(data.failoverEnabled || false);
             setExpiryDate(data.expiryDate);
             
@@ -282,6 +287,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = async () => {
     try {
+      localStorage.removeItem('gemini_api_key');
+      localStorage.removeItem('user_email');
+      localStorage.removeItem('global_gemini_key');
+      GeminiService.resetInstance();
       await signOut(auth);
     } catch (err: any) {
       console.error('Logout failed:', err);

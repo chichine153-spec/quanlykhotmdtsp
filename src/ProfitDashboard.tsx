@@ -43,6 +43,7 @@ import { ProfitService } from './services/profitService';
 import { InventoryService, OrderRecord } from './services/inventoryService';
 import { ProfitConfig, ReturnRecord } from './types';
 import FinanceSettings from './components/FinanceSettings';
+import PricingAnalyzer from './components/PricingAnalyzer';
 
 const TIME_TABS = [
   { id: 'today', label: 'Hôm nay' },
@@ -71,6 +72,7 @@ export default function ProfitDashboard() {
   });
   const [loading, setLoading] = React.useState(true);
   const [showConfig, setShowConfig] = React.useState(false);
+  const [mainTab, setMainTab] = React.useState<'dashboard' | 'pricing'>('dashboard');
 
 
   React.useEffect(() => {
@@ -118,8 +120,12 @@ export default function ProfitDashboard() {
         <div>
           <h1 className="text-4xl font-extrabold tracking-tight text-on-surface mb-2 uppercase">ZENITH OMS - PHÂN TÍCH LỢI NHUẬN</h1>
           <div className="flex items-center gap-2">
-            <p className="text-secondary font-medium">Báo cáo doanh thu, chi phí và lợi nhuận thực tế ngay khi bán ra.</p>
-            {lastUpdated && (
+            <p className="text-secondary font-medium">
+              {mainTab === 'dashboard'
+                ? 'Báo cáo doanh thu, chi phí và lợi nhuận thực tế ngay khi bán ra.'
+                : 'Giả định cấu trúc giá, cân đối phí sàn Shopee/TikTok và tối ưu biên ròng.'}
+            </p>
+            {lastUpdated && mainTab === 'dashboard' && (
               <span className="text-[10px] bg-surface-container px-2 py-0.5 rounded-full text-secondary font-mono">
                 Cập nhật: {lastUpdated.toLocaleTimeString('vi-VN')}
               </span>
@@ -127,44 +133,75 @@ export default function ProfitDashboard() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <button 
-            onClick={refreshData}
-            disabled={dataLoading}
-            className="p-3 rounded-2xl bg-surface-container-lowest border border-surface-container text-secondary hover:bg-surface-container transition-all disabled:opacity-50"
-            title="Làm mới dữ liệu"
-          >
-            <RefreshCw size={20} className={dataLoading ? 'animate-spin' : ''} />
-          </button>
-
-
-
-
-          <div className="bg-surface-container-low p-1 rounded-2xl flex gap-1">
-            {TIME_TABS.map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                  activeTab === tab.id 
-                    ? 'bg-white text-primary shadow-sm' 
-                    : 'text-secondary hover:text-on-surface'
-                }`}
+          {mainTab === 'dashboard' && (
+            <>
+              <button 
+                onClick={refreshData}
+                disabled={dataLoading}
+                className="p-3 rounded-2xl bg-surface-container-lowest border border-surface-container text-secondary hover:bg-surface-container transition-all disabled:opacity-50"
+                title="Làm mới dữ liệu"
               >
-                {tab.label}
+                <RefreshCw size={20} className={dataLoading ? 'animate-spin' : ''} />
               </button>
-            ))}
-          </div>
-          <button 
-            onClick={() => setShowConfig(true)}
-            className="p-3 rounded-2xl bg-surface-container-lowest border border-surface-container text-secondary hover:bg-surface-container transition-all"
-          >
-            <Settings size={24} />
-          </button>
+
+              <div className="bg-surface-container-low p-1 rounded-2xl flex gap-1">
+                {TIME_TABS.map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id as any)}
+                    className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${
+                      activeTab === tab.id 
+                        ? 'bg-white text-primary shadow-sm' 
+                        : 'text-secondary hover:text-on-surface'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+              <button 
+                onClick={() => setShowConfig(true)}
+                className="p-3 rounded-2xl bg-surface-container-lowest border border-surface-container text-secondary hover:bg-surface-container transition-all"
+              >
+                <Settings size={24} />
+              </button>
+            </>
+          )}
         </div>
       </header>
 
-      {/* Main Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      {/* Main Tab Bar */}
+      <div className="flex border-b border-surface-container gap-6 pb-px">
+        <button 
+          onClick={() => setMainTab('dashboard')}
+          className={`pb-3 text-sm font-bold border-b-2 transition-all uppercase tracking-wider ${
+            mainTab === 'dashboard' 
+              ? 'border-primary text-primary font-black' 
+              : 'border-transparent text-secondary hover:text-on-surface'
+          }`}
+          id="tab-pnl-dashboard"
+        >
+          Báo cáo vận hành P&L
+        </button>
+        <button 
+          onClick={() => setMainTab('pricing')}
+          className={`pb-3 text-sm font-bold border-b-2 transition-all uppercase tracking-wider ${
+            mainTab === 'pricing' 
+              ? 'border-primary text-primary font-black' 
+              : 'border-transparent text-secondary hover:text-on-surface'
+          }`}
+          id="tab-pricing-analyzer"
+        >
+          Cấu trúc giá & Lợi nhuận
+        </button>
+      </div>
+
+      {mainTab === 'pricing' ? (
+        <PricingAnalyzer />
+      ) : (
+        <>
+          {/* Main Stats Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         {stats.revenue === 0 && !loading && (
           <motion.div 
             initial={{ opacity: 0, y: -20 }}
@@ -418,6 +455,8 @@ export default function ProfitDashboard() {
           )}
         </div>
       </div>
+      </>
+      )}
 
       {/* Config Modal */}
       <AnimatePresence>

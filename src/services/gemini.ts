@@ -51,12 +51,26 @@ export class GeminiService {
 
     if (customKey) {
       // Return a fresh instance for testing, don't cache
-      return new GoogleGenAI({ apiKey });
+      return new GoogleGenAI({ 
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
     }
 
     // Cache the standard instance
     console.log('[GeminiService] Initializing new instance with key source:', customKey ? 'custom' : 'stored');
-    this.instance = new GoogleGenAI({ apiKey });
+    this.instance = new GoogleGenAI({ 
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
     return this.instance;
   }
 
@@ -119,8 +133,8 @@ export class GeminiService {
     let attempt = 0;
     let currentKey = useKey;
     
-    // Model rotation: Prioritize stable models suggested by the SDK documentation
-    const models = ["gemini-3-flash-preview", "gemini-flash-latest"];
+    // Model rotation: Use Gemini 3 series as per new documentation
+    const models = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.1-pro-preview"];
     let modelIdx = 0;
 
     while (attempt < maxRetries) {
@@ -178,26 +192,37 @@ export class GeminiService {
 
         const callDirectWithModel = async (apiKey: string, modelName: string) => {
           console.log(`[GeminiService] Calling direct with model: ${modelName}`);
+          
+          const ai = new GoogleGenAI({ 
+            apiKey: apiKey.trim(),
+            httpOptions: {
+              headers: {
+                'User-Agent': 'aistudio-build',
+              }
+            }
+          });
+
           try {
-            const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
-            
             const response = await ai.models.generateContent({
               model: modelName,
-              contents: typeof prompt === 'string' ? [{ role: 'user', parts: [{ text: prompt }]}] : (prompt as any),
+              contents: prompt,
               config: {
-                systemInstruction: typeof systemInstruction === 'string' ? systemInstruction : undefined,
+                systemInstruction,
                 responseMimeType: responseMimeType as any,
                 responseSchema
               }
             });
 
             return response.text || '';
-          } catch (directErr: any) {
-            const errStr = directErr.message || '';
-            if (errStr.includes('429') || errStr.includes('Quota') || errStr.includes('RESOURCE_EXHAUSTED')) throw new Error('GEMINI_QUOTA_EXCEEDED');
-            if (errStr.includes('503') || errStr.includes('UNAVAILABLE')) throw new Error('GEMINI_SERVICE_UNAVAILABLE');
-            if (errStr.includes('API_KEY_INVALID') || errStr.includes('401') || errStr.includes('403')) throw new Error('API_KEY_INVALID');
-            throw directErr;
+          } catch (error: any) {
+             const msg = error.message || '';
+             console.error(`[GeminiService] Direct call failed for ${modelName}:`, msg);
+             
+             if (msg.includes('429') || msg.includes('Quota')) throw new Error('GEMINI_QUOTA_EXCEEDED');
+             if (msg.includes('503') || msg.includes('UNAVAILABLE')) throw new Error('GEMINI_SERVICE_UNAVAILABLE');
+             if (msg.includes('401') || msg.includes('403')) throw new Error('API_KEY_INVALID');
+             
+             throw error;
           }
         };
 
@@ -244,6 +269,17 @@ export class GeminiService {
         }
 
         // Final specific error messages
+        const cleanError = (msg: string) => {
+          try {
+            const parsed = JSON.parse(msg);
+            return parsed.error?.message || msg;
+          } catch (e) {
+            return msg;
+          }
+        };
+
+        const finalMsg = cleanError(errorMsg);
+
         if (isQuotaError) {
           throw new Error("Lượt sử dụng AI hôm nay của bạn đã hết (429 Quota). Vui lòng nâng cấp gói hoặc thử lại vào ngày mai.");
         }
@@ -251,10 +287,10 @@ export class GeminiService {
           throw new Error("Dịch vụ Google AI đang quá tải (503). Vui lòng thử lại sau vài giây.");
         }
         if (isAuthError) {
-          throw new Error(`API Key lỗi xác thực: ${errorMsg}. Vui lòng kiểm tra lại cấu hình.`);
+          throw new Error(`API Key lỗi xác thực: ${finalMsg}. Vui lòng kiểm tra lại mã Key.`);
         }
 
-        throw new Error(`Lỗi kết nối AI (${errorMsg}). Vui lòng thử lại.`);
+        throw new Error(`Lỗi kết nối AI (${finalMsg}). Vui lòng thử lại.`);
       }
     }
 
