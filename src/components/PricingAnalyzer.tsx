@@ -12,6 +12,10 @@ import {
   AlertCircle,
   Save
 } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { useData } from '../contexts/DataContext';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 // Recharts removed to use custom custom-tailored stacked pillar chart
 
 
@@ -107,7 +111,39 @@ const DEFAULT_CATEGORIES: CategoryConfig[] = [
   }
 ];
 
+const getMergedCategories = (baseCategories: CategoryConfig[], gConfig: any) => {
+  if (!gConfig) return baseCategories;
+  return baseCategories.map(c => {
+    let packingFee = c.packingFee;
+    let platformFeePercent = c.platformFeePercent;
+    let taxPercent = c.taxPercent;
+    
+    if (c.id === 'coc-giu-nhiet') {
+      packingFee = gConfig.packagingCostCup ?? packingFee;
+      platformFeePercent = gConfig.platformFeeCup ?? platformFeePercent;
+    } else if (c.id === 'binh-giu-nhiet') {
+      packingFee = gConfig.packagingCostBottle ?? packingFee;
+      platformFeePercent = gConfig.platformFeeBottle ?? platformFeePercent;
+    } else {
+      packingFee = gConfig.packagingCostBottle ?? packingFee;
+      platformFeePercent = gConfig.platformFeePercent ?? platformFeePercent;
+    }
+    
+    taxPercent = gConfig.taxPercent ?? taxPercent;
+    
+    return {
+      ...c,
+      packingFee,
+      platformFeePercent,
+      taxPercent
+    };
+  });
+};
+
 export default function PricingAnalyzer() {
+  const { user } = useAuth();
+  const { config: globalConfig } = useData();
+
   const [categories, setCategories] = React.useState<CategoryConfig[]>(() => {
     const saved = localStorage.getItem('piti_pricing_categories');
     if (saved) {
@@ -129,23 +165,113 @@ export default function PricingAnalyzer() {
     }
     return DEFAULT_CATEGORIES;
   });
+
   const [selectedCategoryId, setSelectedCategoryId] = React.useState<string>('coc-giu-nhiet');
   const [showSavedAlert, setShowSavedAlert] = React.useState(false);
   const [showResetAlert, setShowResetAlert] = React.useState(false);
 
-  const handleSaveConfig = () => {
+  // Firestore Sync to resolve: "thoát ra vào lại vẫn dữ liệu cũ"
+  React.useEffect(() => {
+    if (!user) return;
+    
+    const loadFirebaseCategories = async () => {
+      try {
+        const docRef = doc(db, 'pricing_analyzers', user.uid);
+        const docSnap = await getDoc(docRef);
+        
+        let loadedCategories: CategoryConfig[] | null = null;
+        
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (data && Array.isArray(data.categories)) {
+            const validated = data.categories.map((c: any) => {
+              const freshDefaults = getMergedCategories(DEFAULT_CATEGORIES, globalConfig);
+              const def = freshDefaults.find(d => d.id === c.id);
+              if (def) {
+                return { ...def, ...c };
+              }
+              return c;
+            });
+            loadedCategories = validated;
+          }
+        }
+        
+        if (!loadedCategories) {
+          // Fallback to local storage if not found in Firestore
+          const saved = localStorage.getItem('piti_pricing_categories');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              const freshDefaults = getMergedCategories(DEFAULT_CATEGORIES, globalConfig);
+              loadedCategories = parsed.map((c: any) => {
+                const def = freshDefaults.find(d => d.id === c.id);
+                if (def) {
+                  return { ...def, ...c };
+                }
+                return c;
+              });
+            }
+          }
+        }
+        
+        if (loadedCategories) {
+          setCategories(loadedCategories);
+          localStorage.setItem('piti_pricing_categories', JSON.stringify(loadedCategories));
+        } else if (globalConfig) {
+          // If no custom config has been saved yet, merge the global settings as the baseline
+          const merged = getMergedCategories(DEFAULT_CATEGORIES, globalConfig);
+          setCategories(merged);
+        }
+      } catch (err) {
+        console.error('Error loading firebase categories:', err);
+      }
+    };
+    
+    loadFirebaseCategories();
+  }, [user, globalConfig]);
+
+  const handleSaveConfig = async () => {
+    // 1. Save to local storage first
     localStorage.setItem('piti_pricing_categories', JSON.stringify(categories));
+    
+    // 2. Save to Firestore for persistent sync across reboots and devices
+    if (user) {
+      try {
+        const docRef = doc(db, 'pricing_analyzers', user.uid);
+        await setDoc(docRef, {
+          categories,
+          updatedAt: new Date().toISOString()
+        });
+      } catch (err) {
+        console.error('Error saving pricing categories to Firebase:', err);
+      }
+    }
+
     setShowSavedAlert(true);
     setTimeout(() => {
       setShowSavedAlert(false);
     }, 3000);
   };
 
-  const handleResetConfig = () => {
-    const original = DEFAULT_CATEGORIES.find(c => c.id === selectedCategoryId) || DEFAULT_CATEGORIES[0];
+  const handleResetConfig = async () => {
+    const freshDefaults = getMergedCategories(DEFAULT_CATEGORIES, globalConfig);
+    const original = freshDefaults.find(c => c.id === selectedCategoryId) || freshDefaults[0];
     const updated = categories.map(c => c.id === selectedCategoryId ? { ...original } : c);
     setCategories(updated);
     localStorage.setItem('piti_pricing_categories', JSON.stringify(updated));
+    
+    if (user) {
+      try {
+        const docRef = doc(db, 'pricing_analyzers', user.uid);
+        await setDoc(docRef, {
+          categories: updated,
+          updatedAt: new Date().toISOString()
+        });
+      } catch (err) {
+        console.error('Error resetting pricing categories in Firebase:', err);
+      }
+    }
+
     setShowResetAlert(true);
     setTimeout(() => {
       setShowResetAlert(false);
@@ -670,20 +796,20 @@ export default function PricingAnalyzer() {
             <div className="space-y-1">
               <h4 className="font-bold text-slate-800 text-sm">Lưu cấu hình chi phí cố định</h4>
               <p className="text-[11px] text-slate-400 leading-normal">
-                Lưu lại các tỷ lệ phí sàn (<span className="font-semibold text-slate-600">{platformFeePercent}%</span>) và chi phí Marketing (<span className="font-semibold text-slate-600">{adsPercent}%</span>) của ngành hàng <strong className="text-slate-700 font-bold">"{activeCategory.name}"</strong> để tự động áp dụng trong các lần truy cập sau.
+                Lưu lại toàn bộ cấu hình chi phí (bao gồm Giá vốn, Phí sàn, Phí đóng gói, Gói Freeship Xtra, Voucher Xtra, PiShip, Hạ tầng, Thuế, Rủi ro, và Marketing) của ngành hàng <strong className="text-slate-700 font-bold">"{activeCategory.name}"</strong> để tự động áp dụng trong các lần truy cập sau.
               </p>
             </div>
           </div>
           
           <div className="flex flex-col sm:flex-row gap-2 justify-end pt-1">
             <button
-              onClick={handleResetConfig}
+               onClick={handleResetConfig}
               className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 active:scale-95 text-[11px] font-bold text-slate-500 rounded-lg transition-all"
             >
               Đặt lại mặc định ban đầu
             </button>
             <button
-              onClick={handleSaveConfig}
+               onClick={handleSaveConfig}
               className="px-4 py-1.5 bg-orange-600 hover:bg-orange-500 text-white font-bold text-[11px] rounded-lg shadow-sm shadow-orange-600/15 flex items-center justify-center gap-1.5 active:scale-95 transition-all"
             >
               <Save size={12} />
@@ -694,7 +820,7 @@ export default function PricingAnalyzer() {
           {showSavedAlert && (
             <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-100 text-emerald-700 text-xs font-bold flex items-center gap-2">
               <CheckCircle2 size={14} className="text-emerald-550 shrink-0" />
-              <span>Đã lưu cố định tỉ lệ Phí sàn ({platformFeePercent}%) & Marketing ({adsPercent}%) của "{activeCategory.name}" thành công!</span>
+              <span>Đã lưu cố định toàn bộ cấu hình chi phí của "{activeCategory.name}" thành công!</span>
             </div>
           )}
 
