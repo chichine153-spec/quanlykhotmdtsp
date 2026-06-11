@@ -720,6 +720,23 @@ export class PDFService {
       let destinationValue = 'Chưa xác định';
       const finalizedItemsResult: any[] = [];
 
+      // 1. Always load Firestore products to ensure we have correct document refs for the transactional writes
+      let firestoreProducts: any[] = [];
+      try {
+        const inventoryRef = collection(db, 'inventory');
+        const allProductsSnap = await getDocs(query(
+          inventoryRef, 
+          where('userId', '==', auth.currentUser?.uid)
+        ));
+        firestoreProducts = allProductsSnap.docs.map(d => ({ 
+          id: d.id, 
+          ref: d.ref, 
+          ...d.data() as any 
+        }));
+      } catch (err) {
+        console.warn('[PDFService] Firestore product pre-fetch error:', err);
+      }
+
       // Use pre-fetched products if available, otherwise fetch once
       let allProducts = preFetchedProducts;
       if (!allProducts || allProducts.length === 0) {
@@ -747,20 +764,33 @@ export class PDFService {
 
         // Always merge with Firestore or use Firestore as fallback
         if (!allProducts || allProducts.length === 0) {
-          console.log('[PDFService] Fetching from Firestore...');
-          const inventoryRef = collection(db, 'inventory');
-          const allProductsSnap = await getDocs(query(
-            inventoryRef, 
-            where('userId', '==', auth.currentUser?.uid)
-          ));
-          allProducts = allProductsSnap.docs.map(d => ({ 
-            id: d.id, 
-            ref: d.ref, 
-            ...d.data() as any 
-          }));
+          allProducts = [...firestoreProducts];
         }
       }
       console.log(`[PDFService] Total products in inventory for matching: ${allProducts.length}`);
+
+      // Helper function to normalize SKU and variant names for robust comparisons
+      const removeAccents = (str: string) => {
+        return str.normalize('NFD')
+                  .replace(/[\u0300-\u036f]/g, '')
+                  .replace(/đ/g, 'd')
+                  .replace(/Đ/g, 'D');
+      };
+
+      const normalize = (s: any) => {
+        const str = String(s || '');
+        return removeAccents(str).toLowerCase().replace(/[^a-z0-9]/g, '');
+      };
+
+      const findFirestoreEquivalent = (sku: string, variant: string): any => {
+        const normSku = normalize(sku);
+        const normVar = normalize(variant);
+        return firestoreProducts.find(p => {
+          return normalize(p.sku) === normSku && normalize(p.variant || '') === normVar;
+        }) || firestoreProducts.find(p => {
+          return normalize(p.sku) === normSku;
+        });
+      };
 
       // 1. Skip PDF Upload to Storage to avoid CORS errors
       let downloadURL = preUploadedUrl || '';
@@ -778,7 +808,17 @@ export class PDFService {
       // PRE-MATCH PRODUCTS: Find all matched products BEFORE the transaction
       const itemsWithMatchedProducts = await Promise.all(items.map(async (item) => {
         const matchedProduct = await PDFService.findMatchedProduct(item.sku, item.color, allProducts);
-        return { ...item, matchedProduct };
+        
+        let firestoreEquivalent = null;
+        if (matchedProduct) {
+          if (matchedProduct.ref) {
+            firestoreEquivalent = matchedProduct;
+          } else {
+            firestoreEquivalent = findFirestoreEquivalent(matchedProduct.sku, matchedProduct.variant || item.color || '');
+          }
+        }
+        
+        return { ...item, matchedProduct, firestoreEquivalent };
       }));
 
       await runTransaction(db, async (transaction) => {
@@ -791,12 +831,12 @@ export class PDFService {
           throw new Error(`Đơn hàng [${trackingCode}] đã được xử lý trước đó, không thể trừ kho thêm lần nữa`);
         }
 
-        // Get current stock for all matched products
+        // Get current stock for all matched products in Firestore
         const productSnaps = new Map<string, any>();
         for (const item of itemsWithMatchedProducts) {
-          if (item.matchedProduct) {
-            const productRef = item.matchedProduct.ref || doc(db, 'inventory', item.matchedProduct.id);
-            if (!productSnaps.has(productRef.id)) {
+          if (item.firestoreEquivalent) {
+            const productRef = item.firestoreEquivalent.ref;
+            if (productRef && !productSnaps.has(productRef.id)) {
               try {
                 const snap = await transaction.get(productRef);
                 if (snap && snap.exists()) {
@@ -816,15 +856,15 @@ export class PDFService {
         console.log(`[PDFService] Starting processing for ${itemsWithMatchedProducts.length} items...`);
 
         for (const item of itemsWithMatchedProducts) {
-          const { sku, color, quantity, costPrice: extCost, sellingPrice: extSell, matchedProduct } = item;
+          const { sku, color, quantity, costPrice: extCost, sellingPrice: extSell, matchedProduct, firestoreEquivalent } = item;
           
           if (!matchedProduct) {
             console.error(`[PDFService] SKU NOT FOUND ERROR: ${sku} (${color}).`);
             throw new Error(`Mã SKU [${sku}] không tồn tại trong kho hoặc chưa được khai báo. Vui lòng sử dụng tính năng "Nhập kho nhanh" hoặc thêm SKU này vào kho để có đủ dữ liệu tính toán.`);
           }
 
-          const productRef = matchedProduct.ref || doc(db, 'inventory', matchedProduct.id);
-          const productDataInTransaction = productSnaps.get(productRef.id);
+          const productRef = firestoreEquivalent ? firestoreEquivalent.ref : null;
+          const productDataInTransaction = productRef ? productSnaps.get(productRef.id) : null;
           
           const itemQuantity = safeNum(quantity);
           const itemCostPrice = safeNum(extCost || matchedProduct.costPrice);
@@ -845,9 +885,9 @@ export class PDFService {
           finalizedItemsResult.push(processedItem);
           productNames.push(matchedProduct.name);
 
-          if (!productDataInTransaction) {
-            // FALLBACK: If not in Firestore but matched (likely from Supabase), we still need to record the sale
-            console.warn(`[PDFService] Product ${matchedProduct.sku} matched but NOT in Firestore snaps. Proceeding without Firestore stock deduction for this item.`);
+          if (!productRef || !productDataInTransaction) {
+            // Fallback: If not in Firestore but matched (e.g. Supabase only), we log and proceed
+            console.warn(`[PDFService] Product ${matchedProduct.sku} matched but NOT in Firestore. Skipping Firestore stock deduction for this item.`);
             continue;
           }
           
@@ -981,7 +1021,6 @@ export class PDFService {
               total_cost: Number(totalCostValue || 0),
               platform_fee: Number(platformFeeValue || 0),
               tax_fee: Number(taxFeeValue || 0),
-              // packaging_fee: Number(packagingFeeValue || 0), // Removed as column doesn't exist in Supabase orders table
               profit: Number((totalRevenueValue || 0) - (totalCostValue || 0) - (platformFeeValue || 0) - (taxFeeValue || 0) - (packagingFeeValue || 0)),
               status: 'Processed',
               items: processedItemsResult, // Pass the array directly for JSONB column
@@ -998,8 +1037,36 @@ export class PDFService {
             console.error('[PDFService] Supabase Order Insert Error:', orderError.message);
           }
 
-          // B. Update Products Stock in Supabase
+          // Group identical items to avoid concurrent/sequential stock-quantity update race conditions
+          const groupedDeductions = new Map<string, {
+            productId: string;
+            sku: string;
+            variant: string;
+            quantity: number;
+            productName: string;
+            costPrice: number;
+            sellingPrice: number;
+          }>();
+
           for (const item of finalizedItemsResult) {
+            const key = `${item.productId || item.sku}_${item.variant || ''}`;
+            if (groupedDeductions.has(key)) {
+              groupedDeductions.get(key)!.quantity += item.quantity;
+            } else {
+              groupedDeductions.set(key, {
+                productId: item.productId,
+                sku: item.sku,
+                variant: item.variant || '',
+                quantity: item.quantity,
+                productName: item.productName || `Sản phẩm ${item.sku}`,
+                costPrice: item.costPrice || 0,
+                sellingPrice: item.sellingPrice || 0
+              });
+            }
+          }
+
+          // B. Update Products Stock in Supabase
+          for (const item of groupedDeductions.values()) {
             try {
               // 1. Precise match using ID if it looks like a Supabase ID (UUID)
               let currentProd = null;
@@ -1075,6 +1142,21 @@ export class PDFService {
                     cost_price: Number(item.costPrice || 0),
                     selling_price: Number(item.sellingPrice || 0),
                     updated_at: new Date().toISOString()
+                  });
+
+                // Also insert log for auto creation
+                await supabase
+                  .from('inventory_logs')
+                  .insert({
+                    user_id: auth.currentUser?.uid,
+                    sku: item.sku,
+                    product_name: item.productName || `Sản phẩm ${item.sku}`,
+                    variant: item.variant || '',
+                    quantity_change: 0 - Number(item.quantity),
+                    type: 'deduction',
+                    tracking_code: trackingCode,
+                    timestamp: new Date().toISOString(),
+                    details: `Tạo mới và trừ kho tự động Shopee: ${item.sku} - SL: ${item.quantity}`
                   });
               }
             } catch (err) {

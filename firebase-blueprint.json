@@ -167,6 +167,20 @@
         "deliveredAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "trackingCode", "status", "reconciledAt"]
+    },
+    "PricingAnalyzer": {
+      "title": "Pricing Analyzer Configuration",
+      "description": "Stores user-specific category configurations for pricing analyzer.",
+      "type": "object",
+      "properties": {
+        "categories": {
+          "type": "array",
+          "items": { "type": "object" },
+          "description": "List of custom category configurations"
+        },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["categories", "updatedAt"]
     }
   },
   "firestore": {
@@ -221,6 +235,10 @@
     "/reconciliations/{reconciliationId}": {
       "schema": "Reconciliation",
       "description": "COD reconciliation records."
+    },
+    "/pricing_analyzers/{userId}": {
+      "schema": "PricingAnalyzer",
+      "description": "User customized pricing analyzer category and fee configurations."
     }
   }
 }

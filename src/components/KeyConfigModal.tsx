@@ -88,6 +88,32 @@ export default function KeyConfigModal({ isOpen, onClose }: KeyConfigModalProps)
     const cleanSupaUrl = supabaseUrl.trim();
     const cleanSupaKey = supabaseKey.trim();
 
+    if (cleanSupaKey) {
+      try {
+        if (cleanSupaKey.startsWith('eyJ') && cleanSupaKey.includes('.')) {
+          const base64Url = cleanSupaKey.split('.')[1];
+          const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+          const binStr = typeof atob !== 'undefined' ? atob(base64) : Buffer.from(base64, 'base64').toString('binary');
+          const jsonPayload = decodeURIComponent(
+            binStr
+              .split('')
+              .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+              .join('')
+          );
+          const payload = JSON.parse(jsonPayload);
+          if (payload.role === 'service_role') {
+            toast.error(
+              'Lỗi bảo mật: Bạn đang nhập nhầm mã "service_role" (Secret Key) của Supabase thay vì Anon Key (Public Key) công khai. Vì lý do an toàn, Supabase cấm sử dụng mã này trực tiếp trên trình duyệt!',
+              { duration: 6000 }
+            );
+            return;
+          }
+        }
+      } catch (e) {
+        // Ignore decoding error
+      }
+    }
+
     setIsSaving(true);
     try {
       const userRef = doc(db, 'users', user.uid);
