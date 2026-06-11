@@ -341,33 +341,33 @@ export default function PricingAnalyzer() {
   const pricingMode = activeCategory.pricingMode;
   const setPricingMode = (val: 'fixed-target' | 'custom-price') => updateActiveCategory({ pricingMode: val });
 
-  // Math calculations: Tổng chi phí cố định thực tế bằng Giá vốn + Phí đóng gói
-  const totalFixedCost = cogs + packingFee;
-
   // Active inputs strictly mapped to shop's rules, fully adjustable
   const activePlatformFee = usePlatformFee ? platformFeePercent : 0; // Phí cố định & thanh toán sàn
   const activeFreeship = useFreeshipXtra ? freeshipXtraPercent : 0; // Freeship Xtra
   const activeVoucher = useVoucherXtra ? voucherXtraPercent : 0; // Voucher Xtra
   const activePishipAmount = usePiship ? pishipAmount : 0; // Phí Piship tiền mặt
   const activeInfrastructureAmount = useInfrastructure ? infrastructureAmount : 0; // Phí hạ tầng tiền mặt
+
+  // Math calculations: Tổng chi phí cố định thực tế bằng Giá vốn + Phí đóng gói + Phí PiShip + Phí Hạ tầng (nếu bật)
+  const totalFixedCost = cogs + packingFee + activePishipAmount + activeInfrastructureAmount;
   
   // Tổng Chi phí Biến đổi (Tính theo %) = 16% (Phí sàn) + % Gói dịch vụ bật + % Thuế + % Marketing + % Hoàn hủy
   const totalVariablePercent = activePlatformFee + activeFreeship + activeVoucher + adsPercent + taxPercent + riskPercent;
 
   // Real-time calculated Proposed Listed Price based on Target Profit margin
   const denominator = 1 - (totalVariablePercent + targetMargin) / 100;
-  const totalFlatFees = totalFixedCost + activePishipAmount + activeInfrastructureAmount;
+  const totalFlatFees = totalFixedCost;
   const proposedPrice = denominator > 0 ? Math.round(totalFlatFees / denominator) : 0;
 
   // Selected price to calculate exact VNĐ breakdown (uses customPrice in 'custom-price' mode, and proposedPrice in 'fixed-target' mode)
   const selectedPrice = pricingMode === 'custom-price' ? customPrice : proposedPrice;
 
   // Breakdown values based on the selected price
-  // Group 1: Giá vốn & Đóng gói (Gồm Giá vốn + Phí đóng gói cố định)
-  const valCOGS = cogs + packingFee;
+  // Group 1: Chi phí cố định (Gồm Giá vốn + Phí đóng gói cố định + Phí PiShip + Phí Hạ tầng)
+  const valCOGS = cogs + packingFee + activePishipAmount + activeInfrastructureAmount;
   
-  // Group 2: Vận hành & Sàn (Gồm Phí sàn + Phí Piship VNĐ + Phí hạ tầng VNĐ)
-  const valOpsPlatform = Math.round(activePlatformFee * selectedPrice / 100) + activePishipAmount + activeInfrastructureAmount;
+  // Group 2: Phí sàn (Gồm Phí sàn)
+  const valOpsPlatform = Math.round(activePlatformFee * selectedPrice / 100);
   
   // Group 3: Gói Dịch Vụ (Tổng % của Voucher Xtra + Freeship Xtra if checked)
   const valServicePacks = Math.round((activeFreeship + activeVoucher) * selectedPrice / 100);
@@ -399,7 +399,7 @@ export default function PricingAnalyzer() {
     return [
       {
         id: 'cogs',
-        name: 'Giá vốn & Đóng gói',
+        name: 'Chi phí cố định',
         val: valCOGS,
         pctValue: cogsRatio,
         color: 'from-slate-400 to-slate-500 bg-slate-400',
@@ -411,7 +411,7 @@ export default function PricingAnalyzer() {
       },
       {
         id: 'opsPlatform',
-        name: 'Vận hành & Sàn',
+        name: 'Phí sàn',
         val: valOpsPlatform,
         pctValue: opsPlatformRatio,
         color: 'from-blue-400 to-blue-500 bg-blue-400',
@@ -544,6 +544,64 @@ export default function PricingAnalyzer() {
               </div>
             </div>
           </div>
+
+          <div className="space-y-3.5 pt-4 border-t border-slate-100">
+            {/* Fixed Fee: PiShip */}
+            <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-slate-50/40 hover:bg-slate-50 transition-colors">
+              <div className="flex items-center gap-3">
+                <input 
+                  type="checkbox"
+                  id="usePiship"
+                  checked={usePiship}
+                  onChange={(e) => setUsePiship(e.target.checked)}
+                  className="w-4.5 h-4.5 text-orange-600 border-slate-300 rounded focus:ring-orange-500 accent-orange-600 cursor-pointer"
+                />
+                <label htmlFor="usePiship" className="flex flex-col cursor-pointer select-none">
+                  <span className="text-xs font-bold text-slate-700">Phí PiShip (Phí đóng gói)</span>
+                  <span className="text-[10px] text-slate-400">Chi phí cố định tiền mặt trên từng đơn hàng đã tối ưu.</span>
+                </label>
+              </div>
+              <div className="flex items-center gap-1">
+                <input 
+                  type="number"
+                  min="0"
+                  disabled={!usePiship}
+                  value={pishipAmount}
+                  onChange={(e) => setPishipAmount(Math.max(0, parseInt(e.target.value) || 0))}
+                  className="w-24 px-2 py-1 text-center bg-white disabled:bg-slate-100 disabled:cursor-not-allowed border border-slate-200 rounded-lg focus:border-orange-500 focus:ring-orange-500 font-bold text-xs text-slate-700"
+                />
+                <span className="text-xs font-semibold text-slate-500">đ</span>
+              </div>
+            </div>
+
+            {/* Fixed Fee: Phí Hạ tầng */}
+            <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-slate-50/40 hover:bg-slate-50 transition-colors">
+              <div className="flex items-center gap-3">
+                <input 
+                  type="checkbox"
+                  id="useInfrastructure"
+                  checked={useInfrastructure}
+                  onChange={(e) => setUseInfrastructure(e.target.checked)}
+                  className="w-4.5 h-4.5 text-orange-600 border-slate-300 rounded focus:ring-orange-500 accent-orange-600 cursor-pointer"
+                />
+                <label htmlFor="useInfrastructure" className="flex flex-col cursor-pointer select-none">
+                  <span className="text-xs font-bold text-slate-700">Phí Hạ tầng</span>
+                  <span className="text-[10px] text-slate-400">Phí dịch vụ hạ tầng mạng lưới và kho bãi vận hành trực tuyến.</span>
+                </label>
+              </div>
+              <div className="flex items-center gap-1">
+                <input 
+                  type="number"
+                  min="0"
+                  disabled={!useInfrastructure}
+                  value={infrastructureAmount}
+                  onChange={(e) => setInfrastructureAmount(Math.max(0, parseInt(e.target.value) || 0))}
+                  className="w-24 px-2 py-1 text-center bg-white disabled:bg-slate-100 disabled:cursor-not-allowed border border-slate-200 rounded-lg focus:border-orange-500 focus:ring-orange-500 font-bold text-xs text-slate-700"
+                />
+                <span className="text-xs font-semibold text-slate-500">đ</span>
+              </div>
+            </div>
+          </div>
           
           <div className="bg-slate-50/50 p-2.5 rounded-xl border border-slate-100 flex items-center justify-between text-xs text-slate-500">
             <span>Tổng chi phí cố định thực tế:</span>
@@ -651,62 +709,6 @@ export default function PricingAnalyzer() {
                   className="w-16 px-2 py-1 text-center bg-white border border-slate-200 rounded-lg font-bold text-xs text-slate-700 focus:border-orange-500 focus:ring-orange-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
                 />
                 <span className="text-xs font-semibold text-slate-500">%</span>
-              </div>
-            </div>
-
-            {/* Variable Fee: PiShip */}
-            <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-slate-50/40 hover:bg-slate-50 transition-colors">
-              <div className="flex items-center gap-3">
-                <input 
-                  type="checkbox"
-                  id="usePiship"
-                  checked={usePiship}
-                  onChange={(e) => setUsePiship(e.target.checked)}
-                  className="w-4.5 h-4.5 text-orange-600 border-slate-300 rounded focus:ring-orange-500 accent-orange-600 cursor-pointer"
-                />
-                <label htmlFor="usePiship" className="flex flex-col cursor-pointer select-none">
-                  <span className="text-xs font-bold text-slate-700">Phí PiShip (Phí đóng gói)</span>
-                  <span className="text-[10px] text-slate-400">Chi phí cố định tiền mặt trên từng đơn hàng đã tối ưu.</span>
-                </label>
-              </div>
-              <div className="flex items-center gap-1">
-                <input 
-                  type="number"
-                  min="0"
-                  disabled={!usePiship}
-                  value={pishipAmount}
-                  onChange={(e) => setPishipAmount(Math.max(0, parseInt(e.target.value) || 0))}
-                  className="w-24 px-2 py-1 text-center bg-white disabled:bg-slate-100 disabled:cursor-not-allowed border border-slate-200 rounded-lg focus:border-orange-500 focus:ring-orange-500 font-bold text-xs text-slate-700"
-                />
-                <span className="text-xs font-semibold text-slate-500">đ</span>
-              </div>
-            </div>
-
-            {/* Variable Fee: Phí Hạ tầng */}
-            <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-slate-50/40 hover:bg-slate-50 transition-colors">
-              <div className="flex items-center gap-3">
-                <input 
-                  type="checkbox"
-                  id="useInfrastructure"
-                  checked={useInfrastructure}
-                  onChange={(e) => setUseInfrastructure(e.target.checked)}
-                  className="w-4.5 h-4.5 text-orange-600 border-slate-300 rounded focus:ring-orange-500 accent-orange-600 cursor-pointer"
-                />
-                <label htmlFor="useInfrastructure" className="flex flex-col cursor-pointer select-none">
-                  <span className="text-xs font-bold text-slate-700">Phí Hạ tầng</span>
-                  <span className="text-[10px] text-slate-400">Phí dịch vụ hạ tầng mạng lưới và kho bãi vận hành trực tuyến.</span>
-                </label>
-              </div>
-              <div className="flex items-center gap-1">
-                <input 
-                  type="number"
-                  min="0"
-                  disabled={!useInfrastructure}
-                  value={infrastructureAmount}
-                  onChange={(e) => setInfrastructureAmount(Math.max(0, parseInt(e.target.value) || 0))}
-                  className="w-24 px-2 py-1 text-center bg-white disabled:bg-slate-100 disabled:cursor-not-allowed border border-slate-200 rounded-lg focus:border-orange-500 focus:ring-orange-500 font-bold text-xs text-slate-700"
-                />
-                <span className="text-xs font-semibold text-slate-500">đ</span>
               </div>
             </div>
           </div>
@@ -974,24 +976,24 @@ export default function PricingAnalyzer() {
 
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 pt-2 text-[11px] text-slate-400">
             <div>
-              <span className="block font-medium">Giá vốn & Đóng gói:</span>
+              <span className="block font-medium text-slate-300 font-bold">Chi phí cố định:</span>
               <span className="font-bold text-white">{valCOGS.toLocaleString()}đ</span>
             </div>
             <div>
-              <span className="block font-medium">Vận hành VNĐ:</span>
-              <span className="font-bold text-white">{(activePishipAmount + activeInfrastructureAmount).toLocaleString()}đ</span>
-            </div>
-            <div>
               <span className="block font-medium">Phí sàn ({activePlatformFee.toFixed(1)}%):</span>
-              <span className="font-bold text-white">{Math.round(activePlatformFee * selectedPrice / 100).toLocaleString()}đ</span>
+              <span className="font-bold text-white">{valOpsPlatform.toLocaleString()}đ</span>
             </div>
             <div>
               <span className="block font-medium">Gói dịch vụ (Xtra):</span>
               <span className="font-bold text-white">{valServicePacks.toLocaleString()}đ</span>
             </div>
             <div>
-              <span className="block font-medium text-slate-300 font-bold">Thuế, Ads & Khác:</span>
-              <span className="font-bold text-slate-100">{valOtherExpenses.toLocaleString()}đ</span>
+              <span className="block font-medium">Thuế, Ads & Khác:</span>
+              <span className="font-bold text-white">{valOtherExpenses.toLocaleString()}đ</span>
+            </div>
+            <div>
+              <span className="block font-medium text-emerald-400 font-bold">Lợi nhuận ròng:</span>
+              <span className="font-bold text-emerald-400">{calculatedProfitValue.toLocaleString()}đ</span>
             </div>
           </div>
         </div>
@@ -1029,7 +1031,7 @@ export default function PricingAnalyzer() {
 
               const chartBars = [
                 {
-                  label: 'Giá vốn & Đóng gói',
+                  label: 'Chi phí cố định',
                   value: valCOGS,
                   ratio: cogsRatio,
                   color: 'from-slate-400 to-slate-500 bg-slate-400',
@@ -1039,7 +1041,7 @@ export default function PricingAnalyzer() {
                   indicatorColor: 'bg-slate-400'
                 },
                 {
-                  label: 'Vận hành & Sàn',
+                  label: 'Phí sàn',
                   value: valOpsPlatform,
                   ratio: opsPlatformRatio,
                   color: 'from-blue-400 to-blue-500 bg-blue-400',
