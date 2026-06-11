@@ -384,13 +384,22 @@ export default function ProfitDashboard() {
           ) : (
             orders
               .filter(o => {
-                const cutoffHour = config.cutoffHour ?? 15;
                 const now = new Date();
                 
                 if (activeTab === 'today') {
-                  const { start, end } = ProfitService.getSessionBounds(now, cutoffHour);
-                  const orderDate = new Date(o.processedAt);
-                  return orderDate >= start && orderDate < end;
+                  const getLocalDateString = (date: Date | string) => {
+                    try {
+                      const d = new Date(date);
+                      if (isNaN(d.getTime())) return '';
+                      const year = d.getFullYear();
+                      const month = String(d.getMonth() + 1).padStart(2, '0');
+                      const day = String(d.getDate()).padStart(2, '0');
+                      return `${year}-${month}-${day}`;
+                    } catch (e) {
+                      return '';
+                    }
+                  };
+                  return o.processedAt && getLocalDateString(o.processedAt) === getLocalDateString(now);
                 } else if (activeTab === 'week') {
                   const startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
                   return new Date(o.processedAt) >= startDate;

@@ -481,9 +481,11 @@ export class ProfitService {
     let endDate: Date = new Date(); // Default to now for filtering
 
     if (timeframe === 'today') {
-      const { start, end } = this.getSessionBounds(targetDate, cutoffHour);
-      startDate = start;
-      endDate = end;
+      const year = targetDate.getFullYear();
+      const month = targetDate.getMonth();
+      const date = targetDate.getDate();
+      startDate = new Date(year, month, date, 0, 0, 0);
+      endDate = new Date(year, month, date, 23, 59, 59, 999);
     } else if (timeframe === 'week') {
       startDate = new Date(targetDate.getTime() - 7 * 24 * 60 * 60 * 1000);
       endDate = targetDate;
@@ -535,7 +537,7 @@ export class ProfitService {
       let pFee = 0;
       let tFee = 0;
 
-      if (o.platformFee !== undefined && o.taxFee !== undefined) {
+      if (o.platformFee !== undefined && o.taxFee !== undefined && o.platformFee > 0) {
         pFee = o.platformFee;
         tFee = o.taxFee;
       } else {
@@ -588,8 +590,16 @@ export class ProfitService {
     const revenue = totalAmountReceived + platformFees + taxFees; // Re-calculate gross revenue for comparison
 
     const packagingFees = filteredOrders.reduce((sum, o) => {
-      if (o.packagingFee !== undefined) return sum + o.packagingFee;
-      return sum + (o.items.length * (config?.packagingCostBottle || 0)); 
+      if (o.packagingFee !== undefined && o.packagingFee > 0) return sum + o.packagingFee;
+      const items = Array.isArray(o.items) ? o.items : [];
+      let ordPackagingFee = 0;
+      items.forEach((item: any) => {
+        const sku = item.sku || '';
+        const name = item.productName || item.name || '';
+        const qty = item.quantity || 1;
+        ordPackagingFee += this.calculatePackagingFee(sku, name, config) * qty;
+      });
+      return sum + (ordPackagingFee > 0 ? ordPackagingFee : (items.length * (config?.packagingCostBottle || 6000)));
     }, 0);
 
     // Marketing Cost Allocation Logic
